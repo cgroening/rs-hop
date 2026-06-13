@@ -220,8 +220,15 @@ impl App {
             && !app.config.example_mode
         {
             app.auto_refresh = true;
-            app.start_refresh(fetch);
+            // Honour fetch-on-start for a git tab; the Files tab does its
+            // existence check via the first-visit hook below instead.
+            if app.tab != Tab::FilesAndFolders {
+                app.start_refresh(fetch);
+            }
         }
+        // The active tab counts as its first visit (e.g. the Files existence
+        // check, or a git refresh that was skipped above).
+        app.refresh_tab_on_first_visit();
         app
     }
 
@@ -764,17 +771,23 @@ impl App {
         self.refresh_tab_on_first_visit();
     }
 
-    /// Refreshes the git status of the entries in the current tab the first
-    /// time it is visited (without fetching), mirroring the startup refresh of
-    /// the initially active tab. The Files and Folders tab carries no git
-    /// status, so it is skipped. While another refresh is still running it is
-    /// deferred (and retried when that one finishes) so switching tabs never
-    /// aborts the in-flight refresh.
+    /// Runs the per-tab first-visit work: the Files tab checks that its paths
+    /// still exist; the git tabs refresh status (without fetching), mirroring
+    /// the startup refresh of the initially active tab. Each runs once per
+    /// session; a git refresh is deferred while another is in flight (and
+    /// retried when it finishes) so switching tabs never aborts it.
     fn refresh_tab_on_first_visit(&mut self) {
-        if !self.auto_refresh || self.tab == Tab::FilesAndFolders {
+        if self.refreshed_tabs.contains(&self.tab) {
             return;
         }
-        if self.refreshed_tabs.contains(&self.tab) || self.is_refreshing() {
+        if self.tab == Tab::FilesAndFolders {
+            self.refreshed_tabs.insert(self.tab);
+            if !self.config.example_mode {
+                self.check_files_existence();
+            }
+            return;
+        }
+        if !self.auto_refresh || self.is_refreshing() {
             return;
         }
         self.start_refresh(false);
