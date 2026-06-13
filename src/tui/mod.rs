@@ -397,6 +397,7 @@ impl App {
             KeyCode::Down => self.move_cursor(1),
             KeyCode::Enter => return self.open_selected(true),
             KeyCode::Char('o') => return self.open_selected(false),
+            KeyCode::Char('q') => return Some(RunOutcome::Quit),
             KeyCode::Char('f') => self.filtering = true,
             KeyCode::Char('s') => self.sort = self.sort.next(),
             KeyCode::Char('a') => self.open_add_picker(),
@@ -989,15 +990,13 @@ fn hints(_tab: Tab) -> Vec<(&'static str, &'static str)> {
         ("p", "fix path"),
         ("!", "errors"),
         ("?", "help"),
+        ("q", "quit"),
     ]
 }
 
 /// A single dim hint line pointing at the help overlay.
 fn hint_line(_tab: Tab) -> Line<'static> {
-    Line::from(Span::styled(
-        " ? help · Ctrl+Q quit",
-        Style::default().fg(DIM),
-    ))
+    Line::from(Span::styled(" ? help · q quit", Style::default().fg(DIM)))
 }
 
 /// Renders a solid progress bar for an in-flight status refresh, filling the

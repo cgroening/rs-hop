@@ -148,7 +148,7 @@ hop config-path     print the resolved config file path
 | `!` | list entries with path errors, then repair / edit / delete |
 | `r` | reload git status   ·   `R`: `git fetch` + reload |
 | `?` | toggle the help overlay |
-| `Ctrl+Q` | quit |
+| `q` / `Ctrl+Q` | quit |
 
 ## Development
 

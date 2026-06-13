@@ -28,7 +28,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("!", "list entries with path errors and fix them"),
     ("r", "reload git status   ·   R: git fetch + reload"),
     ("?", "toggle this help"),
-    ("Ctrl+Q", "quit"),
+    ("q / Ctrl+Q", "quit"),
 ];
 
 /// Renders the help overlay centred in `area`.
