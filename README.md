@@ -20,6 +20,10 @@ for a one-word jump, sort modes and repair for paths that have moved.
   reorderable section headers; `s` jumps to a section and `M` manages them.
 - **In-app management**: add, edit, delete, favourite, archive/restore, set a
   slug - the config is written back preserving its comments.
+- **Content-aware open**: a file/folder entry auto-detects its target — a
+  folder `cd`s, a text file (by extension; configurable via `editor_extensions`)
+  opens in the editor, and any other file (image, PDF, …) opens with the
+  system's default app.
 - **Slugs**: `hop <slug>` jumps straight to an entry from the shell.
 - **Sort modes**: by name, most recently used, or a custom drag order;
   favourites are pinned to the top (except in the recent view).
@@ -87,7 +91,8 @@ git_program = "lazygit"        # tool launched for git repos; omit to disable
 github_username = "you"        # stripped from displayed remote names
 example_mode = false           # show example_git_info instead of real status
 fetch_on_start = false         # git fetch in the background when hop starts
-# editor = "nvim"              # for opening files; else $VISUAL / $EDITOR
+# editor = "nvim"              # for opening text files; else $VISUAL / $EDITOR
+# editor_extensions = ["rs", "md", "txt"]  # override the built-in text list
 
 [icons]
 variant = "unicode"            # unicode | ascii
@@ -103,9 +108,10 @@ max = 14
 [[repos]]
 name = "(rs) hop"              # optional; defaults to the path's basename
 path = "/Users/you/Code/hop"
-kind = "git"                   # git | folder | file
+kind = "git"                   # git | path (path = file or folder, auto-detected)
 slug = "hop"                   # optional; enables `hop hop`
 fav = true                     # favourites sort first
+# section = "Work"             # groups path entries on the Files tab
 # archived = false             # archived entries live in the Archiv tab
 ```
 
@@ -137,8 +143,8 @@ hop config-path     print the resolved config file path
 | `1` / `2` / `3` | switch tab (Git Repos / Files / Archiv) |
 | `↑` / `↓` | move cursor (wraps) |
 | `Space` | toggle selection · `Shift+↑/↓`: extend range · `Esc`: clear |
-| `Enter` | open: write path + launch git tool, then exit |
-| `o` | jump only: write path and exit (cd, no tool) |
+| `Enter` | open: git → tool · folder → cd · text file → editor · other file → default app |
+| `o` | jump only: write path and exit (folder → cd, file → its parent) |
 | `f` | live fuzzy filter (`Esc` clears) |
 | `s` | git tabs: cycle sort (name / recent / custom) · Files: jump to a section |
 | `M` | Files tab: manage sections (add / rename / delete / reorder) |

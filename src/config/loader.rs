@@ -27,6 +27,7 @@ struct RawConfig {
     example_mode: Option<bool>,
     fetch_on_start: Option<bool>,
     editor: Option<String>,
+    editor_extensions: Option<Vec<String>>,
     icons: Option<RawIcons>,
     column_widths: Option<HashMap<String, RawColumnWidth>>,
 }
@@ -98,6 +99,10 @@ fn build(raw: RawConfig) -> Config {
         example_mode: raw.example_mode.unwrap_or(defaults.example_mode),
         fetch_on_start: raw.fetch_on_start.unwrap_or(defaults.fetch_on_start),
         editor: raw.editor.or(defaults.editor),
+        editor_extensions: raw
+            .editor_extensions
+            .filter(|exts| !exts.is_empty())
+            .unwrap_or(defaults.editor_extensions),
         icons: raw
             .icons
             .and_then(|icons| icons.variant)
@@ -159,6 +164,15 @@ mod tests {
         assert!(!config.fetch_on_start);
         assert_eq!(config.icons, IconVariant::Unicode);
         assert_eq!(config.column_widths, ColumnWidths::default());
+        assert!(config.editor_extensions.iter().any(|e| e == "rs"));
+    }
+
+    #[test]
+    fn editor_extensions_override_replaces_default() {
+        let text = "editor_extensions = [\"md\", \"txt\"]\n";
+        let raw: RawConfig = toml::from_str(text).unwrap();
+        let config = build(raw);
+        assert_eq!(config.editor_extensions, ["md", "txt"]);
     }
 
     #[test]

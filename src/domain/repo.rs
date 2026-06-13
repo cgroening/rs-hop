@@ -12,18 +12,16 @@ pub enum RepoKind {
     /// A git repository (opened in the configured git tool).
     #[default]
     Git,
-    /// An arbitrary folder (a `cd` target).
-    Folder,
-    /// A single file (opened in `$EDITOR`).
-    File,
+    /// A file or folder, told apart at open time by [`classify_path`].
+    Path,
 }
 
 impl RepoKind {
     /// Parses the config string value, defaulting to [`RepoKind::Git`].
+    /// The legacy `folder`/`file`/`dir` values fold into [`RepoKind::Path`].
     pub fn from_config_value(value: &str) -> Self {
         match value.trim().to_lowercase().as_str() {
-            "folder" | "dir" => RepoKind::Folder,
-            "file" => RepoKind::File,
+            "folder" | "dir" | "file" | "path" => RepoKind::Path,
             _ => RepoKind::Git,
         }
     }
@@ -32,8 +30,58 @@ impl RepoKind {
     pub fn as_config_value(self) -> &'static str {
         match self {
             RepoKind::Git => "git",
-            RepoKind::Folder => "folder",
-            RepoKind::File => "file",
+            RepoKind::Path => "path",
+        }
+    }
+}
+
+/// How a [`RepoKind::Path`] entry resolves on disk, deciding how it opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathClass {
+    /// A directory: a `cd` target.
+    Folder,
+    /// A text file: opened in the editor.
+    TextFile,
+    /// Any other file: opened with the platform's default application.
+    OtherFile,
+}
+
+/// Classifies `path` for opening: a directory (existing, or a non-existent
+/// path written with a trailing `/`) is a folder; otherwise a file, split into
+/// text (editor) and other (default app) by [`is_text_file`].
+pub fn classify_path(path: &Path, editor_extensions: &[String]) -> PathClass {
+    if is_dir_target(path) {
+        return PathClass::Folder;
+    }
+    if is_text_file(path, editor_extensions) {
+        PathClass::TextFile
+    } else {
+        PathClass::OtherFile
+    }
+}
+
+/// Whether `path` points at a folder: an existing directory, or a
+/// non-existent path written with a trailing separator.
+pub fn is_dir_target(path: &Path) -> bool {
+    if path.is_dir() {
+        return true;
+    }
+    if path.is_file() {
+        return false;
+    }
+    path.to_string_lossy().ends_with(['/', '\\'])
+}
+
+/// Whether `path` is treated as a text file (opened in the editor): a file with
+/// no extension, or whose extension is in `editor_extensions` (case-insensitive).
+pub fn is_text_file(path: &Path, editor_extensions: &[String]) -> bool {
+    match path.extension() {
+        None => true,
+        Some(extension) => {
+            let extension = extension.to_string_lossy();
+            editor_extensions
+                .iter()
+                .any(|allowed| allowed.eq_ignore_ascii_case(&extension))
         }
     }
 }
@@ -205,20 +253,49 @@ mod tests {
             Some("not a git repository")
         );
 
-        // An existing folder entry (non-git) has no error.
+        // An existing path entry (non-git) has no error.
         let mut folder = Repo::new(PathBuf::from("/"));
-        folder.kind = RepoKind::Folder;
+        folder.kind = RepoKind::Path;
         assert!(folder.entry_error().is_none());
     }
 
     #[test]
     fn repo_kind_round_trips_through_config_value() {
-        for kind in [RepoKind::Git, RepoKind::Folder, RepoKind::File] {
+        for kind in [RepoKind::Git, RepoKind::Path] {
             assert_eq!(
                 RepoKind::from_config_value(kind.as_config_value()),
                 kind
             );
         }
         assert_eq!(RepoKind::from_config_value("unknown"), RepoKind::Git);
+        // Legacy values fold into Path.
+        assert_eq!(RepoKind::from_config_value("folder"), RepoKind::Path);
+        assert_eq!(RepoKind::from_config_value("file"), RepoKind::Path);
+    }
+
+    #[test]
+    fn classify_path_splits_folder_text_and_other() {
+        let exts = vec!["rs".to_string(), "md".to_string()];
+        // An existing directory is a folder.
+        assert_eq!(classify_path(Path::new("/"), &exts), PathClass::Folder);
+        // A non-existent path with a trailing slash is a folder.
+        assert_eq!(
+            classify_path(Path::new("/nope/dir/"), &exts),
+            PathClass::Folder
+        );
+        // Text extension and no extension open in the editor.
+        assert_eq!(
+            classify_path(Path::new("/x/main.rs"), &exts),
+            PathClass::TextFile
+        );
+        assert_eq!(
+            classify_path(Path::new("/x/Makefile"), &exts),
+            PathClass::TextFile
+        );
+        // Other extensions go to the default app.
+        assert_eq!(
+            classify_path(Path::new("/x/photo.png"), &exts),
+            PathClass::OtherFile
+        );
     }
 }

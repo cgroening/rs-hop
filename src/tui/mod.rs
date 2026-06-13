@@ -22,7 +22,7 @@ pub mod widgets;
 
 use std::collections::HashSet;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant};
@@ -42,7 +42,7 @@ pub use terminal::Tui;
 use crate::config::Config;
 use crate::domain::filter::{Tab, belongs_to_tab, fuzzy_indices};
 use crate::domain::path_repair::nearest_existing_on_disk;
-use crate::domain::repo::{Repo, RepoKind};
+use crate::domain::repo::{self, Repo, RepoKind};
 use crate::domain::sections;
 use crate::domain::sort::{SortMode, sort_indices};
 use crate::service::repo_service::RepoService;
@@ -76,6 +76,8 @@ pub enum RunOutcome {
     LaunchGitTool(PathBuf),
     /// Open this file in the editor, then exit.
     OpenFile(PathBuf),
+    /// Open this file with the platform's default application, then exit.
+    OpenWith(PathBuf),
 }
 
 /// An active modal layered over the list.
@@ -804,25 +806,44 @@ impl App {
             self.set_status(format!("could not record usage: {error}"));
         }
         match repo.kind {
-            RepoKind::File if launch_tool => {
-                Some(RunOutcome::OpenFile(repo.path))
-            }
-            RepoKind::File => {
-                let dir = repo
-                    .path
-                    .parent()
-                    .map_or_else(|| repo.path.clone(), |p| p.to_path_buf());
-                self.write_selected(&dir);
-                Some(RunOutcome::Jumped)
-            }
             RepoKind::Git if launch_tool => {
                 self.write_selected(&repo.path);
                 Some(RunOutcome::LaunchGitTool(repo.path))
             }
-            _ => {
+            RepoKind::Git => {
                 self.write_selected(&repo.path);
                 Some(RunOutcome::Jumped)
             }
+            RepoKind::Path => self.open_path_entry(repo, launch_tool),
+        }
+    }
+
+    /// Opens a file/folder entry: a folder `cd`s; on `o` (no launch) a file
+    /// `cd`s to its parent; on Enter a text file opens in the editor and any
+    /// other file in the default application.
+    fn open_path_entry(
+        &mut self,
+        repo: Repo,
+        launch_tool: bool,
+    ) -> Option<RunOutcome> {
+        let class =
+            repo::classify_path(&repo.path, &self.config.editor_extensions);
+        if class == repo::PathClass::Folder {
+            self.write_selected(&repo.path);
+            return Some(RunOutcome::Jumped);
+        }
+        if !launch_tool {
+            // Jump-only on a file lands the shell in its parent directory.
+            let dir = repo
+                .path
+                .parent()
+                .map_or_else(|| repo.path.clone(), Path::to_path_buf);
+            self.write_selected(&dir);
+            return Some(RunOutcome::Jumped);
+        }
+        match class {
+            repo::PathClass::TextFile => Some(RunOutcome::OpenFile(repo.path)),
+            _ => Some(RunOutcome::OpenWith(repo.path)),
         }
     }
 
@@ -838,7 +859,7 @@ impl App {
     fn open_add(&mut self) {
         let kind = match self.tab {
             Tab::GitRepos => RepoKind::Git,
-            _ => RepoKind::Folder,
+            _ => RepoKind::Path,
         };
         let form = RepoForm::for_add("", kind, self.service.sections());
         self.overlay = Overlay::Form(form, None);
@@ -1201,6 +1222,10 @@ impl App {
             return;
         }
         let section = draft.section.clone();
+        // A folder needs a trailing slash to be recognised before it exists.
+        let assumed_file = draft.kind == RepoKind::Path
+            && !draft.path.trim().ends_with('/')
+            && !path.exists();
         let (result, ok_message) = match index {
             Some(index) => {
                 let Some(mut repo) = self.service.get(index).cloned() else {
@@ -1215,12 +1240,16 @@ impl App {
                 (self.service.add(repo), "entry added")
             }
         };
-        if result.is_ok()
-            && let Some(name) = section
-        {
+        let saved = result.is_ok();
+        if saved && let Some(name) = section {
             let _ = self.service.ensure_section(&name);
         }
         self.report(result, ok_message);
+        if saved && assumed_file {
+            self.set_status(
+                "no trailing / — treated as a file (end with / for a folder)",
+            );
+        }
         if !self.config.example_mode {
             self.start_refresh(false);
         }
@@ -1676,7 +1705,7 @@ mod tests {
         let mut missing = Repo::new(PathBuf::from("/code/gone"));
         missing.slug = Some("gone".to_string());
         let mut folder = Repo::new(PathBuf::from("/notes"));
-        folder.kind = RepoKind::Folder;
+        folder.kind = RepoKind::Path;
         let mut archived = Repo::new(PathBuf::from("/old"));
         archived.archived = true;
         let dir = std::env::temp_dir()

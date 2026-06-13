@@ -139,7 +139,7 @@ impl RepoForm {
                 fields.push(Field::Slug);
                 fields.push(Field::Fav);
             }
-            RepoKind::Folder | RepoKind::File => {
+            RepoKind::Path => {
                 fields.push(Field::Section);
                 fields.push(Field::Slug);
             }
@@ -441,21 +441,21 @@ fn non_empty(value: String) -> Option<String> {
     }
 }
 
-/// The next kind in the cycle.
+/// The next kind in the cycle (git <-> file/folder).
 fn next_kind(kind: RepoKind) -> RepoKind {
-    match kind {
-        RepoKind::Git => RepoKind::Folder,
-        RepoKind::Folder => RepoKind::File,
-        RepoKind::File => RepoKind::Git,
-    }
+    toggle_kind(kind)
 }
 
-/// The previous kind in the cycle.
+/// The previous kind in the cycle (git <-> file/folder).
 fn prev_kind(kind: RepoKind) -> RepoKind {
+    toggle_kind(kind)
+}
+
+/// Toggles between the two kinds.
+fn toggle_kind(kind: RepoKind) -> RepoKind {
     match kind {
-        RepoKind::Git => RepoKind::File,
-        RepoKind::Folder => RepoKind::Git,
-        RepoKind::File => RepoKind::Folder,
+        RepoKind::Git => RepoKind::Path,
+        RepoKind::Path => RepoKind::Git,
     }
 }
 
@@ -463,8 +463,7 @@ fn prev_kind(kind: RepoKind) -> RepoKind {
 fn kind_label(kind: RepoKind) -> &'static str {
     match kind {
         RepoKind::Git => "git",
-        RepoKind::Folder => "folder",
-        RepoKind::File => "file",
+        RepoKind::Path => "file/folder",
     }
 }
 
@@ -493,7 +492,7 @@ mod tests {
         assert!(git.fields().contains(&Field::Fav));
         assert!(!git.fields().contains(&Field::Section));
 
-        let folder = RepoForm::for_add("/p", RepoKind::Folder, &[]);
+        let folder = RepoForm::for_add("/p", RepoKind::Path, &[]);
         assert!(folder.fields().contains(&Field::Section));
         assert!(!folder.fields().contains(&Field::Fav));
     }

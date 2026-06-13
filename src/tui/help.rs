@@ -18,8 +18,14 @@ const SHORTCUTS: &[(&str, &str)] = &[
         "toggle selection   ·   Shift+\u{2191}\u{2193}: extend range",
     ),
     ("Esc", "clear the selection"),
-    ("Enter", "open: write path + launch git tool, then exit"),
-    ("o", "jump only: write path and exit (cd, no tool)"),
+    (
+        "Enter",
+        "open: git -> tool · folder -> cd · text file -> editor · else app",
+    ),
+    (
+        "o",
+        "jump only: write path and exit (folder cd, file -> parent)",
+    ),
     ("f", "live fuzzy filter (Esc clears)"),
     ("s", "git tabs: cycle sort   ·   Files: jump to section"),
     ("M", "Files: manage sections (add / rename / delete / move)"),

@@ -16,7 +16,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState};
 use unicode_width::UnicodeWidthStr;
 
-use crate::domain::repo::{Repo, RepoKind};
+use crate::domain::repo::{Repo, is_dir_target};
 use crate::domain::sections::SectionGroup;
 use crate::tui::colors::{
     ACCENT, DANGER, DIM, FAVOURITE, MULTI_SELECT_BG, selection_style,
@@ -182,7 +182,7 @@ fn entry_item<'a>(
         Span::raw("  ")
     };
     let name = pad(&repo.display_name(), name_width);
-    let kind = pad(kind_label(repo.kind), TYPE_WIDTH);
+    let kind = pad(type_label(repo), TYPE_WIDTH);
     // Cells before the path: lead(2) + marker(1) + fav(1) + space(1) + name
     //  + gap(2) + type + gap(2).
     let used = 2 + 1 + 1 + 1 + name_width + 2 + TYPE_WIDTH + 2;
@@ -255,11 +255,11 @@ fn pad(text: &str, width: usize) -> String {
     }
 }
 
-/// The type label for the Files tab.
-fn kind_label(kind: RepoKind) -> &'static str {
-    match kind {
-        RepoKind::Git => "git",
-        RepoKind::Folder => "folder",
-        RepoKind::File => "file",
+/// The detected type label for an entry on the Files tab.
+fn type_label(repo: &Repo) -> &'static str {
+    if is_dir_target(&repo.path) {
+        "folder"
+    } else {
+        "file"
     }
 }

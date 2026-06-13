@@ -154,7 +154,7 @@ example_git_info = { current_branch_name = "main", status = "✓" }
         assert_eq!(repos[0].slug.as_deref(), Some("hop"));
         assert!(repos[0].fav);
         assert_eq!(repos[0].kind, RepoKind::Git);
-        assert_eq!(repos[1].kind, RepoKind::Folder);
+        assert_eq!(repos[1].kind, RepoKind::Path);
         assert!(repos[1].archived);
         let info = repos[1].example_git_info.as_ref().unwrap();
         assert_eq!(info.raw_status.as_deref(), Some("✓"));

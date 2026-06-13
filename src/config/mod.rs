@@ -10,6 +10,18 @@ pub mod loader;
 pub mod migrate;
 pub mod writer;
 
+/// File extensions opened in the editor (everything else uses the default app).
+/// Files without an extension count as text too. Overridable via the
+/// `editor_extensions` config key.
+pub const DEFAULT_EDITOR_EXTENSIONS: &[&str] = &[
+    "txt", "text", "md", "markdown", "rst", "org", "rs", "toml", "json",
+    "jsonc", "yaml", "yml", "ini", "cfg", "conf", "config", "env", "py", "js",
+    "mjs", "cjs", "ts", "tsx", "jsx", "sh", "bash", "zsh", "fish", "c", "h",
+    "cpp", "hpp", "cc", "hh", "go", "rb", "java", "kt", "kts", "swift", "php",
+    "pl", "lua", "vim", "html", "htm", "css", "scss", "sass", "xml", "csv",
+    "tsv", "sql", "tex", "log", "make", "mk",
+];
+
 /// Which glyph set the TUI renders, per the user's terminal support.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IconVariant {
@@ -92,6 +104,8 @@ pub struct Config {
     pub fetch_on_start: bool,
     /// Preferred editor for opening files (falls back to `$VISUAL`/`$EDITOR`).
     pub editor: Option<String>,
+    /// Extensions opened in the editor; other files use the default app.
+    pub editor_extensions: Vec<String>,
     /// Which glyph set to render.
     pub icons: IconVariant,
     /// Table column width budgets.
@@ -106,6 +120,10 @@ impl Default for Config {
             example_mode: false,
             fetch_on_start: false,
             editor: None,
+            editor_extensions: DEFAULT_EDITOR_EXTENSIONS
+                .iter()
+                .map(|ext| (*ext).to_string())
+                .collect(),
             icons: IconVariant::default(),
             column_widths: ColumnWidths::default(),
         }

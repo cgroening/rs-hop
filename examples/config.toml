@@ -3,7 +3,9 @@
 #   HOP_CONFIG=examples/config.toml cargo run
 #
 # It mixes a favourite, an archived entry, a deliberately broken path (shown
-# with a red "!" - press p to repair it), a folder and a file, plus a slug.
+# with a red "!" - press p to repair it), file/folder entries and a slug.
+# A "path" entry auto-detects folder vs file on open: a folder cds, a text
+# file opens in the editor, anything else opens with the default app.
 # The Files and Folders tab groups entries by section (press s to jump, M to
 # manage); entries without a section fall into "Ungrouped".
 
@@ -11,6 +13,7 @@ git_program = "lazygit"
 github_username = "cgroening"
 example_mode = false
 # fetch_on_start = false   # git fetch in the background when hop starts
+# editor_extensions = ["rs", "md", "txt"]   # override the built-in text list
 
 # Section order for the Files and Folders tab.
 sections = ["Code", "Docs"]
@@ -52,26 +55,27 @@ kind = "git"
 [[repos]]
 name = "Code folder"
 path = "/Users/cgroening/Documents/Code"
-kind = "folder"
+kind = "path"
 slug = "code"
 section = "Code"
 
 [[repos]]
 name = "Rust projects"
 path = "/Users/cgroening/Documents/Code/Rust"
-kind = "folder"
+kind = "path"
 section = "Code"
 
+# A file: opened in the editor (.md is a text extension).
 [[repos]]
 name = "hop README"
 path = "/Users/cgroening/Documents/Code/Rust/hop/README.md"
-kind = "file"
+kind = "path"
 section = "Docs"
 
 [[repos]]
 name = "Documents"
 path = "/Users/cgroening/Documents"
-kind = "folder"
+kind = "path"
 
 [[repos]]
 name = "Old project"

@@ -52,7 +52,7 @@ fn toml_backend_round_trips_and_preserves_settings() {
     let mut repos = repo.find_all().unwrap();
     assert_eq!(repos.len(), 2);
     assert_eq!(repos[0].slug.as_deref(), Some("hop"));
-    assert_eq!(repos[1].kind, RepoKind::Folder);
+    assert_eq!(repos[1].kind, RepoKind::Path);
     assert!(repos[1].archived);
 
     // Mutate and persist, then reload through a fresh backend.

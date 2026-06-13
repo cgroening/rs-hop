@@ -689,8 +689,8 @@ mod tests {
     fn update_changes_kind() {
         let mut svc = service(vec![repo("a")]);
         let mut edited = repo("a");
-        edited.kind = RepoKind::Folder;
+        edited.kind = RepoKind::Path;
         svc.update(0, edited).unwrap();
-        assert_eq!(svc.get(0).unwrap().kind, RepoKind::Folder);
+        assert_eq!(svc.get(0).unwrap().kind, RepoKind::Path);
     }
 }

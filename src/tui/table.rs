@@ -16,7 +16,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::config::{ColumnWidth, Config};
 use crate::domain::filter::Tab;
-use crate::domain::repo::{GitInfo, Repo, RepoKind};
+use crate::domain::repo::{GitInfo, Repo, is_dir_target};
 use crate::tui::colors::{
     ACCENT, CHANGES, DANGER, DIM, FAVOURITE, MULTI_SELECT_BG, POSITIVE,
     header_style, selection_style,
@@ -232,7 +232,7 @@ fn row_for<'a>(repo: &Repo, view: &TableView, selected: bool) -> Row<'a> {
     cells.push(Cell::from(repo.display_name()));
     match view.tab {
         Tab::FilesAndFolders => {
-            cells.push(Cell::from(kind_label(repo.kind)));
+            cells.push(Cell::from(type_label(repo)));
             cells.push(Cell::from(Span::styled(
                 repo.path.to_string_lossy().into_owned(),
                 Style::default().fg(DIM),
@@ -355,11 +355,11 @@ fn github_text(info: Option<&GitInfo>) -> String {
         .unwrap_or_else(|| "-".to_string())
 }
 
-/// The kind label for the Files and Folders tab.
-fn kind_label(kind: RepoKind) -> &'static str {
-    match kind {
-        RepoKind::Git => "git",
-        RepoKind::Folder => "folder",
-        RepoKind::File => "file",
+/// The detected type label for the Files and Folders tab.
+fn type_label(repo: &Repo) -> &'static str {
+    if is_dir_target(&repo.path) {
+        "folder"
+    } else {
+        "file"
     }
 }

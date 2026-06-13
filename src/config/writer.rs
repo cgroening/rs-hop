@@ -176,10 +176,10 @@ path = "/old"
     #[test]
     fn writes_kind_and_archived() {
         let mut folder = repo("notes", "/notes");
-        folder.kind = RepoKind::Folder;
+        folder.kind = RepoKind::Path;
         folder.archived = true;
         let out = repos_to_toml("", &[folder]).unwrap();
-        assert!(out.contains("kind = \"folder\""));
+        assert!(out.contains("kind = \"path\""));
         assert!(out.contains("archived = true"));
     }
 

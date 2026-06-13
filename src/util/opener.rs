@@ -30,6 +30,27 @@ pub fn open_in_editor(editor: &str, file: &Path) -> io::Result<ExitStatus> {
     command.status()
 }
 
+/// Opens `path` with the platform's default application (macOS `open`, Linux
+/// `xdg-open`, Windows `start`), e.g. an image in the system previewer.
+///
+/// # Errors
+/// Returns an I/O error if the opener program cannot be spawned.
+pub fn open_default_app(path: &Path) -> io::Result<ExitStatus> {
+    if cfg!(target_os = "windows") {
+        // `start` is a cmd builtin; the empty "" is its (ignored) window title.
+        return Command::new("cmd")
+            .args(["/C", "start", ""])
+            .arg(path)
+            .status();
+    }
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    Command::new(program).arg(path).status()
+}
+
 /// Resolves the editor to use: an explicit `configured` value, then `$VISUAL`,
 /// then `$EDITOR`, falling back to `vi`.
 pub fn resolve_editor(configured: Option<&str>) -> String {

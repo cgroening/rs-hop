@@ -16,14 +16,16 @@ use clap::{Parser, Subcommand};
 
 use crate::config::loader::load_config;
 use crate::config::{Config, migrate};
-use crate::domain::repo::{Repo, RepoKind};
+use crate::domain::repo::{self, PathClass, Repo, RepoKind, is_dir_target};
 use crate::service::repo_service::RepoService;
 use crate::storage::git_client::GitClient;
 use crate::storage::subprocess_git_client::SubprocessGitClient;
 use crate::storage::toml_repo_repository::TomlRepoRepository;
 use crate::tui::{self, App, RunOutcome, StartupStatus, Tui};
 use crate::util::app_info::{APP_ABOUT, APP_NAME, APP_VERSION};
-use crate::util::opener::{launch_git_tool, open_in_editor, resolve_editor};
+use crate::util::opener::{
+    launch_git_tool, open_default_app, open_in_editor, resolve_editor,
+};
 use crate::util::paths;
 
 /// Environment override for the config file path.
@@ -205,6 +207,10 @@ fn perform_outcome(config: &Config, outcome: RunOutcome) -> ExitCode {
             let _ = open_in_editor(&editor, &path);
             ExitCode::SUCCESS
         }
+        RunOutcome::OpenWith(path) => {
+            let _ = open_default_app(&path);
+            ExitCode::SUCCESS
+        }
     }
 }
 
@@ -306,18 +312,30 @@ fn perform_jump(
     }
     match repo.kind {
         RepoKind::Git => launch_tool(config, &repo.path),
-        RepoKind::File => {
-            let editor = resolve_editor(config.editor.as_deref());
-            let _ = open_in_editor(&editor, &repo.path);
-        }
-        RepoKind::Folder => {}
+        RepoKind::Path => open_path_target(config, repo),
     }
     ExitCode::SUCCESS
 }
 
+/// Opens a file/folder jump target: a folder needs nothing further (the path is
+/// already written), a text file opens in the editor, any other file in the
+/// default application.
+fn open_path_target(config: &Config, repo: &Repo) {
+    match repo::classify_path(&repo.path, &config.editor_extensions) {
+        PathClass::Folder => {}
+        PathClass::TextFile => {
+            let editor = resolve_editor(config.editor.as_deref());
+            let _ = open_in_editor(&editor, &repo.path);
+        }
+        PathClass::OtherFile => {
+            let _ = open_default_app(&repo.path);
+        }
+    }
+}
+
 /// The `cd` target for a jump: a file's parent, otherwise the entry path.
 fn jump_target(repo: &Repo) -> PathBuf {
-    if repo.kind == RepoKind::File {
+    if repo.kind == RepoKind::Path && !is_dir_target(&repo.path) {
         return repo
             .path
             .parent()

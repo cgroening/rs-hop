@@ -63,10 +63,7 @@ pub fn belongs_to_tab(repo: &Repo, tab: Tab) -> bool {
     match tab {
         Tab::Archive => repo.archived,
         Tab::GitRepos => !repo.archived && repo.kind == RepoKind::Git,
-        Tab::FilesAndFolders => {
-            !repo.archived
-                && matches!(repo.kind, RepoKind::Folder | RepoKind::File)
-        }
+        Tab::FilesAndFolders => !repo.archived && repo.kind == RepoKind::Path,
     }
 }
 
@@ -136,7 +133,7 @@ mod tests {
     #[test]
     fn git_tab_excludes_archived_and_non_git() {
         let mut folder = git("notes", false);
-        folder.kind = RepoKind::Folder;
+        folder.kind = RepoKind::Path;
         assert!(belongs_to_tab(&git("hop", false), Tab::GitRepos));
         assert!(!belongs_to_tab(&git("hop", true), Tab::GitRepos));
         assert!(!belongs_to_tab(&folder, Tab::GitRepos));
