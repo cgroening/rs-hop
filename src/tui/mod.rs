@@ -1249,12 +1249,14 @@ impl App {
         indices
     }
 
-    /// Toggles the favourite flag of the target entries (all on, else all off).
+    /// Toggles the favourite flag of the target entries (all on, else all off),
+    /// keeping the cursor on the same entry even as favourites re-sort.
     fn toggle_fav(&mut self) {
         let targets = self.targets();
         if targets.is_empty() {
             return;
         }
+        let focus = self.cursor_path();
         let all_fav = targets
             .iter()
             .all(|&i| self.service.get(i).is_some_and(|r| r.fav));
@@ -1262,6 +1264,26 @@ impl App {
             self.set_status(format!("could not change favourite: {error}"));
         }
         self.clear_selection();
+        self.refocus(focus);
+    }
+
+    /// The path of the entry under the cursor, if any.
+    fn cursor_path(&self) -> Option<PathBuf> {
+        self.selected_index()
+            .and_then(|index| self.service.get(index))
+            .map(|repo| repo.path.clone())
+    }
+
+    /// Moves the cursor onto the entry with `path`, if it is still visible.
+    fn refocus(&mut self, path: Option<PathBuf>) {
+        let Some(path) = path else {
+            return;
+        };
+        let view = self.ordered_view();
+        let repos = self.service.repos();
+        if let Some(pos) = view.iter().position(|&i| repos[i].path == path) {
+            self.cursor = pos;
+        }
     }
 
     /// Archives or restores the target entries (all archived, else all on) and
