@@ -26,26 +26,45 @@ for a one-word jump, sort modes and repair for paths that have moved.
 
 ## Install
 
+Install the binary globally from the project directory (puts `hop` in
+`~/.cargo/bin`, which is on your `PATH`):
+
 ```
-cargo build --release
-# the binary is at target.nosync/release/hop
+cargo install --path .
 ```
+
+Re-run the same command to update after code changes; `cargo uninstall hop`
+removes it. (For a local build without installing, use `cargo build --release`;
+the binary is then at `target.nosync/release/hop`.)
 
 ## Shell integration (zsh)
 
-hop writes the chosen path to `$XDG_STATE_HOME/hop/selected-repo.txt` (default
-`~/.local/state/hop/selected-repo.txt`). Wrap the binary so your shell `cd`s
-there after hop exits:
+The binary alone writes the chosen path and exits - it cannot change your
+shell's directory. Wrap it in a shell function so your shell `cd`s into the
+selected entry after hop exits. hop writes that path to
+`$XDG_STATE_HOME/hop/selected-repo.txt` (default
+`~/.local/state/hop/selected-repo.txt`).
+
+Add this to a sourced zsh file (e.g. `~/.zshrc`, or a functions file it
+sources):
 
 ```zsh
+# Run hop, then cd into the selected entry after it exits.
 hop() {
     command hop "$@"
     local f="${XDG_STATE_HOME:-$HOME/.local/state}/hop/selected-repo.txt"
     [[ -f "$f" ]] && { local d="$(cat "$f")"; [[ -d "$d" ]] && cd "$d"; }
 }
+
+# Optional short alias.
+alias hp='hop'
 ```
 
-Now `hop` opens the TUI and drops you into the selected directory, and
+The function is named `hop` and shadows the binary; it runs the real binary via
+`command hop`, so there is no conflict. Reload with `source ~/.zshrc` (or open a
+new shell).
+
+Now `hop` (or `hp`) opens the TUI and drops you into the selected directory, and
 `hop <slug>` jumps directly.
 
 ## Configuration
