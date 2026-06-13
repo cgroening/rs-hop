@@ -414,6 +414,36 @@ mod tests {
     }
 
     #[test]
+    fn status_text_formats_counts_and_clean() {
+        let icons = IconSet::new(IconVariant::Ascii);
+        // Invalid -> dash.
+        let invalid = GitInfo::default();
+        assert_eq!(status_text(&invalid, &icons), "-");
+        // A clean valid tree -> the clean marker.
+        let clean = GitInfo {
+            valid: true,
+            ..GitInfo::default()
+        };
+        assert_eq!(status_text(&clean, &icons), "ok");
+        // Changes and ahead are formatted with their icons (changes, then
+        // behind, then ahead).
+        let dirty = GitInfo {
+            valid: true,
+            changes: Some(2),
+            ahead: Some(1),
+            ..GitInfo::default()
+        };
+        assert_eq!(status_text(&dirty, &icons), "~2 ^1");
+        // A verbatim raw status wins.
+        let raw = GitInfo {
+            valid: true,
+            raw_status: Some("custom".to_string()),
+            ..GitInfo::default()
+        };
+        assert_eq!(status_text(&raw, &icons), "custom");
+    }
+
+    #[test]
     fn highlight_name_marks_matched_chars() {
         // No query -> a single plain span.
         assert_eq!(highlight_name("hop", "").len(), 1);

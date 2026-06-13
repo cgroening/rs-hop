@@ -304,11 +304,7 @@ fn cmd_add(
     let raw = path.unwrap_or_else(|| PathBuf::from("."));
     let expanded = paths::expand_tilde(&raw.to_string_lossy());
     let absolute = std::path::absolute(&expanded).unwrap_or(expanded);
-    let kind = match kind {
-        Some(value) => RepoKind::from_config_value(value),
-        None if absolute.join(".git").exists() => RepoKind::Git,
-        None => RepoKind::Path,
-    };
+    let kind = resolve_kind(kind.as_deref(), absolute.join(".git").exists());
     let mut repo = Repo::new(absolute.clone());
     repo.name = name.clone();
     repo.slug = slug.clone();
@@ -322,6 +318,16 @@ fn cmd_add(
     }
     println!("Added {} ({})", absolute.display(), kind.as_config_value());
     ExitCode::SUCCESS
+}
+
+/// The entry kind for `hop add`: an explicit `--kind` value, else auto-detected
+/// (`Git` when the path holds a `.git`, otherwise `Path`).
+fn resolve_kind(explicit: Option<&str>, has_git_dir: bool) -> RepoKind {
+    match explicit {
+        Some(value) => RepoKind::from_config_value(value),
+        None if has_git_dir => RepoKind::Git,
+        None => RepoKind::Path,
+    }
 }
 
 /// Handles `hop <slug>`: records the open, writes the handoff path and launches
@@ -435,5 +441,68 @@ fn cmd_import(from: Option<PathBuf>, config_path: &Path) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => output::report_error(&error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(name: &str, kind: RepoKind, path: &str) -> Repo {
+        let mut repo = Repo::new(PathBuf::from(path));
+        repo.name = Some(name.to_string());
+        repo.kind = kind;
+        repo
+    }
+
+    #[test]
+    fn parse_jump_args_extracts_slug_and_save_only() {
+        assert_eq!(
+            parse_jump_args(&["hop".to_string()], false),
+            (Some("hop".to_string()), false)
+        );
+        assert_eq!(
+            parse_jump_args(&["-s".to_string(), "hop".to_string()], false),
+            (Some("hop".to_string()), true)
+        );
+        // The CLI flag forces save-only even without `-s` in the args.
+        assert_eq!(
+            parse_jump_args(&["hop".to_string()], true),
+            (Some("hop".to_string()), true)
+        );
+        assert_eq!(parse_jump_args(&[], false), (None, false));
+    }
+
+    #[test]
+    fn jump_target_uses_parent_only_for_files() {
+        // A git entry jumps to its own path.
+        let git = entry("hop", RepoKind::Git, "/code/hop");
+        assert_eq!(jump_target(&git), PathBuf::from("/code/hop"));
+        // A folder path (trailing slash) jumps to itself.
+        let folder = entry("docs", RepoKind::Path, "/code/docs/");
+        assert_eq!(jump_target(&folder), PathBuf::from("/code/docs/"));
+        // A file path jumps to its parent directory.
+        let file = entry("readme", RepoKind::Path, "/code/hop/README.md");
+        assert_eq!(jump_target(&file), PathBuf::from("/code/hop"));
+    }
+
+    #[test]
+    fn list_line_includes_slug_kind_and_flags() {
+        let mut repo = entry("hop", RepoKind::Git, "/code/hop");
+        repo.slug = Some("hp".to_string());
+        repo.fav = true;
+        let line = list_line(&repo);
+        assert!(line.starts_with("[hp] hop\t"));
+        assert!(line.contains("\tgit\t/code/hop"));
+        assert!(line.ends_with("(fav)"));
+    }
+
+    #[test]
+    fn resolve_kind_honours_explicit_then_auto_detects() {
+        assert_eq!(resolve_kind(Some("git"), false), RepoKind::Git);
+        assert_eq!(resolve_kind(Some("path"), true), RepoKind::Path);
+        assert_eq!(resolve_kind(Some("folder"), false), RepoKind::Path);
+        assert_eq!(resolve_kind(None, true), RepoKind::Git);
+        assert_eq!(resolve_kind(None, false), RepoKind::Path);
     }
 }

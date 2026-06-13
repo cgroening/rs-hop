@@ -296,19 +296,9 @@ impl App {
         indices
     }
 
-    /// Whether `repo` passes the changes-only filter: non-git entries always
-    /// pass; a git entry passes only when its (live or example) status is not
-    /// clean. The Files tab keeps all its entries (so its grouping is intact).
+    /// Whether `repo` passes the changes-only filter (see [`repo_has_change`]).
     fn shows_change(&self, repo: &Repo) -> bool {
-        if repo.kind != RepoKind::Git {
-            return true;
-        }
-        let info = if self.config.example_mode {
-            repo.example_git_info.as_ref()
-        } else {
-            repo.git_info.as_ref()
-        };
-        info.is_some_and(|info| !info.is_clean())
+        repo_has_change(repo, self.config.example_mode)
     }
 
     /// Whether the live fuzzy filter is currently narrowing the list.
@@ -2061,6 +2051,20 @@ fn relative_age(age: chrono::Duration) -> String {
     format!("{}m", age.num_minutes().max(0))
 }
 
+/// Whether `repo` passes the changes-only filter: non-git entries always pass;
+/// a git entry passes only when its (live or example) status is not clean.
+fn repo_has_change(repo: &Repo, example_mode: bool) -> bool {
+    if repo.kind != RepoKind::Git {
+        return true;
+    }
+    let info = if example_mode {
+        repo.example_git_info.as_ref()
+    } else {
+        repo.git_info.as_ref()
+    };
+    info.is_some_and(|info| !info.is_clean())
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -2165,5 +2169,40 @@ mod tests {
             KeyModifiers::CONTROL,
         ));
         assert!(matches!(outcome, Some(RunOutcome::Quit)));
+    }
+
+    #[test]
+    fn relative_age_picks_the_largest_unit() {
+        assert_eq!(relative_age(chrono::Duration::days(3)), "3d");
+        assert_eq!(relative_age(chrono::Duration::hours(5)), "5h");
+        assert_eq!(relative_age(chrono::Duration::minutes(12)), "12m");
+        assert_eq!(relative_age(chrono::Duration::seconds(-30)), "0m");
+    }
+
+    #[test]
+    fn changes_filter_keeps_non_git_and_dirty_git() {
+        use crate::domain::repo::GitInfo;
+        // A non-git entry always passes.
+        let mut folder = Repo::new(PathBuf::from("/notes"));
+        folder.kind = RepoKind::Path;
+        assert!(repo_has_change(&folder, false));
+
+        // A git entry with no info or a clean tree is filtered out.
+        let mut clean = Repo::new(PathBuf::from("/clean"));
+        assert!(!repo_has_change(&clean, false));
+        clean.git_info = Some(GitInfo {
+            valid: true,
+            ..GitInfo::default()
+        });
+        assert!(!repo_has_change(&clean, false));
+
+        // A git entry with changes passes.
+        let mut dirty = Repo::new(PathBuf::from("/dirty"));
+        dirty.git_info = Some(GitInfo {
+            valid: true,
+            changes: Some(2),
+            ..GitInfo::default()
+        });
+        assert!(repo_has_change(&dirty, false));
     }
 }

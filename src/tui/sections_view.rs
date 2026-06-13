@@ -311,3 +311,36 @@ fn type_label(repo: &Repo) -> &'static str {
         "file"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settled_offset_pages_and_snaps() {
+        // Cursor visible near the top: snap to 0 (only headers would hide).
+        assert_eq!(settled_offset(0, 1, 1, 10, 5), 0);
+        // Cursor below the viewport: scroll so it is the last visible row.
+        assert_eq!(settled_offset(0, 8, 1, 20, 5), 4);
+        // Cursor above the saved offset: scroll back up to it.
+        assert_eq!(settled_offset(6, 2, 1, 20, 5), 2);
+        // An offset at/under the first entry row snaps to the very top.
+        assert_eq!(settled_offset(1, 1, 2, 10, 5), 0);
+    }
+
+    #[test]
+    fn pad_fills_or_truncates() {
+        assert_eq!(pad("ab", 5), "ab   ");
+        assert_eq!(pad("abcdef", 4), "abc…");
+    }
+
+    #[test]
+    fn name_field_spans_adds_slug_only_with_room() {
+        // No slug -> one padded span.
+        assert_eq!(name_field_spans("hop", None, 10).len(), 1);
+        // Slug with room -> name + slug + padding.
+        assert_eq!(name_field_spans("hop", Some("hp"), 12).len(), 3);
+        // Too narrow for a slug -> just the padded name.
+        assert_eq!(name_field_spans("hop", Some("hp"), 4).len(), 1);
+    }
+}
