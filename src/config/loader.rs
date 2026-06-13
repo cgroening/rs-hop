@@ -154,7 +154,7 @@ mod tests {
         let config = build(RawConfig::default());
         assert_eq!(config.git_program.as_deref(), Some("lazygit"));
         assert!(!config.example_mode);
-        assert_eq!(config.icons, IconVariant::NerdFont);
+        assert_eq!(config.icons, IconVariant::Unicode);
         assert_eq!(config.column_widths, ColumnWidths::default());
     }
 

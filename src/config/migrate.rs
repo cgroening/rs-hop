@@ -97,7 +97,7 @@ pub fn yaml_to_toml(yaml: &str) -> Result<String> {
     doc["example_mode"] = toml_edit::value(config.example_mode);
 
     let mut icons = Table::new();
-    icons["variant"] = toml_edit::value("nerdfont");
+    icons["variant"] = toml_edit::value("unicode");
     doc["icons"] = Item::Table(icons);
 
     if !config.column_widths.is_empty() {

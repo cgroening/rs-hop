@@ -10,7 +10,7 @@ github_username = "cgroening"
 example_mode = false
 
 [icons]
-variant = "nerdfont"   # nerdfont | unicode | ascii
+variant = "unicode"   # unicode | ascii
 
 [column_widths]
 name = 30

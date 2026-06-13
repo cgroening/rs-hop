@@ -10,25 +10,22 @@ pub mod loader;
 pub mod migrate;
 pub mod writer;
 
-/// Which glyph set the TUI renders, per the user's terminal/font support.
+/// Which glyph set the TUI renders, per the user's terminal support.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IconVariant {
-    /// Nerd Font icons (the polished default).
+    /// Plain Unicode symbols (the default): width-consistent across terminals.
     #[default]
-    NerdFont,
-    /// Plain Unicode symbols.
     Unicode,
     /// ASCII-only fallback.
     Ascii,
 }
 
 impl IconVariant {
-    /// Parses the config string value, defaulting to [`IconVariant::NerdFont`].
+    /// Parses the config string value, defaulting to [`IconVariant::Unicode`].
     pub fn from_config_value(value: &str) -> Self {
         match value.trim().to_lowercase().as_str() {
-            "unicode" => IconVariant::Unicode,
             "ascii" => IconVariant::Ascii,
-            _ => IconVariant::NerdFont,
+            _ => IconVariant::Unicode,
         }
     }
 }

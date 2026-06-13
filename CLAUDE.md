@@ -59,7 +59,7 @@ src/
     mod.rs        App + run loop (poll + drain status) + key handling + render
     terminal.rs   Tui RAII guard (raw mode + alt screen)
     colors.rs     named colour constants + header/selection styles
-    presentation.rs IconSet (3-tier glyphs), status_text, truncate, footer,
+    presentation.rs IconSet (Unicode/ASCII glyphs), status_text, truncate, footer,
                   scrollbar, empty hint
     text_input.rs single-line input with a block caret (the one edit primitive)
     navigation.rs cyclic cursor helper
@@ -93,6 +93,7 @@ src/
 - Build artifacts go to `target.nosync/` (set in `.cargo/config.toml`) to keep them out of iCloud.
 - **Never commit.** At the end of a change, propose one imperative English commit-message title only.
 - TUI is verified manually in a real terminal; the pure layers carry the tests.
+- **Icons: two tiers only - `unicode` (default) and `ascii`** (`config.icons.variant`, `IconVariant`/`IconSet`). No Nerd Font glyphs and no colourful emoji: a Nerd Font icon sits in the Private Use Area where `unicode-width` reports one cell but many terminals render two, which clipped the column and made markers render at half width. Every glyph in `IconSet` must be a single-cell symbol.
 
 ## 6. Verify after every change (all must pass)
 

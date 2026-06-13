@@ -1,9 +1,9 @@
-//! Glyphs (three tiers), status formatting and shared rendering helpers.
+//! Glyphs (two tiers), status formatting and shared rendering helpers.
 //!
-//! Every marker is defined in three tiers - a Nerd Font icon, a plain Unicode
-//! symbol and an ASCII fallback - and the configured [`IconVariant`] selects
-//! which renders, so a polished look stays possible without excluding terminals
-//! that lack the font.
+//! Every marker is defined in two tiers - a plain Unicode symbol and an
+//! ASCII-only fallback - and the configured [`IconVariant`] selects which
+//! renders. All glyphs are single-cell (no Nerd Font, no emoji) so column
+//! layout matches what the terminal draws.
 
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
@@ -18,7 +18,9 @@ use crate::config::IconVariant;
 use crate::domain::repo::GitInfo;
 use crate::tui::colors::{ACCENT, DIM};
 
-/// The resolved glyph set for the active icon variant.
+/// The resolved glyph set for the active icon variant. Every glyph is a
+/// single-cell symbol (no Nerd Font icons, no colourful emoji), so column
+/// layout matches what the terminal draws.
 #[derive(Debug, Clone, Copy)]
 pub struct IconSet {
     /// Marker shown when a path no longer exists.
@@ -33,26 +35,12 @@ pub struct IconSet {
     pub ahead: &'static str,
     /// Behind-upstream marker (prefixes the count).
     pub behind: &'static str,
-    /// Folder marker (Files and Folders tab).
-    pub folder: &'static str,
-    /// File marker (Files and Folders tab).
-    pub file: &'static str,
 }
 
 impl IconSet {
     /// Builds the glyph set for `variant`.
     pub fn new(variant: IconVariant) -> Self {
         match variant {
-            IconVariant::NerdFont => IconSet {
-                missing: "\u{f071}",   // nf-fa-warning
-                favourite: "\u{f005}", // nf-fa-star
-                clean: "\u{f00c}",     // nf-fa-check
-                changes: "\u{f448}",   // nf-oct-diff
-                ahead: "\u{f062}",     // nf-fa-arrow_up
-                behind: "\u{f063}",    // nf-fa-arrow_down
-                folder: "\u{f07b}",    // nf-fa-folder
-                file: "\u{f15b}",      // nf-fa-file
-            },
             IconVariant::Unicode => IconSet {
                 missing: "!",
                 favourite: "\u{2605}", // ★
@@ -60,8 +48,6 @@ impl IconSet {
                 changes: "\u{2260}",   // ≠
                 ahead: "\u{2191}",     // ↑
                 behind: "\u{2193}",    // ↓
-                folder: "\u{1f4c1}",   // 📁
-                file: "\u{1f4c4}",     // 📄
             },
             IconVariant::Ascii => IconSet {
                 missing: "!",
@@ -70,8 +56,6 @@ impl IconSet {
                 changes: "~",
                 ahead: "^",
                 behind: "v",
-                folder: "d",
-                file: "f",
             },
         }
     }

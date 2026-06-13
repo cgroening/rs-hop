@@ -22,7 +22,7 @@ for a one-word jump, sort modes and repair for paths that have moved.
 - **Sort modes**: favourites first, most recently used, or by name.
 - **Missing-path marker** (a red `!`) with a picker that opens at the closest
   existing ancestor to repair the path.
-- **Three icon tiers** (Nerd Font / Unicode / ASCII), selectable in the config.
+- **Two icon tiers** (Unicode by default, or ASCII), selectable in the config.
 
 ## Install
 
@@ -63,7 +63,7 @@ example_mode = false           # show example_git_info instead of real status
 # editor = "nvim"              # for opening files; else $VISUAL / $EDITOR
 
 [icons]
-variant = "nerdfont"           # nerdfont | unicode | ascii
+variant = "unicode"            # unicode | ascii
 
 [column_widths]
 name = 30
