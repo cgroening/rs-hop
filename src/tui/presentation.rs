@@ -35,7 +35,18 @@ pub struct IconSet {
     pub ahead: &'static str,
     /// Behind-upstream marker (prefixes the count).
     pub behind: &'static str,
+    /// Animation frames for the "refreshing" spinner (single-cell each).
+    pub spinner: &'static [&'static str],
 }
+
+/// Braille spinner frames (single-cell, widely supported).
+const UNICODE_SPINNER: &[&str] = &[
+    "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}",
+    "\u{2826}", "\u{2827}", "\u{2807}", "\u{280f}",
+];
+
+/// ASCII spinner frames.
+const ASCII_SPINNER: &[&str] = &["|", "/", "-", "\\"];
 
 impl IconSet {
     /// Builds the glyph set for `variant`.
@@ -48,6 +59,7 @@ impl IconSet {
                 changes: "\u{2260}",   // ≠
                 ahead: "\u{2191}",     // ↑
                 behind: "\u{2193}",    // ↓
+                spinner: UNICODE_SPINNER,
             },
             IconVariant::Ascii => IconSet {
                 missing: "!",
@@ -56,6 +68,7 @@ impl IconSet {
                 changes: "~",
                 ahead: "^",
                 behind: "v",
+                spinner: ASCII_SPINNER,
             },
         }
     }

@@ -17,7 +17,8 @@ use crate::config::{ColumnWidth, Config};
 use crate::domain::filter::Tab;
 use crate::domain::repo::{GitInfo, Repo, RepoKind};
 use crate::tui::colors::{
-    CHANGES, DANGER, DIM, FAVOURITE, POSITIVE, header_style, selection_style,
+    ACCENT, CHANGES, DANGER, DIM, FAVOURITE, POSITIVE, header_style,
+    selection_style,
 };
 use crate::tui::presentation::{
     IconSet, render_scrollbar, status_text, truncate,
@@ -34,9 +35,10 @@ pub struct TableView<'a> {
     pub icons: &'a IconSet,
     /// Whether to show example git info instead of live status.
     pub example_mode: bool,
-    /// While a refresh runs, the paths already updated this pass; rows whose
-    /// path is absent show a pending marker. `None` when no refresh is running.
-    pub refreshed: Option<&'a HashSet<PathBuf>>,
+    /// While a refresh runs: the still-in-flight paths and the current spinner
+    /// frame glyph. Rows whose path is in the set show the spinner. `None` when
+    /// no refresh is running.
+    pub spinner: Option<(&'a HashSet<PathBuf>, &'a str)>,
 }
 
 /// The git info to display for `repo`: example info in example mode, otherwise
@@ -194,11 +196,14 @@ fn status_cell<'a>(
     info: Option<&GitInfo>,
     view: &TableView,
 ) -> Cell<'a> {
-    // A refresh is running and this row has not been updated yet this pass.
-    if let Some(refreshed) = view.refreshed
-        && !refreshed.contains(&repo.path)
+    // A refresh is running and this row is still in flight: animated spinner.
+    if let Some((in_flight, glyph)) = view.spinner
+        && in_flight.contains(&repo.path)
     {
-        return Cell::from(Span::styled("…", Style::default().fg(DIM)));
+        return Cell::from(Span::styled(
+            glyph.to_string(),
+            Style::default().fg(ACCENT),
+        ));
     }
     let width = min(view.config.column_widths.status) as usize;
     let Some(info) = info else {

@@ -112,7 +112,11 @@ pub struct App {
     last_fetched: Option<DateTime<Local>>,
     refresh_fetched: bool,
     status_rx: Option<Receiver<crate::service::status_service::StatusUpdate>>,
-    collected: Vec<(PathBuf, crate::domain::repo::GitInfo)>,
+    /// Paths in the active refresh that have not been updated yet (drive the
+    /// per-row spinner). Empty when no refresh is running.
+    refreshing: HashSet<PathBuf>,
+    /// When the active refresh started, for animating the spinner frame.
+    refresh_started: Instant,
 }
 
 /// How the status is sourced on start.
@@ -158,7 +162,8 @@ impl App {
             last_fetched: cached.fetched_at,
             refresh_fetched: false,
             status_rx: None,
-            collected: Vec::new(),
+            refreshing: HashSet::new(),
+            refresh_started: Instant::now(),
         };
         if let StartupStatus::Refresh { fetch } = startup
             && !app.config.example_mode
@@ -228,7 +233,8 @@ impl App {
         if paths.is_empty() {
             return;
         }
-        self.collected.clear();
+        self.refreshing = paths.iter().cloned().collect();
+        self.refresh_started = Instant::now();
         self.loading = Some((0, paths.len()));
         self.refresh_fetched = fetch;
         self.status_rx =
@@ -244,9 +250,8 @@ impl App {
         loop {
             match rx.try_recv() {
                 Ok(update) => {
-                    self.service
-                        .set_git_info(&update.path, update.info.clone());
-                    self.collected.push((update.path, update.info));
+                    self.service.set_git_info(&update.path, update.info);
+                    self.refreshing.remove(&update.path);
                     if let Some((done, _)) = &mut self.loading {
                         *done += 1;
                     }
@@ -276,9 +281,25 @@ impl App {
                 .collect();
             let _ = cache::save(&self.cache_path, &infos, self.last_fetched);
             self.loading = None;
+            self.refreshing.clear();
         } else {
             self.status_rx = Some(rx);
         }
+    }
+
+    /// Whether a background status refresh is currently running.
+    fn is_refreshing(&self) -> bool {
+        self.status_rx.is_some()
+    }
+
+    /// The current spinner frame glyph, if a refresh is running.
+    fn spinner_frame(&self) -> Option<&'static str> {
+        if self.refreshing.is_empty() {
+            return None;
+        }
+        let frames = self.icons.spinner;
+        let index = (self.refresh_started.elapsed().as_millis() / 120) as usize;
+        Some(frames[index % frames.len()])
     }
 }
 
@@ -290,7 +311,9 @@ pub fn run(mut app: App, tui: &mut Tui) -> io::Result<RunOutcome> {
     loop {
         tui.terminal.draw(|frame| app.render(frame))?;
         app.drain_status();
-        if event::poll(Duration::from_millis(150))?
+        // Poll faster while refreshing so the spinner animates smoothly.
+        let timeout = if app.is_refreshing() { 80 } else { 150 };
+        if event::poll(Duration::from_millis(timeout))?
             && let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
             && let Some(outcome) = app.handle_key(key)
@@ -696,7 +719,8 @@ impl App {
         };
         let path = repo.path.clone();
         let name = repo.display_name();
-        self.collected.clear();
+        self.refreshing = std::iter::once(path.clone()).collect();
+        self.refresh_started = Instant::now();
         self.loading = None; // no full-width bar for a single entry
         self.refresh_fetched = false;
         self.set_status(format!("refreshing {name}…"));
@@ -935,20 +959,15 @@ impl App {
         let repos = self.service.repos();
         let visible: Vec<&Repo> = view.iter().map(|&i| &repos[i]).collect();
         let cursor = self.cursor.min(visible.len() - 1);
-        // While a refresh is running, the paths already updated this pass; rows
-        // not yet in this set show a pending marker in the status column.
-        let refreshed: Option<HashSet<PathBuf>> = self.loading.map(|_| {
-            self.collected
-                .iter()
-                .map(|(path, _)| path.clone())
-                .collect()
-        });
+        // Rows still in flight show an animated spinner in the status column.
+        let spinner =
+            self.spinner_frame().map(|glyph| (&self.refreshing, glyph));
         let table_view = table::TableView {
             tab: self.tab,
             config: &self.config,
             icons: &self.icons,
             example_mode: self.config.example_mode,
-            refreshed: refreshed.as_ref(),
+            spinner,
         };
         table::render_table(frame, area, &visible, cursor, &table_view);
     }
