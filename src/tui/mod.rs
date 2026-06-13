@@ -360,6 +360,7 @@ impl App {
             KeyCode::Char('e') => self.open_edit_form(),
             KeyCode::Char('d') => self.open_delete_confirm(),
             KeyCode::Char('z') => self.toggle_fav(),
+            KeyCode::Char('y') => self.copy_path(),
             KeyCode::Char('A') => self.toggle_archive(),
             KeyCode::Char('S') => self.open_slug_prompt(),
             KeyCode::Char('p') => self.open_repair_picker(),
@@ -515,6 +516,21 @@ impl App {
             PathPicker::new(&start, false),
             PickerIntent::Repair(index),
         );
+    }
+
+    /// Copies the selected entry's path to the system clipboard.
+    fn copy_path(&mut self) {
+        let Some(index) = self.selected_index() else {
+            return;
+        };
+        let Some(repo) = self.service.get(index) else {
+            return;
+        };
+        let path = repo.path.to_string_lossy().into_owned();
+        match crate::util::clipboard::copy(&path) {
+            Ok(()) => self.set_status("copied path to clipboard"),
+            Err(error) => self.set_status(format!("copy failed: {error}")),
+        }
     }
 
     /// Toggles the favourite flag of the selected entry.
@@ -818,6 +834,7 @@ fn hints(_tab: Tab) -> Vec<(&'static str, &'static str)> {
         ("z", "fav"),
         ("A", "archive"),
         ("S", "slug"),
+        ("y", "copy path"),
         ("p", "fix path"),
         ("?", "help"),
     ]

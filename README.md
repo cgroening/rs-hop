@@ -139,6 +139,7 @@ hop config-path     print the resolved config file path
 | `z` | toggle favourite |
 | `A` | archive / restore the selected entry |
 | `S` | set or change the slug |
+| `y` | copy the selected entry's path to the clipboard |
 | `p` | repair a missing path |
 | `r` | reload git status   ·   `R`: `git fetch` + reload |
 | `?` | toggle the help overlay |
