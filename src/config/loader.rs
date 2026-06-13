@@ -25,6 +25,7 @@ struct RawConfig {
     git_program: Option<String>,
     github_username: Option<String>,
     example_mode: Option<bool>,
+    fetch_on_start: Option<bool>,
     editor: Option<String>,
     icons: Option<RawIcons>,
     column_widths: Option<HashMap<String, RawColumnWidth>>,
@@ -95,6 +96,7 @@ fn build(raw: RawConfig) -> Config {
         git_program: raw.git_program.or(defaults.git_program),
         github_username: raw.github_username.or(defaults.github_username),
         example_mode: raw.example_mode.unwrap_or(defaults.example_mode),
+        fetch_on_start: raw.fetch_on_start.unwrap_or(defaults.fetch_on_start),
         editor: raw.editor.or(defaults.editor),
         icons: raw
             .icons
@@ -154,6 +156,7 @@ mod tests {
         let config = build(RawConfig::default());
         assert_eq!(config.git_program.as_deref(), Some("lazygit"));
         assert!(!config.example_mode);
+        assert!(!config.fetch_on_start);
         assert_eq!(config.icons, IconVariant::Unicode);
         assert_eq!(config.column_widths, ColumnWidths::default());
     }
@@ -164,6 +167,7 @@ mod tests {
 git_program = "gitui"
 github_username = "cgroening"
 example_mode = true
+fetch_on_start = true
 
 [icons]
 variant = "ascii"
@@ -183,6 +187,7 @@ path = "/tmp/x"
         assert_eq!(config.git_program.as_deref(), Some("gitui"));
         assert_eq!(config.github_username.as_deref(), Some("cgroening"));
         assert!(config.example_mode);
+        assert!(config.fetch_on_start);
         assert_eq!(config.icons, IconVariant::Ascii);
         assert_eq!(config.column_widths.name, ColumnWidth::min(40));
         assert_eq!(

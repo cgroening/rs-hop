@@ -107,14 +107,26 @@ pub struct App {
     collected: Vec<(PathBuf, crate::domain::repo::GitInfo)>,
 }
 
+/// How the status is sourced on start.
+pub enum StartupStatus {
+    /// Show only the cache; do not run git at all (`--cached`).
+    Cached,
+    /// Refresh status in the background, optionally fetching first.
+    Refresh {
+        /// Whether to `git fetch` before gathering status.
+        fetch: bool,
+    },
+}
+
 impl App {
-    /// Builds the app, hydrates status from the cache and starts a background
-    /// refresh.
+    /// Builds the app, hydrates status from the cache and, unless `--cached` or
+    /// example mode, starts a background refresh (fetching first when asked).
     pub fn new(
         config: Config,
         service: RepoService,
         git_client: Arc<dyn GitClient>,
         cache_path: PathBuf,
+        startup: StartupStatus,
     ) -> Self {
         let icons = IconSet::new(config.icons);
         let cached = cache::load(&cache_path);
@@ -138,8 +150,10 @@ impl App {
             status_rx: None,
             collected: Vec::new(),
         };
-        if !app.config.example_mode {
-            app.start_refresh(false);
+        if let StartupStatus::Refresh { fetch } = startup
+            && !app.config.example_mode
+        {
+            app.start_refresh(fetch);
         }
         app
     }
@@ -865,7 +879,13 @@ mod tests {
             icons: IconVariant::Ascii,
             ..Config::default()
         };
-        App::new(config, service, Arc::new(NoGit), dir.join("cache.toml"))
+        App::new(
+            config,
+            service,
+            Arc::new(NoGit),
+            dir.join("cache.toml"),
+            StartupStatus::Refresh { fetch: false },
+        )
     }
 
     fn press(app: &mut App, code: KeyCode) {

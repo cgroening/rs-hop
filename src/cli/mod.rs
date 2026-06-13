@@ -18,9 +18,10 @@ use crate::config::loader::load_config;
 use crate::config::{Config, migrate};
 use crate::domain::repo::{Repo, RepoKind};
 use crate::service::repo_service::RepoService;
+use crate::storage::git_client::GitClient;
 use crate::storage::subprocess_git_client::SubprocessGitClient;
 use crate::storage::toml_repo_repository::TomlRepoRepository;
-use crate::tui::{self, App, RunOutcome, Tui};
+use crate::tui::{self, App, RunOutcome, StartupStatus, Tui};
 use crate::util::app_info::{APP_ABOUT, APP_NAME, APP_VERSION};
 use crate::util::opener::{launch_git_tool, open_in_editor, resolve_editor};
 use crate::util::paths;
@@ -95,11 +96,26 @@ fn run_with_service(cli: Cli, config_path: PathBuf) -> ExitCode {
         Err(error) => return output::report_error(&error),
     };
     match &cli.command {
-        None => run_tui(config, service),
+        None => {
+            let startup = startup_status(&cli, &config);
+            run_tui(config, service, startup)
+        }
         Some(Command::List) => cmd_list(&config, &service, &cli),
         Some(Command::Jump(args)) => cmd_jump(&config, service, args, &cli),
         // ConfigPath and Import are handled before the service is built.
         Some(Command::ConfigPath | Command::Import { .. }) => ExitCode::SUCCESS,
+    }
+}
+
+/// Derives the TUI's startup status source from the flags and config:
+/// `--cached` shows only the cache, otherwise refresh (fetching first when
+/// `--fetch` is set or `fetch_on_start` is enabled).
+fn startup_status(cli: &Cli, config: &Config) -> StartupStatus {
+    if cli.cached {
+        return StartupStatus::Cached;
+    }
+    StartupStatus::Refresh {
+        fetch: cli.fetch || config.fetch_on_start,
     }
 }
 
@@ -149,11 +165,20 @@ fn auto_migrate_if_needed(cli: &Cli, config_path: &Path) {
 }
 
 /// Opens the interactive TUI and performs the chosen post-exit action.
-fn run_tui(config: Config, service: RepoService) -> ExitCode {
+fn run_tui(
+    config: Config,
+    service: RepoService,
+    startup: StartupStatus,
+) -> ExitCode {
     let git_client =
         Arc::new(SubprocessGitClient::new(config.github_username.clone()));
-    let app =
-        App::new(config.clone(), service, git_client, paths::cache_file());
+    let app = App::new(
+        config.clone(),
+        service,
+        git_client,
+        paths::cache_file(),
+        startup,
+    );
     let mut tui = match Tui::new() {
         Ok(tui) => tui,
         Err(error) => return output::fail(&format!("terminal: {error}")),
@@ -202,7 +227,8 @@ fn cmd_list(_config: &Config, service: &RepoService, cli: &Cli) -> ExitCode {
     for repo in repos {
         println!("{}", list_line(repo));
     }
-    // The flags exist for parity with the TUI; status is shown there.
+    // `list` prints stored fields only (no git status), so the status flags do
+    // not apply here; they affect the TUI and `hop <slug> --fetch`.
     let _ = (cli.fetch, cli.cached);
     ExitCode::SUCCESS
 }
@@ -254,6 +280,11 @@ fn cmd_jump(
     };
     if let Err(error) = service.mark_used(index) {
         return output::report_error(&error);
+    }
+    // `--fetch`: update the repo's remote refs before launching the tool.
+    if cli.fetch && repo.kind == RepoKind::Git {
+        SubprocessGitClient::new(config.github_username.clone())
+            .fetch(&repo.path);
     }
     perform_jump(config, &service, &repo, save_only)
 }

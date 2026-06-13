@@ -8,6 +8,7 @@
 git_program = "lazygit"
 github_username = "cgroening"
 example_mode = false
+# fetch_on_start = false   # git fetch in the background when hop starts
 
 [icons]
 variant = "unicode"   # unicode | ascii

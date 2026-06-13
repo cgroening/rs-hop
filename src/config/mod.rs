@@ -88,6 +88,8 @@ pub struct Config {
     pub github_username: Option<String>,
     /// When true, show each entry's `example_git_info` instead of real status.
     pub example_mode: bool,
+    /// When true, run `git fetch` before the initial status refresh on start.
+    pub fetch_on_start: bool,
     /// Preferred editor for opening files (falls back to `$VISUAL`/`$EDITOR`).
     pub editor: Option<String>,
     /// Which glyph set to render.
@@ -102,6 +104,7 @@ impl Default for Config {
             git_program: Some("lazygit".to_string()),
             github_username: None,
             example_mode: false,
+            fetch_on_start: false,
             editor: None,
             icons: IconVariant::default(),
             column_widths: ColumnWidths::default(),

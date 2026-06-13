@@ -79,6 +79,7 @@ you can also run `hop import --from <path>` to convert any git-repo-jumper
 git_program = "lazygit"        # tool launched for git repos; omit to disable
 github_username = "you"        # stripped from displayed remote names
 example_mode = false           # show example_git_info instead of real status
+fetch_on_start = false         # git fetch in the background when hop starts
 # editor = "nvim"              # for opening files; else $VISUAL / $EDITOR
 
 [icons]
@@ -118,7 +119,8 @@ hop list            list entries as plain text
 hop import [--from PATH]  import a git-repo-jumper config.yaml
 hop config-path     print the resolved config file path
 -C / --config PATH  use a specific config file (also via HOP_CONFIG)
---fetch / --cached  fetch before / use cached git status
+--fetch             git fetch first (TUI: on start; hop <slug>: before launching)
+--cached            TUI: show only cached status, run no git
 ```
 
 ## Keyboard shortcuts
