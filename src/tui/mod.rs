@@ -113,7 +113,7 @@ enum PickerIntent {
     /// Repair the path of the entry at this index.
     Repair(usize),
     /// Fill the path field of a form already in progress.
-    FormPath(RepoForm, Option<usize>),
+    FormPath(Box<RepoForm>, Option<usize>),
 }
 
 /// The interactive application state.
@@ -840,8 +840,7 @@ impl App {
             Tab::GitRepos => RepoKind::Git,
             _ => RepoKind::Folder,
         };
-        let form = RepoForm::for_add("", kind)
-            .with_known_sections(self.service.sections());
+        let form = RepoForm::for_add("", kind, self.service.sections());
         self.overlay = Overlay::Form(form, None);
     }
 
@@ -856,7 +855,7 @@ impl App {
         };
         self.overlay = Overlay::Picker(
             PathPicker::new(&start, true),
-            PickerIntent::FormPath(form, index),
+            PickerIntent::FormPath(Box::new(form), index),
         );
     }
 
@@ -872,8 +871,7 @@ impl App {
         let Some(repo) = self.service.get(index) else {
             return;
         };
-        let form = RepoForm::for_edit(repo)
-            .with_known_sections(self.service.sections());
+        let form = RepoForm::for_edit(repo, self.service.sections());
         self.overlay = Overlay::Form(form, Some(index));
     }
 
@@ -1246,7 +1244,7 @@ impl App {
             }
             PickerIntent::FormPath(mut form, index) => {
                 form.set_path(&path.to_string_lossy());
-                self.overlay = Overlay::Form(form, index);
+                self.overlay = Overlay::Form(*form, index);
             }
         }
     }
