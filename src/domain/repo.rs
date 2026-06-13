@@ -111,6 +111,17 @@ pub struct GitInfo {
     pub raw_status: Option<String>,
 }
 
+impl GitInfo {
+    /// Whether the working tree is clean: no override status, and no changes,
+    /// ahead or behind counts.
+    pub fn is_clean(&self) -> bool {
+        self.raw_status.is_none()
+            && self.changes.unwrap_or(0) == 0
+            && self.ahead.unwrap_or(0) == 0
+            && self.behind.unwrap_or(0) == 0
+    }
+}
+
 /// A managed entry: a git repository, an arbitrary folder, or a file.
 ///
 /// `git_info`, `last_used` and `open_count` are runtime fields hydrated from the

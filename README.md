@@ -147,6 +147,7 @@ hop config-path     print the resolved config file path
 | `o` | jump only: write path and exit (folder → cd, file → its parent) |
 | `O` | force open with the default app (regardless of kind) |
 | `f` | live fuzzy filter (`Esc` clears) |
+| `F` | toggle showing only git repos with a status change |
 | `s` | git tabs: cycle sort (name / recent / custom) · Files: jump to a section |
 | `M` | Files tab: manage sections (add / rename / delete / reorder) |
 | `Alt+↑/↓` | reorder the entry (custom sort, or within a Files section; favourites stay on top) |

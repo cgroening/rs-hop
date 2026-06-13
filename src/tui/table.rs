@@ -338,7 +338,7 @@ fn status_cell<'a>(
     }
     // The status column is sized to its content, so no truncation is needed.
     let text = status_text(info, view.icons);
-    let style = if is_clean(info) {
+    let style = if info.is_clean() {
         Style::default().fg(POSITIVE)
     } else if has_changes(info) {
         Style::default().fg(CHANGES)
@@ -351,14 +351,6 @@ fn status_cell<'a>(
 /// Whether the info reports uncommitted changes (a non-clean working tree).
 fn has_changes(info: &GitInfo) -> bool {
     info.changes.unwrap_or(0) > 0
-}
-
-/// Whether the structured info reports a clean tree (no override).
-fn is_clean(info: &GitInfo) -> bool {
-    info.raw_status.is_none()
-        && info.changes.unwrap_or(0) == 0
-        && info.ahead.unwrap_or(0) == 0
-        && info.behind.unwrap_or(0) == 0
 }
 
 /// The branch text, or a loading marker / dash.

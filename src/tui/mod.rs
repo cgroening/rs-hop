@@ -161,6 +161,8 @@ pub struct App {
     files_missing: HashSet<PathBuf>,
     /// Whether slugs are shown inline (dim, italic) after the entry name.
     show_slugs: bool,
+    /// When on, only git entries with a status change are shown (session-only).
+    changes_only: bool,
 }
 
 /// How the status is sourced on start.
@@ -218,6 +220,7 @@ impl App {
             refreshed_tabs: HashSet::new(),
             files_missing: HashSet::new(),
             show_slugs: ui.show_slugs,
+            changes_only: false,
         };
         if let StartupStatus::Refresh { fetch } = startup
             && !app.config.example_mode
@@ -249,22 +252,42 @@ impl App {
         let repos = self.service.repos();
         let tab_indices = self.tab_indices();
         let query = self.filter.value();
-        if self.filtering_active() {
+        let mut indices = if self.filtering_active() {
             let subset: Vec<Repo> =
                 tab_indices.iter().map(|&i| repos[i].clone()).collect();
-            return fuzzy_indices(&subset, &query)
+            fuzzy_indices(&subset, &query)
                 .into_iter()
                 .map(|pos| tab_indices[pos])
-                .collect();
+                .collect()
+        } else if self.is_sectioned() {
+            // The Files tab groups entries by section (favourites floated
+            // within each group).
+            sections::flatten(&self.section_groups())
+        } else {
+            // The git tabs apply the chosen sort mode.
+            let mut indices = tab_indices;
+            sort_indices(repos, &mut indices, self.sort);
+            indices
+        };
+        if self.changes_only {
+            indices.retain(|&i| self.shows_change(&repos[i]));
         }
-        // The Files tab groups entries by section (favourites floated within
-        // each group); the git tabs apply the chosen sort mode.
-        if self.is_sectioned() {
-            return sections::flatten(&self.section_groups());
-        }
-        let mut indices = tab_indices;
-        sort_indices(repos, &mut indices, self.sort);
         indices
+    }
+
+    /// Whether `repo` passes the changes-only filter: non-git entries always
+    /// pass; a git entry passes only when its (live or example) status is not
+    /// clean. The Files tab keeps all its entries (so its grouping is intact).
+    fn shows_change(&self, repo: &Repo) -> bool {
+        if repo.kind != RepoKind::Git {
+            return true;
+        }
+        let info = if self.config.example_mode {
+            repo.example_git_info.as_ref()
+        } else {
+            repo.git_info.as_ref()
+        };
+        info.is_some_and(|info| !info.is_clean())
     }
 
     /// Whether the live fuzzy filter is currently narrowing the list.
@@ -696,6 +719,7 @@ impl App {
             KeyCode::Char('O') => return self.force_open_with(),
             KeyCode::Char('q') => return Some(RunOutcome::Quit),
             KeyCode::Char('f') => self.filtering = true,
+            KeyCode::Char('F') => self.toggle_changes_only(),
             KeyCode::Char('s') if self.is_sectioned() => {
                 self.open_section_jump()
             }
@@ -807,6 +831,20 @@ impl App {
     fn toggle_slugs(&mut self) {
         self.show_slugs = !self.show_slugs;
         self.save_ui_state();
+    }
+
+    /// Toggles the changes-only filter (git entries with a status change),
+    /// keeping the cursor in range. Session-only (not persisted).
+    fn toggle_changes_only(&mut self) {
+        self.changes_only = !self.changes_only;
+        self.clear_selection();
+        let len = self.ordered_view().len();
+        self.clamp_cursor(len);
+        self.set_status(if self.changes_only {
+            "showing changed repos only"
+        } else {
+            "showing all entries"
+        });
     }
 
     /// Persists the sort mode, active tab and slug display (best-effort).
@@ -1677,6 +1715,7 @@ fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
         ("O", "open in app"),
         ("Space", "select"),
         ("f", "filter"),
+        ("F", "changes"),
     ];
     // The Files tab groups into sections: s jumps, M manages them.
     if tab == Tab::FilesAndFolders {

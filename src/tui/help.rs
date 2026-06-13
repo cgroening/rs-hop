@@ -31,6 +31,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
         "force open with the default app (e.g. a text file in its GUI app)",
     ),
     ("f", "live fuzzy filter (Esc clears)"),
+    ("F", "toggle showing only git repos with a status change"),
     ("s", "git tabs: cycle sort   ·   Files: jump to section"),
     ("M", "Files: manage sections (add / rename / delete / move)"),
     (
