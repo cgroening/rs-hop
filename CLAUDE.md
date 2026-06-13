@@ -20,7 +20,8 @@ Main screen: **ratatui** + **crossterm** TUI with three tabs (Git Repos / Files 
 - **Header box**: a rounded bordered box (`render_header`) with the `hop` brand + `[n] Label` tabs (active tab in `colors::tab_active()`, the accent's hue complement) on line 1, and one combined info line (`render_info`) on line 2: error count, entry count, sort, local status time and remote fetch time, each behind an `IconSet` glyph, in `colors::MUTED`. While `loading` the info line becomes the centred progress bar (`render_progress`). The remote segment warns (amber `colors::CHANGES`) when over 24h old or never fetched. `fetched_at` is persisted in the git-info cache (`cache::save(.., fetched_at)`), updated only when a refresh actually fetched (`App::refresh_fetched`). During a refresh, rows not yet updated this pass show an animated spinner in the status column (`TableView::spinner`, from `App::refreshing`).
 - **Entry errors**: `Repo::entry_error` (pure) reports a missing path or an invalid git entry. The displayed error is gated by kind through `App::path_error`: **git** entries are flagged live (via `entry_error`, driven by the background refresh); **`Path`** (file/folder) entries only after an existence check — `check_files_existence` stats every `Path` entry and records the missing ones in `App::files_missing`. It runs on the **first visit** to the Files tab (via `refresh_tab_on_first_visit`, including at startup when that tab is active, skipped in `example_mode`) and again on every `r` there; it is never run continuously/live. The marker `!` (in `tui::table` for git/archive and `tui::sections_view` for files, both fed `&files_missing`), the header error count and the `!` error list all use `path_error`. `!` opens the error list (`Overlay::Errors`); selecting one opens an action menu (`Overlay::ErrorAction`: repair path / edit / delete) reusing the index-parameterised `repair_picker_for`/`edit_form_for`/`delete_confirm_for`.
 - **Kinds and opening.** `RepoKind` is `Git | Path` (the legacy `folder`/`file` config values fold into `Path`; `as_config_value` writes `"path"`). A `Path` entry is told apart at open time by `domain::repo::classify_path(path, &editor_extensions) -> PathClass { Folder, TextFile, OtherFile }`: an existing dir (or a non-existent path written with a trailing `/`, via `is_dir_target`) is a Folder; otherwise a file split by `is_text_file` (no extension, or an extension in `Config::editor_extensions`, default `DEFAULT_EDITOR_EXTENSIONS`). **Opening** (`tui::open_selected` -> `RunOutcome`, acted on by `cli` after the terminal is restored): Enter launches the git tool (Git), `cd`s (Folder), opens `$EDITOR` (TextFile -> `RunOutcome::OpenFile`) or the OS default app (OtherFile -> `RunOutcome::OpenWith` -> `util::opener::open_default_app`, macOS `open`); `o` writes the handoff path only (a file `cd`s to its parent). The add/edit form warns when a `Path` is saved without a trailing `/` and the path does not exist (assumed a file). `hop <slug>` mirrors Enter; `--save-only`/`-s` mirrors `o`.
-- **Slugs** (`domain::slug`) are `[a-z0-9-]+`, validated against reserved command names (`list`, `import`, `config-path`, `help`) and for uniqueness by the service.
+- **Slugs** (`domain::slug`) are `[a-z0-9-]+`, validated against reserved command names (`domain::slug::RESERVED`: `add`, `scan`, `doctor`, `list`, `import`, `config-path`, `help`) and for uniqueness by the service. A CLI test (`every_subcommand_name_is_a_reserved_slug`) cross-checks `RESERVED` against the clap subcommands so a new command can't be shadowed by a slug.
+- **CLI add / scan.** `hop add [PATH]` registers one entry (auto-detecting kind via `resolve_kind`). `hop scan [DIR] [--depth N] [--nested] [--dry-run]` discovers git work trees (`util::scan::find_git_repos`, std-fs walk, prunes hidden/`node_modules`/`target`, no symlinks, stops at `.git` unless `--nested`), drops the already-known ones (`partition_found` on canonical paths) and imports the chosen ones from a multi-select picker (`tui::scan_picker`) via `RepoService::add_many` (one undo frame). `hop doctor` reports problems via the pure `domain::doctor::diagnose` (missing path, git entry that is not a repo, malformed slug, duplicate slug) and exits non-zero when any are found.
 - **Multi-select / bulk**: `App::selected` (service indices) + `anchor`; `Space` toggles, `Shift+↑/↓` ranges (`extend_selection`), `Esc`/tab-switch clears. `App::targets()` returns the selection or the cursor entry; `d`/`A`/`z`/`x` act on it via the service bulk methods (`delete_many`/`set_archived_many`/`set_fav_many`, each one undo frame) and clear the selection. Selected rows get the `colors::MULTI_SELECT_BG` tint (`TableView::selected`).
 - **Custom order / reorder**: `SortMode::Custom` keeps the stored `[[repos]]` order (favourites floated on top, stable). `Alt+↑/↓` (`move_entry`, only in custom sort) swaps the cursor entry with its neighbour within the same favourite group via `RepoService::swap_entries`, which persists the new `[[repos]]` order. Footer hints are tab-specific (`hints(tab)`); the Archive tab shows `A: restore`, the Git tab shows the refresh keys. The sort mode, active tab, inline-slug toggle **and preview-panel mode** are persisted across runs in `$XDG_STATE_HOME/hop/ui-state.toml` (`storage::ui_state` holds `UiState { sort, tab, show_slugs, preview }`; `preview` is a raw key string since the `PreviewMode` enum lives in the TUI layer; loaded in `App::new`, written together via `save_ui_state` so no field clobbers another). `Tab::as_key`/`Tab::from_key` map the tab to/from its stored string. `i` toggles `App::show_slugs`: when on, the slug is rendered inline after the name (dim + italic, no separate column) via `presentation::name_spans`/`name_plain`/`slug_style`, used by both `tui::table` and `tui::sections_view`; the name column is sized to include it.
 - **Missing paths**: the table shows a red `!` in the leftmost column; `p` opens the path picker at the nearest existing ancestor (`domain::path_repair::nearest_existing`).
@@ -42,6 +43,7 @@ src/
     slug.rs         slugify + validate_format (reserved names) (pure)
     filter.rs       Tab, belongs_to_tab, searchable_text, fuzzy_indices
     sections.rs     group / flatten / section_starts / jump_target (pure)
+    doctor.rs       diagnose(repos, exists, is_git) -> Vec<Issue> (pure)
     path_repair.rs  nearest_existing ancestor (pure, predicate-injected)
     error.rs        Error (thiserror) + Result alias
   storage/
@@ -62,7 +64,7 @@ src/
     migrate.rs git-repo-jumper YAML -> TOML (show -> archived inverted)
   cli/
     mod.rs    clap Cli/Command; bare -> TUI; external-subcommand slug jump;
-              add / list / import / config-path; composition root for commands
+              add / scan / doctor / list / import / config-path; comp. root
     output.rs error reporting at the binary edge
   tui/
     mod.rs        App + run loop (poll + drain status) + key handling + render
@@ -75,6 +77,7 @@ src/
     table.rs      repo table rendering + column widths (TableView context)
     sections_view.rs Files-tab List of section headers + entry rows (carried offset)
     sections_modal.rs manage-sections overlay (add/rename/delete/reorder)
+    scan_picker.rs  standalone multi-select picker for `hop scan` (own Tui)
     preview.rs    detail panel (PreviewMode off/right/bottom) + git-log lines
     widgets.rs    confirm / text prompt / select modals + centered_rect
     path_picker.rs filesystem picker (repair / form path), starts near a path
@@ -84,6 +87,7 @@ src/
     paths.rs      XDG (Unix) / %APPDATA%,%LOCALAPPDATA% (Windows) + ~ expansion
     opener.rs     launch git tool / editor / default app / url (cross-platform)
     clipboard.rs  copy via pbcopy / clip / wl-copy|xclip|xsel (cross-platform)
+    scan.rs       recursive git-repo discovery for `hop scan` (std fs walk)
     logging.rs    file-only log backend
     app_info.rs   APP_NAME / APP_VERSION / APP_ABOUT
 ```

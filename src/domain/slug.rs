@@ -8,7 +8,15 @@ use crate::domain::error::{Error, Result};
 
 /// Subcommand names a slug must never shadow (`hop <reserved>` is a command).
 /// Kept in sync with the clap subcommands; a CLI test cross-checks it.
-pub const RESERVED: &[&str] = &["add", "list", "import", "config-path", "help"];
+pub const RESERVED: &[&str] = &[
+    "add",
+    "scan",
+    "doctor",
+    "list",
+    "import",
+    "config-path",
+    "help",
+];
 
 /// Maximum slug length, keeping shortcuts terse.
 const MAX_LEN: usize = 40;

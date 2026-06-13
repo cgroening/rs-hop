@@ -1,5 +1,6 @@
 //! Domain layer: entities and pure logic, free of I/O, config and UI.
 
+pub mod doctor;
 pub mod error;
 pub mod filter;
 pub mod path_repair;

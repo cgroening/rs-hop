@@ -5,3 +5,4 @@ pub mod clipboard;
 pub mod logging;
 pub mod opener;
 pub mod paths;
+pub mod scan;

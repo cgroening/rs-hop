@@ -86,6 +86,27 @@ impl RepoService {
         })
     }
 
+    /// Adds several entries as one undo-able action (used by `hop scan`).
+    /// A no-op for an empty list.
+    ///
+    /// # Errors
+    /// Returns [`Error::Slug`] for an invalid or duplicate slug, or a write
+    /// error if persistence fails.
+    pub fn add_many(&mut self, repos: Vec<Repo>) -> Result<()> {
+        if repos.is_empty() {
+            return Ok(());
+        }
+        for repo in &repos {
+            if let Some(slug) = &repo.slug {
+                self.check_slug(slug, None)?;
+            }
+        }
+        self.mutate("add entries", |existing| {
+            existing.extend(repos);
+            Ok(())
+        })
+    }
+
     /// Replaces the entry at `index` with `repo`, validating its slug.
     ///
     /// # Errors
@@ -683,6 +704,21 @@ mod tests {
         svc.delete(0).unwrap();
         assert_eq!(svc.repos().len(), 1);
         assert_eq!(svc.get(0).unwrap().display_name(), "b");
+    }
+
+    #[test]
+    fn add_many_appends_all_in_one_action() {
+        let mut svc = service(vec![repo("a")]);
+        svc.add_many(vec![repo("b"), repo("c")]).unwrap();
+        let names: Vec<_> =
+            svc.repos().iter().map(Repo::display_name).collect();
+        assert_eq!(names, vec!["a", "b", "c"]);
+        // One undo frame reverts the whole batch.
+        svc.undo().unwrap();
+        assert_eq!(svc.repos().len(), 1);
+        // An empty batch is a no-op.
+        svc.add_many(vec![]).unwrap();
+        assert_eq!(svc.repos().len(), 1);
     }
 
     #[test]

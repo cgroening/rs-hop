@@ -14,6 +14,7 @@ pub mod navigation;
 pub mod path_picker;
 pub mod presentation;
 pub mod preview;
+pub mod scan_picker;
 pub mod sections_modal;
 pub mod sections_view;
 pub mod table;

@@ -8,6 +8,7 @@
 
 mod output;
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -16,6 +17,7 @@ use clap::{Parser, Subcommand};
 
 use crate::config::loader::load_config;
 use crate::config::{Config, migrate};
+use crate::domain::doctor;
 use crate::domain::repo::{self, PathClass, Repo, RepoKind, is_dir_target};
 use crate::service::repo_service::RepoService;
 use crate::storage::git_client::GitClient;
@@ -27,6 +29,7 @@ use crate::util::opener::{
     launch_git_tool, open_default_app, open_in_editor, resolve_editor,
 };
 use crate::util::paths;
+use crate::util::scan::{self, ScanOptions};
 
 /// Environment override for the config file path.
 const CONFIG_ENV: &str = "HOP_CONFIG";
@@ -82,6 +85,22 @@ enum Command {
         #[arg(long)]
         kind: Option<String>,
     },
+    /// Scan a directory for git repos and import the chosen ones.
+    Scan {
+        /// Directory to scan (default: `.`).
+        dir: Option<PathBuf>,
+        /// Maximum recursion depth below the directory.
+        #[arg(long)]
+        depth: Option<usize>,
+        /// Keep descending into found repos (find nested repos/submodules).
+        #[arg(long)]
+        nested: bool,
+        /// Only list what would be imported; do not change the config.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Report problems with the entries (missing paths, bad/duplicate slugs).
+    Doctor,
     /// Jump to a slug (`hop <slug>`).
     #[command(external_subcommand)]
     Jump(Vec<String>),
@@ -128,6 +147,13 @@ fn run_with_service(cli: Cli, config_path: PathBuf) -> ExitCode {
             name,
             kind,
         }) => cmd_add(service, path.clone(), slug, section, name, kind),
+        Some(Command::Scan {
+            dir,
+            depth,
+            nested,
+            dry_run,
+        }) => cmd_scan(service, dir.clone(), *depth, *nested, *dry_run),
+        Some(Command::Doctor) => cmd_doctor(&service),
         // ConfigPath and Import are handled before the service is built.
         Some(Command::ConfigPath | Command::Import { .. }) => ExitCode::SUCCESS,
     }
@@ -330,6 +356,119 @@ fn resolve_kind(explicit: Option<&str>, has_git_dir: bool) -> RepoKind {
     }
 }
 
+/// Handles `hop scan`: discovers git repos under a directory and imports the
+/// ones chosen in the picker (or all found, with `--dry-run` printing only).
+fn cmd_scan(
+    mut service: RepoService,
+    dir: Option<PathBuf>,
+    depth: Option<usize>,
+    nested: bool,
+    dry_run: bool,
+) -> ExitCode {
+    let raw = dir.unwrap_or_else(|| PathBuf::from("."));
+    let expanded = paths::expand_tilde(&raw.to_string_lossy());
+    let root = std::path::absolute(&expanded).unwrap_or(expanded);
+    let found = scan::find_git_repos(
+        &root,
+        ScanOptions {
+            max_depth: depth,
+            nested,
+        },
+    );
+    let known: HashSet<String> =
+        service.repos().iter().map(|r| canon_key(&r.path)).collect();
+    let (new, duplicates) = partition_found(&found, &known, canon_key);
+
+    if new.is_empty() {
+        println!("No new git repos under {}.", root.display());
+        return ExitCode::SUCCESS;
+    }
+    if dry_run {
+        println!("{} new git repo(s) under {}:", new.len(), root.display());
+        for path in &new {
+            println!("  {}", path.display());
+        }
+        if !duplicates.is_empty() {
+            println!("({} already in hop)", duplicates.len());
+        }
+        return ExitCode::SUCCESS;
+    }
+
+    let chosen = match tui::scan_picker::run(&new, &duplicates) {
+        Ok(Some(chosen)) => chosen,
+        Ok(None) => {
+            println!("Cancelled.");
+            return ExitCode::SUCCESS;
+        }
+        Err(error) => return output::fail(&format!("terminal: {error}")),
+    };
+    if chosen.is_empty() {
+        println!("Nothing selected.");
+        return ExitCode::SUCCESS;
+    }
+    let count = chosen.len();
+    let repos: Vec<Repo> = chosen
+        .into_iter()
+        .map(|path| {
+            let mut repo = Repo::new(path);
+            repo.kind = RepoKind::Git;
+            repo
+        })
+        .collect();
+    if let Err(error) = service.add_many(repos) {
+        return output::report_error(&error);
+    }
+    println!("Added {count} git repo(s).");
+    ExitCode::SUCCESS
+}
+
+/// Handles `hop doctor`: reports entry problems and exits non-zero when any are
+/// found.
+fn cmd_doctor(service: &RepoService) -> ExitCode {
+    let issues = doctor::diagnose(
+        service.repos(),
+        |path| path.exists(),
+        |path| path.join(".git").exists(),
+    );
+    if issues.is_empty() {
+        println!("hop doctor: no issues.");
+        return ExitCode::SUCCESS;
+    }
+    println!("hop doctor: {} issue(s)", issues.len());
+    for issue in &issues {
+        println!("  {issue}");
+    }
+    ExitCode::FAILURE
+}
+
+/// Splits `found` into (new, already-known) by comparing each path's canonical
+/// key against `known`. The `canon` function is injected so it is testable.
+fn partition_found(
+    found: &[PathBuf],
+    known: &HashSet<String>,
+    canon: impl Fn(&Path) -> String,
+) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let mut new = Vec::new();
+    let mut duplicates = Vec::new();
+    for path in found {
+        if known.contains(&canon(path)) {
+            duplicates.push(path.clone());
+        } else {
+            new.push(path.clone());
+        }
+    }
+    (new, duplicates)
+}
+
+/// A canonical comparison key for a path (resolves symlinks/`..` when possible,
+/// else the path as-is).
+fn canon_key(path: &Path) -> String {
+    std::fs::canonicalize(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// Handles `hop <slug>`: records the open, writes the handoff path and launches
 /// the git tool (unless `--save-only`).
 fn cmd_jump(
@@ -513,6 +652,26 @@ mod tests {
         assert!(line.starts_with("[hp] hop\t"));
         assert!(line.contains("\tgit\t/code/hop"));
         assert!(line.ends_with("(fav)"));
+    }
+
+    #[test]
+    fn partition_found_splits_new_from_known() {
+        let found = vec![
+            PathBuf::from("/code/a"),
+            PathBuf::from("/code/b"),
+            PathBuf::from("/code/c"),
+        ];
+        let known: HashSet<String> =
+            ["/code/b".to_string()].into_iter().collect();
+        // Identity canon so the test stays pure (no filesystem).
+        let (new, dups) = partition_found(&found, &known, |p| {
+            p.to_string_lossy().into_owned()
+        });
+        assert_eq!(
+            new,
+            vec![PathBuf::from("/code/a"), PathBuf::from("/code/c")]
+        );
+        assert_eq!(dups, vec![PathBuf::from("/code/b")]);
     }
 
     #[test]

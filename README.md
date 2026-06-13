@@ -25,6 +25,9 @@ for a one-word jump, sort modes and repair for paths that have moved.
   system's default app.
 - **Slugs**: `hop <slug>` jumps straight to an entry from the shell;
   `hop add [PATH]` registers one without opening the TUI.
+- **Bulk import**: `hop scan [DIR]` finds git repos recursively and offers them
+  in a multi-select picker (`--dry-run` to preview, `--nested` for repos inside
+  repos).
 - **Sort modes**: by name, most recently used, frecency (frequency weighted by
   recency), or a custom drag order; favourites are pinned to the top (except in
   the recent view).
@@ -150,6 +153,8 @@ hop                 open the TUI
 hop <slug>          jump to a slug: write the path + launch the git tool
 hop <slug> -s       jump only: write the path, no tool (cd)
 hop add [PATH]      add an entry (default: the current dir; --slug/--section/--name/--kind)
+hop scan [DIR]      find git repos under DIR and import the chosen ones (--depth N / --nested / --dry-run)
+hop doctor          report problems (missing paths, bad/duplicate slugs); non-zero exit on issues
 hop list            list entries as plain text
 hop import [--from PATH]  import a git-repo-jumper config.yaml
 hop config-path     print the resolved config file path
