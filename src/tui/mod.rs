@@ -679,6 +679,7 @@ impl App {
             KeyCode::Esc => self.clear_selection(),
             KeyCode::Enter => return self.open_selected(true),
             KeyCode::Char('o') => return self.open_selected(false),
+            KeyCode::Char('O') => return self.force_open_with(),
             KeyCode::Char('q') => return Some(RunOutcome::Quit),
             KeyCode::Char('f') => self.filtering = true,
             KeyCode::Char('s') if self.is_sectioned() => {
@@ -845,6 +846,18 @@ impl App {
             repo::PathClass::TextFile => Some(RunOutcome::OpenFile(repo.path)),
             _ => Some(RunOutcome::OpenWith(repo.path)),
         }
+    }
+
+    /// Opens the selected entry with the platform's default application,
+    /// regardless of its kind (forces a text file into its GUI app, or reveals
+    /// a folder in the file manager). Does not `cd`.
+    fn force_open_with(&mut self) -> Option<RunOutcome> {
+        let index = self.selected_index()?;
+        let repo = self.service.get(index)?.clone();
+        if let Err(error) = self.service.mark_used(index) {
+            self.set_status(format!("could not record usage: {error}"));
+        }
+        Some(RunOutcome::OpenWith(repo.path))
     }
 
     /// Writes the selected-repo handoff file, surfacing any error.
@@ -1578,6 +1591,7 @@ fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
     let mut hints: Vec<(&str, &str)> = vec![
         ("Enter", "open"),
         ("o", "cd"),
+        ("O", "open in app"),
         ("Space", "select"),
         ("f", "filter"),
     ];

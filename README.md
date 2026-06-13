@@ -145,6 +145,7 @@ hop config-path     print the resolved config file path
 | `Space` | toggle selection · `Shift+↑/↓`: extend range · `Esc`: clear |
 | `Enter` | open: git → tool · folder → cd · text file → editor · other file → default app |
 | `o` | jump only: write path and exit (folder → cd, file → its parent) |
+| `O` | force open with the default app (regardless of kind) |
 | `f` | live fuzzy filter (`Esc` clears) |
 | `s` | git tabs: cycle sort (name / recent / custom) · Files: jump to a section |
 | `M` | Files tab: manage sections (add / rename / delete / reorder) |

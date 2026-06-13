@@ -26,6 +26,10 @@ const SHORTCUTS: &[(&str, &str)] = &[
         "o",
         "jump only: write path and exit (folder cd, file -> parent)",
     ),
+    (
+        "O",
+        "force open with the default app (e.g. a text file in its GUI app)",
+    ),
     ("f", "live fuzzy filter (Esc clears)"),
     ("s", "git tabs: cycle sort   ·   Files: jump to section"),
     ("M", "Files: manage sections (add / rename / delete / move)"),
