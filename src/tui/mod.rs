@@ -1109,10 +1109,12 @@ impl App {
             muted,
         ));
 
+        // The status/remote times are git-specific, so skip them on the Files
+        // and Folders tab.
         if self.config.example_mode {
             spans.push(sep());
             spans.push(Span::styled("example mode", muted));
-        } else {
+        } else if self.tab != Tab::FilesAndFolders {
             if let Some(at) = self.cache_generated_at {
                 let age = Local::now().signed_duration_since(at);
                 spans.push(sep());
