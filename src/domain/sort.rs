@@ -2,17 +2,17 @@
 
 use crate::domain::repo::Repo;
 
-/// How the visible list is ordered.
+/// How the visible list is ordered. Favourites are pinned to the top in
+/// [`SortMode::Name`] and [`SortMode::Custom`] (sortable among themselves);
+/// [`SortMode::Recent`] ignores favourites and orders purely by recency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SortMode {
-    /// Favourites first, then case-insensitive by display name (the default,
-    /// matching git-repo-jumper).
+    /// Favourites first, then case-insensitive by display name (the default).
     #[default]
-    FavThenName,
-    /// Most recently used first; never-used entries last, then by name.
-    LastUsed,
-    /// Case-insensitive by display name only.
     Name,
+    /// Most recently used first; never-used entries last, then by name.
+    /// Favourites are not pinned.
+    Recent,
     /// Manual order (the stored `[[repos]]` order), favourites still on top.
     Custom,
 }
@@ -21,19 +21,17 @@ impl SortMode {
     /// The next mode in the cycle, for a single toggle key.
     pub fn next(self) -> Self {
         match self {
-            SortMode::FavThenName => SortMode::LastUsed,
-            SortMode::LastUsed => SortMode::Name,
-            SortMode::Name => SortMode::Custom,
-            SortMode::Custom => SortMode::FavThenName,
+            SortMode::Name => SortMode::Recent,
+            SortMode::Recent => SortMode::Custom,
+            SortMode::Custom => SortMode::Name,
         }
     }
 
     /// A short label for the header line.
     pub fn label(self) -> &'static str {
         match self {
-            SortMode::FavThenName => "favourites",
-            SortMode::LastUsed => "recent",
             SortMode::Name => "name",
+            SortMode::Recent => "recent",
             SortMode::Custom => "custom",
         }
     }
@@ -43,13 +41,13 @@ impl SortMode {
 /// on equal keys (Rust's `sort_by` is stable), so equal names keep input order.
 pub fn sort_repos(repos: &mut [Repo], mode: SortMode) {
     match mode {
-        SortMode::FavThenName => {
+        // Favourites on top, each group case-insensitive by name.
+        SortMode::Name => {
             repos.sort_by(|a, b| b.fav.cmp(&a.fav).then_with(|| name_cmp(a, b)))
         }
-        SortMode::Name => repos.sort_by(name_cmp),
-        SortMode::LastUsed => repos.sort_by(|a, b| {
-            // Most recent first: a larger timestamp should come earlier, and a
-            // missing timestamp sorts last.
+        SortMode::Recent => repos.sort_by(|a, b| {
+            // Most recent first (favourites are not pinned); a larger timestamp
+            // comes earlier and a missing timestamp sorts last.
             recency_key(b)
                 .cmp(&recency_key(a))
                 .then_with(|| name_cmp(a, b))
@@ -65,11 +63,12 @@ pub fn sort_indices(repos: &[Repo], indices: &mut [usize], mode: SortMode) {
     let compare = |a: &usize, b: &usize| {
         let (ra, rb) = (&repos[*a], &repos[*b]);
         match mode {
-            SortMode::FavThenName => {
+            // Favourites on top, each group case-insensitive by name.
+            SortMode::Name => {
                 rb.fav.cmp(&ra.fav).then_with(|| name_cmp(ra, rb))
             }
-            SortMode::Name => name_cmp(ra, rb),
-            SortMode::LastUsed => recency_key(rb)
+            // Pure recency (favourites not pinned), name as tiebreak.
+            SortMode::Recent => recency_key(rb)
                 .cmp(&recency_key(ra))
                 .then_with(|| name_cmp(ra, rb)),
             // Stable on the index order, only favourites floated to the top.
@@ -107,19 +106,20 @@ mod tests {
     }
 
     #[test]
-    fn fav_then_name_puts_favourites_first_alphabetically() {
+    fn name_puts_favourites_first_then_alphabetical() {
         let mut repos = vec![
             repo("zebra", false, None),
             repo("alpha", false, None),
             repo("beta", true, None),
         ];
-        sort_repos(&mut repos, SortMode::FavThenName);
+        sort_repos(&mut repos, SortMode::Name);
         let names: Vec<_> = repos.iter().map(Repo::display_name).collect();
+        // The favourite "beta" floats above the alphabetically-sorted rest.
         assert_eq!(names, vec!["beta", "alpha", "zebra"]);
     }
 
     #[test]
-    fn name_sorts_case_insensitively() {
+    fn name_sorts_case_insensitively_within_a_group() {
         let mut repos =
             vec![repo("Banana", false, None), repo("apple", false, None)];
         sort_repos(&mut repos, SortMode::Name);
@@ -128,25 +128,25 @@ mod tests {
     }
 
     #[test]
-    fn last_used_orders_recent_first_unused_last() {
+    fn recent_ignores_favourites() {
         let mut repos = vec![
-            repo("old", false, Some(100)),
-            repo("never", false, None),
+            repo("old-fav", true, Some(100)),
             repo("fresh", false, Some(900)),
+            repo("never", false, None),
         ];
-        sort_repos(&mut repos, SortMode::LastUsed);
+        sort_repos(&mut repos, SortMode::Recent);
         let names: Vec<_> = repos.iter().map(Repo::display_name).collect();
-        assert_eq!(names, vec!["fresh", "old", "never"]);
+        // Purely by recency: the newer non-favourite beats the older favourite.
+        assert_eq!(names, vec!["fresh", "old-fav", "never"]);
     }
 
     #[test]
     fn mode_cycles_through_all_modes() {
         let mode = SortMode::default();
-        assert_eq!(mode, SortMode::FavThenName);
-        assert_eq!(mode.next(), SortMode::LastUsed);
-        assert_eq!(mode.next().next(), SortMode::Name);
-        assert_eq!(mode.next().next().next(), SortMode::Custom);
-        assert_eq!(mode.next().next().next().next(), SortMode::FavThenName);
+        assert_eq!(mode, SortMode::Name);
+        assert_eq!(mode.next(), SortMode::Recent);
+        assert_eq!(mode.next().next(), SortMode::Custom);
+        assert_eq!(mode.next().next().next(), SortMode::Name);
     }
 
     #[test]

@@ -19,7 +19,8 @@ for a one-word jump, sort modes and repair for paths that have moved.
 - **In-app management**: add, edit, delete, favourite, archive/restore, set a
   slug - the config is written back preserving its comments.
 - **Slugs**: `hop <slug>` jumps straight to an entry from the shell.
-- **Sort modes**: favourites first, most recently used, or by name.
+- **Sort modes**: by name, most recently used, or a custom drag order;
+  favourites are pinned to the top (except in the recent view).
 - **Missing-path marker** (a red `!`) with a picker that opens at the closest
   existing ancestor to repair the path, plus an error list (`!`) to repair /
   edit / delete all broken entries.
@@ -137,7 +138,7 @@ hop config-path     print the resolved config file path
 | `Enter` | open: write path + launch git tool, then exit |
 | `o` | jump only: write path and exit (cd, no tool) |
 | `f` | live fuzzy filter (`Esc` clears) |
-| `s` | cycle sort (favourites / recent / name / custom) |
+| `s` | cycle sort (name / recent / custom; favourites pinned except recent) |
 | `Alt+↑/↓` | reorder the entry (custom sort only; favourites stay on top) |
 | `a` | add an entry (pick a path, then fill the form) |
 | `e` | edit the selected entry |

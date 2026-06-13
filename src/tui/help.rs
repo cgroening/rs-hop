@@ -21,7 +21,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Enter", "open: write path + launch git tool, then exit"),
     ("o", "jump only: write path and exit (cd, no tool)"),
     ("f", "live fuzzy filter (Esc clears)"),
-    ("s", "cycle sort (favourites / recent / name / custom)"),
+    ("s", "cycle sort (name / recent / custom)"),
     ("Alt+\u{2191}\u{2193}", "reorder entry (custom sort only)"),
     ("a", "add an entry (pick a path, then fill the form)"),
     ("e", "edit the selected entry"),
