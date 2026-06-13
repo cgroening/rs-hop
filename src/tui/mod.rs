@@ -31,9 +31,9 @@ use crossterm::event::{
 };
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{LineGauge, Paragraph};
+use ratatui::widgets::{Gauge, Paragraph};
 
 pub use terminal::Tui;
 
@@ -46,7 +46,7 @@ use crate::service::repo_service::RepoService;
 use crate::service::status_service::spawn_refresh;
 use crate::storage::cache;
 use crate::storage::git_client::GitClient;
-use crate::tui::colors::{ACCENT, CHANGES, DIM};
+use crate::tui::colors::{ACCENT, CHANGES, DIM, SELECTION_BG};
 use crate::tui::form::{FormResult, RepoDraft, RepoForm};
 use crate::tui::path_picker::{PathPicker, PickerResult};
 use crate::tui::presentation::{IconSet, footer_lines, render_empty_hint};
@@ -1000,21 +1000,23 @@ fn hint_line(_tab: Tab) -> Line<'static> {
     ))
 }
 
-/// Renders a single-line progress bar for an in-flight status refresh.
+/// Renders a solid progress bar for an in-flight status refresh, filling the
+/// whole `area` (full height and width) with a centred label.
 fn render_progress(frame: &mut Frame, area: Rect, done: usize, total: usize) {
     let ratio = if total == 0 {
         0.0
     } else {
         (done as f64 / total as f64).clamp(0.0, 1.0)
     };
-    let gauge = LineGauge::default()
+    let gauge = Gauge::default()
         .ratio(ratio)
+        .gauge_style(Style::default().fg(ACCENT).bg(SELECTION_BG))
         .label(Span::styled(
-            format!(" refreshing {done}/{total} "),
-            Style::default().fg(DIM),
-        ))
-        .filled_style(Style::default().fg(ACCENT))
-        .unfilled_style(Style::default().fg(DIM));
+            format!("refreshing {done}/{total}"),
+            Style::default()
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        ));
     frame.render_widget(gauge, area);
 }
 
