@@ -4,6 +4,9 @@
 //! Folders tab shows name, type and path. A leading marker column flags entries
 //! whose path no longer exists, followed by the favourite star.
 
+use std::collections::HashSet;
+use std::path::PathBuf;
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
@@ -31,6 +34,9 @@ pub struct TableView<'a> {
     pub icons: &'a IconSet,
     /// Whether to show example git info instead of live status.
     pub example_mode: bool,
+    /// While a refresh runs, the paths already updated this pass; rows whose
+    /// path is absent show a pending marker. `None` when no refresh is running.
+    pub refreshed: Option<&'a HashSet<PathBuf>>,
 }
 
 /// The git info to display for `repo`: example info in example mode, otherwise
@@ -148,22 +154,23 @@ fn row_for<'a>(repo: &Repo, view: &TableView) -> Row<'a> {
                 fav,
                 name,
                 Cell::from(truncate(&branch_text(info), branch_width)),
-                status_cell(repo, info, view.icons, view.config),
+                status_cell(repo, info, view),
                 Cell::from(github_text(info)),
             ])
         }
     }
 }
 
-/// The marker cell: a red warning glyph when the path is missing, else blank.
+/// The marker cell: a red warning glyph when the entry has an error (missing or
+/// invalid path), else blank.
 fn marker_cell<'a>(repo: &Repo, icons: &IconSet) -> Cell<'a> {
-    if repo.path_exists() {
-        Cell::from(" ")
-    } else {
+    if repo.entry_error().is_some() {
         Cell::from(Span::styled(
             icons.missing.to_string(),
             Style::default().fg(DANGER).add_modifier(Modifier::BOLD),
         ))
+    } else {
+        Cell::from(" ")
     }
 }
 
@@ -179,22 +186,28 @@ fn fav_cell<'a>(repo: &Repo, icons: &IconSet) -> Cell<'a> {
     }
 }
 
-/// The status cell: dim while loading, green when clean, yellow when there are
+/// The status cell: a pending marker while this row still awaits a running
+/// refresh, dim while first loading, green when clean, yellow when there are
 /// uncommitted changes, default otherwise (e.g. only ahead/behind).
 fn status_cell<'a>(
     repo: &Repo,
     info: Option<&GitInfo>,
-    icons: &IconSet,
-    config: &Config,
+    view: &TableView,
 ) -> Cell<'a> {
-    let width = min(config.column_widths.status) as usize;
+    // A refresh is running and this row has not been updated yet this pass.
+    if let Some(refreshed) = view.refreshed
+        && !refreshed.contains(&repo.path)
+    {
+        return Cell::from(Span::styled("…", Style::default().fg(DIM)));
+    }
+    let width = min(view.config.column_widths.status) as usize;
     let Some(info) = info else {
         return Cell::from(Span::styled("…", Style::default().fg(DIM)));
     };
     if !info.valid && !repo.path_exists() {
         return Cell::from(Span::styled("-", Style::default().fg(DIM)));
     }
-    let text = truncate(&status_text(info, icons), width);
+    let text = truncate(&status_text(info, view.icons), width);
     let style = if is_clean(info) {
         Style::default().fg(POSITIVE)
     } else if has_changes(info) {

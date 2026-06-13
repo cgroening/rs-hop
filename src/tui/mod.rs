@@ -18,6 +18,7 @@ pub mod terminal;
 pub mod text_input;
 pub mod widgets;
 
+use std::collections::HashSet;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -32,7 +33,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{LineGauge, Paragraph};
 
 pub use terminal::Tui;
 
@@ -45,12 +46,13 @@ use crate::service::repo_service::RepoService;
 use crate::service::status_service::spawn_refresh;
 use crate::storage::cache;
 use crate::storage::git_client::GitClient;
-use crate::tui::colors::{ACCENT, DIM};
+use crate::tui::colors::{ACCENT, CHANGES, DIM};
 use crate::tui::form::{FormResult, RepoDraft, RepoForm};
 use crate::tui::path_picker::{PathPicker, PickerResult};
 use crate::tui::presentation::{IconSet, footer_lines, render_empty_hint};
 use crate::tui::widgets::{
-    ConfirmModal, ConfirmResult, PromptResult, TextPrompt,
+    ConfirmModal, ConfirmResult, PromptResult, SelectModal, SelectResult,
+    TextPrompt,
 };
 
 /// How long a transient status message stays visible.
@@ -77,6 +79,10 @@ enum Overlay {
     Prompt(TextPrompt, usize),
     Form(RepoForm, Option<usize>),
     Picker(PathPicker, PickerIntent),
+    /// The list of errored entries; the vec maps rows to service indices.
+    Errors(SelectModal, Vec<usize>),
+    /// The action menu for an errored entry at the given service index.
+    ErrorAction(SelectModal, usize),
 }
 
 /// Why the path picker is open.
@@ -103,6 +109,8 @@ pub struct App {
     status_msg: Option<(String, Instant)>,
     loading: Option<(usize, usize)>,
     cache_generated_at: Option<DateTime<Local>>,
+    last_fetched: Option<DateTime<Local>>,
+    refresh_fetched: bool,
     status_rx: Option<Receiver<crate::service::status_service::StatusUpdate>>,
     collected: Vec<(PathBuf, crate::domain::repo::GitInfo)>,
 }
@@ -147,6 +155,8 @@ impl App {
             status_msg: None,
             loading: None,
             cache_generated_at: cached.generated_at,
+            last_fetched: cached.fetched_at,
+            refresh_fetched: false,
             status_rx: None,
             collected: Vec::new(),
         };
@@ -220,6 +230,7 @@ impl App {
         }
         self.collected.clear();
         self.loading = Some((0, paths.len()));
+        self.refresh_fetched = fetch;
         self.status_rx =
             Some(spawn_refresh(Arc::clone(&self.git_client), paths, fetch));
     }
@@ -248,8 +259,16 @@ impl App {
             }
         }
         if finished {
-            let _ = cache::save(&self.cache_path, &self.collected);
-            self.cache_generated_at = Some(Local::now());
+            let now = Local::now();
+            self.cache_generated_at = Some(now);
+            if self.refresh_fetched {
+                self.last_fetched = Some(now);
+            }
+            let _ = cache::save(
+                &self.cache_path,
+                &self.collected,
+                self.last_fetched,
+            );
             self.loading = None;
         } else {
             self.status_rx = Some(rx);
@@ -337,6 +356,30 @@ impl App {
                     }
                 }
             }
+            Overlay::Errors(mut modal, indices) => {
+                match modal.handle_key(key) {
+                    SelectResult::Selected(row) => {
+                        if let Some(&index) = indices.get(row) {
+                            self.open_error_action(index);
+                        }
+                    }
+                    SelectResult::Cancel => {}
+                    SelectResult::Pending => {
+                        self.overlay = Overlay::Errors(modal, indices);
+                    }
+                }
+            }
+            Overlay::ErrorAction(mut modal, index) => {
+                match modal.handle_key(key) {
+                    SelectResult::Selected(action) => {
+                        self.run_error_action(index, action);
+                    }
+                    SelectResult::Cancel => {}
+                    SelectResult::Pending => {
+                        self.overlay = Overlay::ErrorAction(modal, index);
+                    }
+                }
+            }
             Overlay::None => {}
         }
     }
@@ -364,6 +407,7 @@ impl App {
             KeyCode::Char('A') => self.toggle_archive(),
             KeyCode::Char('S') => self.open_slug_prompt(),
             KeyCode::Char('p') => self.open_repair_picker(),
+            KeyCode::Char('!') => self.open_error_list(),
             KeyCode::Char('r') => self.reload_status(false),
             KeyCode::Char('R') => self.reload_status(true),
             KeyCode::Char('?') => self.overlay = Overlay::Help,
@@ -452,9 +496,13 @@ impl App {
 
     /// Opens the edit form for the selected entry.
     fn open_edit_form(&mut self) {
-        let Some(index) = self.selected_index() else {
-            return;
-        };
+        if let Some(index) = self.selected_index() {
+            self.edit_form_for(index);
+        }
+    }
+
+    /// Opens the edit form for the entry at `index`.
+    fn edit_form_for(&mut self, index: usize) {
         let Some(repo) = self.service.get(index) else {
             return;
         };
@@ -470,9 +518,13 @@ impl App {
 
     /// Opens the delete confirmation for the selected entry.
     fn open_delete_confirm(&mut self) {
-        let Some(index) = self.selected_index() else {
-            return;
-        };
+        if let Some(index) = self.selected_index() {
+            self.delete_confirm_for(index);
+        }
+    }
+
+    /// Opens the delete confirmation for the entry at `index`.
+    fn delete_confirm_for(&mut self, index: usize) {
         let name = self
             .service
             .get(index)
@@ -504,9 +556,14 @@ impl App {
 
     /// Opens the path picker to repair the selected entry's missing path.
     fn open_repair_picker(&mut self) {
-        let Some(index) = self.selected_index() else {
-            return;
-        };
+        if let Some(index) = self.selected_index() {
+            self.repair_picker_for(index);
+        }
+    }
+
+    /// Opens the repair picker for the entry at `index`, starting at the nearest
+    /// existing ancestor of its (missing) path.
+    fn repair_picker_for(&mut self, index: usize) {
         let Some(repo) = self.service.get(index) else {
             return;
         };
@@ -516,6 +573,51 @@ impl App {
             PathPicker::new(&start, false),
             PickerIntent::Repair(index),
         );
+    }
+
+    /// Opens the popup listing all entries with a missing or invalid path.
+    fn open_error_list(&mut self) {
+        let repos = self.service.repos();
+        let mut indices = Vec::new();
+        let mut labels = Vec::new();
+        for (index, repo) in repos.iter().enumerate() {
+            if let Some(error) = repo.entry_error() {
+                labels.push(format!("{} — {error}", repo.display_name()));
+                indices.push(index);
+            }
+        }
+        if indices.is_empty() {
+            self.set_status("no errors");
+            return;
+        }
+        self.overlay =
+            Overlay::Errors(SelectModal::new("Errors", labels, 0), indices);
+    }
+
+    /// Opens the action menu for an errored entry at `index`.
+    fn open_error_action(&mut self, index: usize) {
+        let name = self
+            .service
+            .get(index)
+            .map_or_else(String::new, Repo::display_name);
+        let actions = vec![
+            "Repair path".to_string(),
+            "Edit".to_string(),
+            "Delete".to_string(),
+        ];
+        self.overlay = Overlay::ErrorAction(
+            SelectModal::new(format!("Fix \"{name}\""), actions, 0),
+            index,
+        );
+    }
+
+    /// Runs the chosen action menu entry for the errored entry at `index`.
+    fn run_error_action(&mut self, index: usize, action: usize) {
+        match action {
+            0 => self.repair_picker_for(index),
+            1 => self.edit_form_for(index),
+            _ => self.delete_confirm_for(index),
+        }
     }
 
     /// Copies the selected entry's path to the system clipboard.
@@ -697,14 +799,16 @@ impl App {
             .constraints([
                 Constraint::Length(1),
                 Constraint::Length(1),
+                Constraint::Length(1),
                 Constraint::Min(1),
                 Constraint::Length(2),
             ])
             .split(area);
         self.render_tab_bar(frame, rows[0]);
         self.render_info(frame, rows[1]);
-        self.render_body(frame, rows[2]);
-        self.render_footer(frame, rows[3]);
+        self.render_remote(frame, rows[2]);
+        self.render_body(frame, rows[3]);
+        self.render_footer(frame, rows[4]);
         self.render_overlay(frame, area);
     }
 
@@ -726,16 +830,19 @@ impl App {
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 
-    /// Renders the dim info line (count, sort, loading/cache age).
+    /// Renders the local info line: entry count, sort and the local status
+    /// time - or a progress bar while a refresh is running.
     fn render_info(&self, frame: &mut Frame, area: Rect) {
+        if let Some((done, total)) = self.loading {
+            render_progress(frame, area, done, total);
+            return;
+        }
         let count = self.ordered_view().len();
         let mut parts = vec![
             format!("{count} entries"),
             format!("sort: {}", self.sort.label()),
         ];
-        if let Some((done, total)) = self.loading {
-            parts.push(format!("loading {done}/{total}"));
-        } else if self.config.example_mode {
+        if self.config.example_mode {
             parts.push("example mode".to_string());
         } else if let Some(at) = self.cache_generated_at {
             parts.push(format!("status as of {}", at.format("%Y-%m-%d %H:%M")));
@@ -744,6 +851,39 @@ impl App {
             Paragraph::new(Line::from(Span::styled(
                 format!(" {}", parts.join("  ·  ")),
                 Style::default().fg(DIM),
+            ))),
+            area,
+        );
+    }
+
+    /// Renders the remote line: when the entries were last fetched, warning in
+    /// amber when that is over a day ago or never.
+    fn render_remote(&self, frame: &mut Frame, area: Rect) {
+        let (text, warn) = if self.config.example_mode {
+            (" remote: example mode (no live status)".to_string(), false)
+        } else {
+            match self.last_fetched {
+                None => (" remote: never fetched — press R".to_string(), true),
+                Some(at) => {
+                    let age = Local::now().signed_duration_since(at);
+                    let stale = age.num_hours() >= 24;
+                    let suffix = if stale { "  (stale)" } else { "" };
+                    (
+                        format!(
+                            " remote: fetched {} ({} ago){suffix}",
+                            at.format("%Y-%m-%d %H:%M"),
+                            relative_age(age),
+                        ),
+                        stale,
+                    )
+                }
+            }
+        };
+        let color = if warn { CHANGES } else { DIM };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                text,
+                Style::default().fg(color),
             ))),
             area,
         );
@@ -759,11 +899,20 @@ impl App {
         let repos = self.service.repos();
         let visible: Vec<&Repo> = view.iter().map(|&i| &repos[i]).collect();
         let cursor = self.cursor.min(visible.len() - 1);
+        // While a refresh is running, the paths already updated this pass; rows
+        // not yet in this set show a pending marker in the status column.
+        let refreshed: Option<HashSet<PathBuf>> = self.loading.map(|_| {
+            self.collected
+                .iter()
+                .map(|(path, _)| path.clone())
+                .collect()
+        });
         let table_view = table::TableView {
             tab: self.tab,
             config: &self.config,
             icons: &self.icons,
             example_mode: self.config.example_mode,
+            refreshed: refreshed.as_ref(),
         };
         table::render_table(frame, area, &visible, cursor, &table_view);
     }
@@ -808,6 +957,8 @@ impl App {
             Overlay::Prompt(prompt, _) => prompt.render(frame, area),
             Overlay::Form(form, _) => form.render(frame, area),
             Overlay::Picker(picker, _) => picker.render(frame, area),
+            Overlay::Errors(modal, _) => modal.render(frame, area),
+            Overlay::ErrorAction(modal, _) => modal.render(frame, area),
         }
     }
 }
@@ -836,6 +987,7 @@ fn hints(_tab: Tab) -> Vec<(&'static str, &'static str)> {
         ("S", "slug"),
         ("y", "copy path"),
         ("p", "fix path"),
+        ("!", "errors"),
         ("?", "help"),
     ]
 }
@@ -846,6 +998,35 @@ fn hint_line(_tab: Tab) -> Line<'static> {
         " ? help · Ctrl+Q quit",
         Style::default().fg(DIM),
     ))
+}
+
+/// Renders a single-line progress bar for an in-flight status refresh.
+fn render_progress(frame: &mut Frame, area: Rect, done: usize, total: usize) {
+    let ratio = if total == 0 {
+        0.0
+    } else {
+        (done as f64 / total as f64).clamp(0.0, 1.0)
+    };
+    let gauge = LineGauge::default()
+        .ratio(ratio)
+        .label(Span::styled(
+            format!(" refreshing {done}/{total} "),
+            Style::default().fg(DIM),
+        ))
+        .filled_style(Style::default().fg(ACCENT))
+        .unfilled_style(Style::default().fg(DIM));
+    frame.render_widget(gauge, area);
+}
+
+/// A short relative age like `2d`, `5h` or `3m` for the remote line.
+fn relative_age(age: chrono::Duration) -> String {
+    if age.num_days() >= 1 {
+        return format!("{}d", age.num_days());
+    }
+    if age.num_hours() >= 1 {
+        return format!("{}h", age.num_hours());
+    }
+    format!("{}m", age.num_minutes().max(0))
 }
 
 #[cfg(test)]

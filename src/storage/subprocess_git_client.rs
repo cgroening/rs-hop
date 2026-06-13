@@ -54,11 +54,17 @@ impl GitClient for SubprocessGitClient {
     }
 
     fn fetch(&self, path: &Path) {
+        // Skip missing paths and capture all output: `.status()` would inherit
+        // git's stderr (e.g. "fatal: cannot change to ...") into the TUI's
+        // alternate screen and corrupt the display.
+        if !path.exists() {
+            return;
+        }
         let _ = Command::new("git")
             .arg("-C")
             .arg(path)
             .args(["fetch", "--quiet"])
-            .status();
+            .output();
     }
 }
 

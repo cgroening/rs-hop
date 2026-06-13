@@ -123,6 +123,26 @@ impl Repo {
     pub fn path_exists(&self) -> bool {
         self.path.exists()
     }
+
+    /// A short error describing why the entry is unusable, or `None` when it is
+    /// fine: the path is missing, or it is a git entry whose gathered info is
+    /// invalid (e.g. not a git repository).
+    pub fn entry_error(&self) -> Option<String> {
+        if !self.path_exists() {
+            return Some("path not found".to_string());
+        }
+        if self.kind == RepoKind::Git
+            && let Some(info) = &self.git_info
+            && !info.valid
+        {
+            return Some(
+                info.error
+                    .clone()
+                    .unwrap_or_else(|| "not a git repository".to_string()),
+            );
+        }
+        None
+    }
 }
 
 /// The final path component as a string, or the whole path when it has none
@@ -161,6 +181,30 @@ mod tests {
         let mut repo = Repo::new(PathBuf::from("/a/b/project"));
         repo.name = Some("   ".to_string());
         assert_eq!(repo.display_name(), "project");
+    }
+
+    #[test]
+    fn entry_error_flags_missing_and_invalid() {
+        // A path that does not exist is always an error.
+        let missing = Repo::new(PathBuf::from("/nope/does-not-exist-xyz"));
+        assert_eq!(missing.entry_error().as_deref(), Some("path not found"));
+
+        // An existing git path with invalid info reports its error.
+        let mut invalid = Repo::new(PathBuf::from("/"));
+        invalid.git_info = Some(GitInfo {
+            valid: false,
+            error: Some("not a git repository".to_string()),
+            ..GitInfo::default()
+        });
+        assert_eq!(
+            invalid.entry_error().as_deref(),
+            Some("not a git repository")
+        );
+
+        // An existing folder entry (non-git) has no error.
+        let mut folder = Repo::new(PathBuf::from("/"));
+        folder.kind = RepoKind::Folder;
+        assert!(folder.entry_error().is_none());
     }
 
     #[test]

@@ -18,6 +18,7 @@ use crate::domain::repo::GitInfo;
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct CacheDoc {
     generated_at: Option<String>,
+    fetched_at: Option<String>,
     #[serde(default)]
     entries: Vec<CacheEntry>,
 }
@@ -36,11 +37,14 @@ struct CacheEntry {
     github_repo_name: Option<String>,
 }
 
-/// A loaded cache: when it was generated and the status per path.
+/// A loaded cache: when it was generated, when the remote was last fetched, and
+/// the status per path.
 #[derive(Debug, Default)]
 pub struct GitInfoCache {
     /// When the cache was last written, if recorded.
     pub generated_at: Option<DateTime<Local>>,
+    /// When `git fetch` was last run for the entries, if ever.
+    pub fetched_at: Option<DateTime<Local>>,
     /// Gathered status keyed by entry path.
     pub infos: HashMap<PathBuf, GitInfo>,
 }
@@ -55,6 +59,7 @@ pub fn load(path: &Path) -> GitInfoCache {
         return GitInfoCache::default();
     };
     let generated_at = doc.generated_at.as_deref().and_then(parse_timestamp);
+    let fetched_at = doc.fetched_at.as_deref().and_then(parse_timestamp);
     let infos = doc
         .entries
         .into_iter()
@@ -62,17 +67,25 @@ pub fn load(path: &Path) -> GitInfoCache {
         .collect();
     GitInfoCache {
         generated_at,
+        fetched_at,
         infos,
     }
 }
 
-/// Writes the gathered `infos` to `path`, stamping the current time.
+/// Writes the gathered `infos` to `path`, stamping the current time as the
+/// generation time and recording `fetched_at` (when the remote was last
+/// fetched, preserved across non-fetching refreshes by the caller).
 ///
 /// # Errors
 /// Returns an error if the directory or file cannot be written.
-pub fn save(path: &Path, infos: &[(PathBuf, GitInfo)]) -> Result<()> {
+pub fn save(
+    path: &Path,
+    infos: &[(PathBuf, GitInfo)],
+    fetched_at: Option<DateTime<Local>>,
+) -> Result<()> {
     let doc = CacheDoc {
         generated_at: Some(Local::now().to_rfc3339()),
+        fetched_at: fetched_at.map(|at| at.to_rfc3339()),
         entries: infos
             .iter()
             .map(|(path, info)| CacheEntry::from_info(path, info))
@@ -143,9 +156,11 @@ mod tests {
             ..GitInfo::default()
         };
         let path = PathBuf::from("/code/hop");
-        save(&file, &[(path.clone(), info.clone())]).unwrap();
+        let fetched = Local::now();
+        save(&file, &[(path.clone(), info.clone())], Some(fetched)).unwrap();
         let loaded = load(&file);
         assert!(loaded.generated_at.is_some());
+        assert!(loaded.fetched_at.is_some());
         assert_eq!(loaded.infos.get(&path), Some(&info));
         let _ = fs::remove_dir_all(&dir);
     }

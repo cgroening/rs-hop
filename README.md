@@ -21,7 +21,11 @@ for a one-word jump, sort modes and repair for paths that have moved.
 - **Slugs**: `hop <slug>` jumps straight to an entry from the shell.
 - **Sort modes**: favourites first, most recently used, or by name.
 - **Missing-path marker** (a red `!`) with a picker that opens at the closest
-  existing ancestor to repair the path.
+  existing ancestor to repair the path, plus an error list (`!`) to repair /
+  edit / delete all broken entries.
+- **Status bar**: a local status line (entry count, sort, last status time) and
+  a remote line showing the last `git fetch` (warns when over a day old); a
+  progress bar replaces it while a refresh runs.
 - **Two icon tiers** (Unicode by default, or ASCII), selectable in the config.
 
 ## Install
@@ -141,6 +145,7 @@ hop config-path     print the resolved config file path
 | `S` | set or change the slug |
 | `y` | copy the selected entry's path to the clipboard |
 | `p` | repair a missing path |
+| `!` | list entries with path errors, then repair / edit / delete |
 | `r` | reload git status   ·   `R`: `git fetch` + reload |
 | `?` | toggle the help overlay |
 | `Ctrl+Q` | quit |

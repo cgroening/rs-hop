@@ -25,6 +25,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("S", "set or change the slug"),
     ("y", "copy the selected entry's path to the clipboard"),
     ("p", "repair a missing path"),
+    ("!", "list entries with path errors and fix them"),
     ("r", "reload git status   ·   R: git fetch + reload"),
     ("?", "toggle this help"),
     ("Ctrl+Q", "quit"),
