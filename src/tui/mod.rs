@@ -127,6 +127,12 @@ pub struct App {
     selected: HashSet<usize>,
     /// Anchor display row for `Shift`-range selection.
     anchor: Option<usize>,
+    /// Whether the startup mode permits background refreshes (drives the
+    /// first-visit refresh of the Git Repos / Archive tabs).
+    auto_refresh: bool,
+    /// Tabs whose entries have been refreshed since start, so a tab is only
+    /// auto-refreshed on its first visit.
+    refreshed_tabs: HashSet<Tab>,
 }
 
 /// How the status is sourced on start.
@@ -179,10 +185,13 @@ impl App {
             refresh_started: Instant::now(),
             selected: HashSet::new(),
             anchor: None,
+            auto_refresh: false,
+            refreshed_tabs: HashSet::new(),
         };
         if let StartupStatus::Refresh { fetch } = startup
             && !app.config.example_mode
         {
+            app.auto_refresh = true;
             app.start_refresh(fetch);
         }
         app
@@ -246,6 +255,7 @@ impl App {
     /// Starts a background refresh over the current tab's entries (with the
     /// progress bar).
     fn start_refresh(&mut self, fetch: bool) {
+        self.refreshed_tabs.insert(self.tab);
         let paths: Vec<PathBuf> = self
             .tab_indices()
             .iter()
@@ -528,6 +538,21 @@ impl App {
         self.cursor = 0;
         self.clear_selection();
         self.save_ui_state();
+        self.refresh_tab_on_first_visit();
+    }
+
+    /// Refreshes the git status of the entries in the current tab the first
+    /// time it is visited (without fetching), mirroring the startup refresh of
+    /// the initially active tab. The Files and Folders tab carries no git
+    /// status, so it is skipped.
+    fn refresh_tab_on_first_visit(&mut self) {
+        if !self.auto_refresh || self.tab == Tab::FilesAndFolders {
+            return;
+        }
+        if self.refreshed_tabs.contains(&self.tab) {
+            return;
+        }
+        self.start_refresh(false);
     }
 
     /// Cycles the sort mode and persists it for the next run.

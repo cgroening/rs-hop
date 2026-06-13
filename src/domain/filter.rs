@@ -11,7 +11,7 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 use crate::domain::repo::{GitInfo, Repo, RepoKind};
 
 /// The three top-level views.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Tab {
     /// Git repositories that are not archived.
     #[default]
