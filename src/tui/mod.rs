@@ -328,6 +328,9 @@ impl App {
             let _ = cache::save(&self.cache_path, &infos, self.last_fetched);
             self.loading = None;
             self.refreshing.clear();
+            // A tab switched to mid-refresh deferred its first-visit refresh;
+            // run it now that the channel is free.
+            self.refresh_tab_on_first_visit();
         } else {
             self.status_rx = Some(rx);
         }
@@ -542,12 +545,14 @@ impl App {
     /// Refreshes the git status of the entries in the current tab the first
     /// time it is visited (without fetching), mirroring the startup refresh of
     /// the initially active tab. The Files and Folders tab carries no git
-    /// status, so it is skipped.
+    /// status, so it is skipped. While another refresh is still running it is
+    /// deferred (and retried when that one finishes) so switching tabs never
+    /// aborts the in-flight refresh.
     fn refresh_tab_on_first_visit(&mut self) {
         if !self.auto_refresh || self.tab == Tab::FilesAndFolders {
             return;
         }
-        if self.refreshed_tabs.contains(&self.tab) {
+        if self.refreshed_tabs.contains(&self.tab) || self.is_refreshing() {
             return;
         }
         self.start_refresh(false);
