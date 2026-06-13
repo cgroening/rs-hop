@@ -92,8 +92,6 @@ enum Overlay {
 enum PickerIntent {
     /// Repair the path of the entry at this index.
     Repair(usize),
-    /// Choose a path for a new entry, then open the add form.
-    Add,
     /// Fill the path field of a form already in progress.
     FormPath(RepoForm, Option<usize>),
 }
@@ -618,19 +616,15 @@ impl App {
         }
     }
 
-    /// Starts adding an entry. On the Files and Folders tab the form opens
-    /// directly (its path is a plain text field, `^O` opens the picker);
-    /// elsewhere the path picker opens first.
+    /// Starts adding an entry: the form opens directly with a kind guessed from
+    /// the active tab. The path is a plain text field; `^O` opens the picker.
     fn open_add(&mut self) {
-        if self.tab == Tab::FilesAndFolders {
-            let form = RepoForm::for_add("", RepoKind::Folder);
-            self.overlay = Overlay::Form(form, None);
-            return;
-        }
-        let start = crate::util::paths::home_dir()
-            .unwrap_or_else(|| PathBuf::from("/"));
-        self.overlay =
-            Overlay::Picker(PathPicker::new(&start, true), PickerIntent::Add);
+        let kind = match self.tab {
+            Tab::GitRepos => RepoKind::Git,
+            _ => RepoKind::Folder,
+        };
+        let form = RepoForm::for_add("", kind);
+        self.overlay = Overlay::Form(form, None);
     }
 
     /// Opens the path picker to fill the path field of `form`, seeded near the
@@ -1009,7 +1003,7 @@ impl App {
         }
     }
 
-    /// Applies a picked path to its intent (repair an entry, or add a new one).
+    /// Applies a picked path to its intent (repair an entry, or fill a form).
     fn do_picked(&mut self, intent: PickerIntent, path: PathBuf) {
         match intent {
             PickerIntent::Repair(index) => {
@@ -1024,11 +1018,6 @@ impl App {
                         self.set_status(format!("repair failed: {error}"))
                     }
                 }
-            }
-            PickerIntent::Add => {
-                let kind = guess_kind(&path);
-                let form = RepoForm::for_add(&path.to_string_lossy(), kind);
-                self.overlay = Overlay::Form(form, None);
             }
             PickerIntent::FormPath(mut form, index) => {
                 form.set_path(&path.to_string_lossy());
@@ -1057,18 +1046,6 @@ fn apply_draft(repo: &mut Repo, draft: RepoDraft, path: PathBuf) {
     repo.slug = draft.slug;
     repo.kind = draft.kind;
     repo.fav = draft.fav;
-}
-
-/// Guesses an entry kind from a chosen path: a git work tree, a folder or a
-/// file.
-fn guess_kind(path: &std::path::Path) -> RepoKind {
-    if path.join(".git").exists() {
-        RepoKind::Git
-    } else if path.is_dir() {
-        RepoKind::Folder
-    } else {
-        RepoKind::File
-    }
 }
 
 /// Whether `key` is the global quit chord (`Ctrl+Q`).

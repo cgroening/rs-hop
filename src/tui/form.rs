@@ -1,8 +1,11 @@
-//! The add/edit form for an entry: name, path, slug, kind and favourite.
+//! The add/edit form for an entry: path, name, slug, kind and favourite.
 //!
-//! All fields are visible at once; `Tab`/`BackTab` step between them, the text
-//! fields edit inline, `Left`/`Right` cycle the kind, `Space` toggles the
-//! favourite, `Enter`/`Ctrl+S` save and `Esc` cancels.
+//! All fields are visible at once; `Tab`/`BackTab` (or `Up`/`Down`) step
+//! between them, the text fields edit inline, `Left`/`Right` cycle the kind,
+//! `Space` toggles the favourite, `^O` opens the path picker, `Enter`/`Ctrl+S`
+//! save and `Esc` cancels. When the name is still blank, it is auto-filled from
+//! the path's basename (after picking a path, or when the name field is
+//! focused).
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
@@ -17,6 +20,12 @@ use crate::tui::colors::{ACCENT, DIM, SELECTION_BG};
 use crate::tui::text_input::TextInput;
 use crate::tui::widgets::centered_rect;
 
+/// Field positions in display (focus) order.
+const PATH_FIELD: usize = 0;
+const NAME_FIELD: usize = 1;
+const SLUG_FIELD: usize = 2;
+const KIND_FIELD: usize = 3;
+const FAV_FIELD: usize = 4;
 /// The number of fields in the form.
 const FIELD_COUNT: usize = 5;
 
@@ -67,7 +76,7 @@ impl RepoForm {
             slug: TextInput::new(""),
             kind,
             fav: false,
-            focus: 0,
+            focus: PATH_FIELD,
         }
     }
 
@@ -86,7 +95,7 @@ impl RepoForm {
             slug: TextInput::new(slug),
             kind,
             fav,
-            focus: 0,
+            focus: PATH_FIELD,
         }
     }
 
@@ -100,30 +109,34 @@ impl RepoForm {
                 return FormResult::Save(self.draft());
             }
             KeyCode::Char('o') if ctrl => return FormResult::PickPath,
-            KeyCode::Tab | KeyCode::Down => {
-                self.focus = (self.focus + 1) % FIELD_COUNT;
-            }
-            KeyCode::BackTab | KeyCode::Up => {
-                self.focus = (self.focus + FIELD_COUNT - 1) % FIELD_COUNT;
-            }
+            KeyCode::Tab | KeyCode::Down => self.move_focus(1),
+            KeyCode::BackTab | KeyCode::Up => self.move_focus(FIELD_COUNT - 1),
             _ => self.edit_focused(key),
         }
         FormResult::Pending
     }
 
+    /// Moves focus by `delta` (wrapping), auto-filling the name on arrival.
+    fn move_focus(&mut self, delta: usize) {
+        self.focus = (self.focus + delta) % FIELD_COUNT;
+        if self.focus == NAME_FIELD {
+            self.autofill_name();
+        }
+    }
+
     /// Routes an editing key to the focused field.
     fn edit_focused(&mut self, key: KeyEvent) {
         match self.focus {
-            0 => {
-                self.name.handle_key(key);
-            }
-            1 => {
+            PATH_FIELD => {
                 self.path.handle_key(key);
             }
-            2 => {
+            NAME_FIELD => {
+                self.name.handle_key(key);
+            }
+            SLUG_FIELD => {
                 self.slug.handle_key(key);
             }
-            3 => match key.code {
+            KIND_FIELD => match key.code {
                 KeyCode::Left => self.kind = prev_kind(self.kind),
                 KeyCode::Right => self.kind = next_kind(self.kind),
                 _ => {}
@@ -141,10 +154,22 @@ impl RepoForm {
         self.path.value()
     }
 
-    /// Replaces the path field and moves focus to it (after picking a path).
+    /// Replaces the path field (after picking a path) and auto-fills the name
+    /// from its basename when the name is still blank.
     pub fn set_path(&mut self, path: &str) {
         self.path = TextInput::new(path);
-        self.focus = 1;
+        self.autofill_name();
+        self.focus = PATH_FIELD;
+    }
+
+    /// Fills the name from the path's basename when the name is still blank.
+    fn autofill_name(&mut self) {
+        if !self.name.value().trim().is_empty() {
+            return;
+        }
+        if let Some(base) = basename(&self.path.value()) {
+            self.name = TextInput::new(&base);
+        }
     }
 
     /// Builds the draft from the current field values.
@@ -173,11 +198,11 @@ impl RepoForm {
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(ACCENT));
         let lines = vec![
-            self.text_line("Name", &self.name, 0),
-            self.text_line("Path", &self.path, 1),
-            self.text_line("Slug", &self.slug, 2),
-            self.kind_line(3),
-            self.fav_line(4),
+            self.text_line("Path", &self.path, PATH_FIELD),
+            self.text_line("Name", &self.name, NAME_FIELD),
+            self.text_line("Slug", &self.slug, SLUG_FIELD),
+            self.kind_line(KIND_FIELD),
+            self.fav_line(FAV_FIELD),
             Line::raw(""),
             Line::from(Span::styled(
                 "Tab field · \u{2190}\u{2192} kind · Space fav · ^O pick path · \
@@ -242,6 +267,17 @@ impl RepoForm {
     }
 }
 
+/// The final path component of `path`, or `None` when it has none.
+fn basename(path: &str) -> Option<String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    std::path::Path::new(trimmed)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+}
+
 /// Returns `Some(value)` when non-empty after trimming, else `None`.
 fn non_empty(value: String) -> Option<String> {
     if value.trim().is_empty() {
@@ -275,5 +311,17 @@ fn kind_label(kind: RepoKind) -> &'static str {
         RepoKind::Git => "git",
         RepoKind::Folder => "folder",
         RepoKind::File => "file",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn basename_takes_final_component() {
+        assert_eq!(basename("/code/hop").as_deref(), Some("hop"));
+        assert_eq!(basename("/code/hop/").as_deref(), Some("hop"));
+        assert_eq!(basename("  ").as_deref(), None);
     }
 }
