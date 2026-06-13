@@ -10,8 +10,9 @@ use std::path::PathBuf;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Span, Text};
+use ratatui::text::Span;
 use ratatui::widgets::{Cell, Row, Table, TableState};
+use unicode_width::UnicodeWidthStr;
 
 use crate::config::{ColumnWidth, Config};
 use crate::domain::filter::Tab;
@@ -86,7 +87,7 @@ pub fn render_table(
             }
         })
         .collect();
-    let table = Table::new(rows, widths(view.tab, view.config))
+    let table = Table::new(rows, widths(repos, view))
         .header(header_row(view.tab))
         .column_spacing(1)
         .row_highlight_style(selection_style());
@@ -107,31 +108,85 @@ pub fn render_table(
     }
 }
 
-/// The column width constraints for `tab`.
-fn widths(tab: Tab, config: &Config) -> Vec<Constraint> {
-    let cols = &config.column_widths;
-    match tab {
+/// Per-column width constraints sized to the visible content, so no column is
+/// wider than it needs to be. Each text column is as wide as its longest cell
+/// (and header), floored at the configured minimum and capped at the configured
+/// maximum; remaining width is left unused. The Files tab keeps the path column
+/// flexible to use the leftover space.
+fn widths(repos: &[&Repo], view: &TableView) -> Vec<Constraint> {
+    let cols = &view.config.column_widths;
+    let name = sized(content_width(repos, |r| r.display_name()), 4, cols.name);
+    match view.tab {
         Tab::FilesAndFolders => vec![
             Constraint::Length(1),
             Constraint::Length(1),
-            Constraint::Min(min(cols.name)),
+            Constraint::Length(name),
             Constraint::Length(6),
             Constraint::Min(20),
         ],
-        _ => vec![
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(min(cols.name)),
-            Constraint::Length(min(cols.current_branch_name)),
-            Constraint::Length(min(cols.status)),
-            Constraint::Min(min(cols.github_repo_name)),
-        ],
+        _ => {
+            let branch = sized(
+                content_width(repos, |r| {
+                    branch_text(effective_info(r, view.example_mode))
+                }),
+                6,
+                cols.current_branch_name,
+            );
+            let status = sized(
+                content_width(repos, |r| status_display(r, view)),
+                6,
+                cols.status,
+            );
+            let github = sized(
+                content_width(repos, |r| {
+                    github_text(effective_info(r, view.example_mode))
+                }),
+                6,
+                cols.github_repo_name,
+            );
+            vec![
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(name),
+                Constraint::Length(branch),
+                Constraint::Length(status),
+                Constraint::Length(github),
+            ]
+        }
     }
 }
 
-/// The minimum width of a column as a `u16`.
-fn min(width: ColumnWidth) -> u16 {
-    width.min as u16
+/// The widest rendered cell (display columns) over `repos` for one column.
+fn content_width<F>(repos: &[&Repo], cell: F) -> usize
+where
+    F: Fn(&Repo) -> String,
+{
+    repos
+        .iter()
+        .map(|repo| UnicodeWidthStr::width(cell(repo).as_str()))
+        .max()
+        .unwrap_or(0)
+}
+
+/// The column width for `content`: at least the `header` label and the
+/// configured minimum, capped at the configured maximum.
+fn sized(content: usize, header: usize, width: ColumnWidth) -> u16 {
+    let floor = width.min.max(header);
+    let mut chosen = content.max(floor);
+    if let Some(max) = width.max {
+        chosen = chosen.min(max.max(floor));
+    }
+    chosen as u16
+}
+
+/// The status text used both to render and to size the status column.
+fn status_display(repo: &Repo, view: &TableView) -> String {
+    let info = effective_info(repo, view.example_mode);
+    match info {
+        None => "\u{2026}".to_string(),
+        Some(info) if !info.valid && !repo.path_exists() => "-".to_string(),
+        Some(info) => status_text(info, view.icons),
+    }
 }
 
 /// The header row for `tab`.
@@ -162,13 +217,19 @@ fn row_for<'a>(repo: &Repo, view: &TableView) -> Row<'a> {
         ]),
         _ => {
             let info = effective_info(repo, view.example_mode);
-            let branch_width =
-                min(view.config.column_widths.current_branch_name) as usize;
+            // Only ellipsize a branch that exceeds its configured maximum; the
+            // column itself is sized to the content otherwise.
+            let branch_cap = view
+                .config
+                .column_widths
+                .current_branch_name
+                .max
+                .unwrap_or(usize::MAX);
             Row::new(vec![
                 marker,
                 fav,
                 name,
-                Cell::from(truncate(&branch_text(info), branch_width)),
+                Cell::from(truncate(&branch_text(info), branch_cap)),
                 status_cell(repo, info, view),
                 Cell::from(github_text(info)),
             ])
@@ -218,14 +279,14 @@ fn status_cell<'a>(
             Style::default().fg(ACCENT),
         ));
     }
-    let width = min(view.config.column_widths.status) as usize;
     let Some(info) = info else {
         return Cell::from(Span::styled("…", Style::default().fg(DIM)));
     };
     if !info.valid && !repo.path_exists() {
         return Cell::from(Span::styled("-", Style::default().fg(DIM)));
     }
-    let text = truncate(&status_text(info, view.icons), width);
+    // The status column is sized to its content, so no truncation is needed.
+    let text = status_text(info, view.icons);
     let style = if is_clean(info) {
         Style::default().fg(POSITIVE)
     } else if has_changes(info) {
@@ -261,11 +322,9 @@ fn branch_text(info: Option<&GitInfo>) -> String {
 }
 
 /// The GitHub name text, or a dash.
-fn github_text<'a>(info: Option<&GitInfo>) -> Text<'a> {
-    let value = info
-        .and_then(|info| info.github_repo_name.clone())
-        .unwrap_or_else(|| "-".to_string());
-    Text::from(value)
+fn github_text(info: Option<&GitInfo>) -> String {
+    info.and_then(|info| info.github_repo_name.clone())
+        .unwrap_or_else(|| "-".to_string())
 }
 
 /// The kind label for the Files and Folders tab.
