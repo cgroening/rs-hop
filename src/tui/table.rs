@@ -14,9 +14,11 @@ use crate::config::{ColumnWidth, Config};
 use crate::domain::filter::Tab;
 use crate::domain::repo::{GitInfo, Repo, RepoKind};
 use crate::tui::colors::{
-    DANGER, DIM, FAVOURITE, header_style, selection_style,
+    CHANGES, DANGER, DIM, FAVOURITE, POSITIVE, header_style, selection_style,
 };
-use crate::tui::presentation::{IconSet, status_text, truncate};
+use crate::tui::presentation::{
+    IconSet, render_scrollbar, status_text, truncate,
+};
 
 /// The styling context for a table render, bundled to keep the parameter count
 /// low.
@@ -50,13 +52,38 @@ pub fn render_table(
     cursor: usize,
     view: &TableView,
 ) {
+    // Reserve the last column for a scrollbar when the list overflows.
+    let viewport = area.height.saturating_sub(1) as usize; // minus header row
+    let overflow = viewport > 0 && repos.len() > viewport;
+    let table_area = if overflow {
+        Rect {
+            width: area.width.saturating_sub(1),
+            ..area
+        }
+    } else {
+        area
+    };
+
     let rows: Vec<Row> = repos.iter().map(|repo| row_for(repo, view)).collect();
     let table = Table::new(rows, widths(view.tab, view.config))
         .header(header_row(view.tab))
         .column_spacing(1)
         .row_highlight_style(selection_style());
     let mut state = TableState::default().with_selected(Some(cursor));
-    frame.render_stateful_widget(table, area, &mut state);
+    frame.render_stateful_widget(table, table_area, &mut state);
+
+    if overflow {
+        // Align the bar with the rows (below the header); its position follows
+        // the same bottom-anchored offset the table scrolls to.
+        let offset = cursor.saturating_sub(viewport.saturating_sub(1));
+        let bar_area = Rect {
+            x: area.x,
+            y: area.y + 1,
+            width: area.width,
+            height: area.height.saturating_sub(1),
+        };
+        render_scrollbar(frame, bar_area, repos.len(), offset, viewport);
+    }
 }
 
 /// The column width constraints for `tab`.
@@ -152,7 +179,8 @@ fn fav_cell<'a>(repo: &Repo, icons: &IconSet) -> Cell<'a> {
     }
 }
 
-/// The status cell, dimmed while loading, green when clean.
+/// The status cell: dim while loading, green when clean, yellow when there are
+/// uncommitted changes, default otherwise (e.g. only ahead/behind).
 fn status_cell<'a>(
     repo: &Repo,
     info: Option<&GitInfo>,
@@ -168,11 +196,18 @@ fn status_cell<'a>(
     }
     let text = truncate(&status_text(info, icons), width);
     let style = if is_clean(info) {
-        Style::default().fg(crate::tui::colors::POSITIVE)
+        Style::default().fg(POSITIVE)
+    } else if has_changes(info) {
+        Style::default().fg(CHANGES)
     } else {
         Style::default()
     };
     Cell::from(Span::styled(text, style))
+}
+
+/// Whether the info reports uncommitted changes (a non-clean working tree).
+fn has_changes(info: &GitInfo) -> bool {
+    info.changes.unwrap_or(0) > 0
 }
 
 /// Whether the structured info reports a clean tree (no override).

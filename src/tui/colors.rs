@@ -13,6 +13,8 @@ pub const SELECTION_BG: Color = Color::Rgb(40, 40, 60);
 pub const DANGER: Color = Color::Rgb(208, 80, 80);
 /// Colour for a clean git status.
 pub const POSITIVE: Color = Color::Green;
+/// Colour for a git status with uncommitted changes (soft amber/yellow).
+pub const CHANGES: Color = Color::Rgb(220, 190, 90);
 /// Colour for the favourite star.
 pub const FAVOURITE: Color = Color::Rgb(229, 192, 123);
 /// Colour of the text-input block cursor.
