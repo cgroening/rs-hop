@@ -11,8 +11,9 @@ use crate::domain::error::{Error, Result};
 use crate::domain::filter::Tab;
 use crate::domain::sort::SortMode;
 
-/// The restored UI state.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+/// The restored UI state. `preview` is a raw key (the layout enum lives in the
+/// TUI layer, which storage must not depend on).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct UiState {
     /// The list sort mode.
     pub sort: SortMode,
@@ -20,6 +21,8 @@ pub struct UiState {
     pub tab: Tab,
     /// Whether slugs are shown inline after the entry name.
     pub show_slugs: bool,
+    /// The preview-panel mode key (e.g. "off"/"right"/"bottom").
+    pub preview: String,
 }
 
 /// The on-disk UI state document.
@@ -28,6 +31,7 @@ struct UiStateDoc {
     sort: Option<String>,
     tab: Option<String>,
     show_slugs: Option<bool>,
+    preview: Option<String>,
 }
 
 /// Loads the persisted UI state, defaulting when the file is missing/corrupt.
@@ -45,6 +49,7 @@ pub fn load(path: &Path) -> UiState {
             .map_or_else(SortMode::default, SortMode::from_config_value),
         tab: doc.tab.as_deref().map_or_else(Tab::default, Tab::from_key),
         show_slugs: doc.show_slugs.unwrap_or(false),
+        preview: doc.preview.unwrap_or_else(|| "off".to_string()),
     }
 }
 
@@ -52,11 +57,12 @@ pub fn load(path: &Path) -> UiState {
 ///
 /// # Errors
 /// Returns an error if the directory or file cannot be written.
-pub fn save(path: &Path, state: UiState) -> Result<()> {
+pub fn save(path: &Path, state: &UiState) -> Result<()> {
     let doc = UiStateDoc {
         sort: Some(state.sort.label().to_string()),
         tab: Some(state.tab.as_key().to_string()),
         show_slugs: Some(state.show_slugs),
+        preview: Some(state.preview.clone()),
     };
     let text = toml::to_string_pretty(&doc)
         .map_err(|e| Error::invalid(format!("serialise ui state: {e}")))?;
@@ -80,8 +86,9 @@ mod tests {
             sort: SortMode::Custom,
             tab: Tab::Archive,
             show_slugs: true,
+            preview: "right".to_string(),
         };
-        save(&file, state).unwrap();
+        save(&file, &state).unwrap();
         assert_eq!(load(&file), state);
         let _ = fs::remove_dir_all(&dir);
     }

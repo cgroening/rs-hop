@@ -51,6 +51,23 @@ pub fn open_default_app(path: &Path) -> io::Result<ExitStatus> {
     Command::new(program).arg(path).status()
 }
 
+/// Opens `url` in the default browser (macOS `open`, Linux `xdg-open`, Windows
+/// `start`).
+///
+/// # Errors
+/// Returns an I/O error if the opener program cannot be spawned.
+pub fn open_url(url: &str) -> io::Result<ExitStatus> {
+    if cfg!(target_os = "windows") {
+        return Command::new("cmd").args(["/C", "start", "", url]).status();
+    }
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    Command::new(program).arg(url).status()
+}
+
 /// Resolves the editor to use: an explicit `configured` value, then `$VISUAL`,
 /// then `$EDITOR`, falling back to `vi`.
 pub fn resolve_editor(configured: Option<&str>) -> String {

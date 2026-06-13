@@ -13,6 +13,7 @@ pub mod help;
 pub mod navigation;
 pub mod path_picker;
 pub mod presentation;
+pub mod preview;
 pub mod sections_modal;
 pub mod sections_view;
 pub mod table;
@@ -20,7 +21,7 @@ pub mod terminal;
 pub mod text_input;
 pub mod widgets;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -55,7 +56,10 @@ use crate::tui::colors::{
 };
 use crate::tui::form::{FormResult, RepoDraft, RepoForm};
 use crate::tui::path_picker::{PathPicker, PickerResult};
-use crate::tui::presentation::{IconSet, footer_lines, render_empty_hint};
+use crate::tui::presentation::{
+    IconSet, footer_lines, github_url, render_empty_hint,
+};
+use crate::tui::preview::PreviewMode;
 use crate::tui::sections_modal::{SectionsAction, SectionsModal};
 use crate::tui::widgets::{
     ConfirmModal, ConfirmResult, PromptResult, SelectModal, SelectResult,
@@ -163,6 +167,14 @@ pub struct App {
     show_slugs: bool,
     /// When on, only git entries with a status change are shown (session-only).
     changes_only: bool,
+    /// The cursor entry's path per tab, restored when returning to that tab.
+    tab_focus: HashMap<Tab, PathBuf>,
+    /// The last rendered list height (entry rows), for page-wise navigation.
+    list_height: std::cell::Cell<usize>,
+    /// Where the detail/preview panel sits (persisted).
+    preview: PreviewMode,
+    /// Cached `git log` excerpts for the preview, keyed by entry path.
+    preview_log: HashMap<PathBuf, Vec<String>>,
 }
 
 /// How the status is sourced on start.
@@ -221,6 +233,10 @@ impl App {
             files_missing: HashSet::new(),
             show_slugs: ui.show_slugs,
             changes_only: false,
+            tab_focus: HashMap::new(),
+            list_height: std::cell::Cell::new(1),
+            preview: PreviewMode::from_key(&ui.preview),
+            preview_log: HashMap::new(),
         };
         if let StartupStatus::Refresh { fetch } = startup
             && !app.config.example_mode
@@ -266,7 +282,12 @@ impl App {
         } else {
             // The git tabs apply the chosen sort mode.
             let mut indices = tab_indices;
-            sort_indices(repos, &mut indices, self.sort);
+            sort_indices(
+                repos,
+                &mut indices,
+                self.sort,
+                Local::now().timestamp(),
+            );
             indices
         };
         if self.changes_only {
@@ -554,6 +575,7 @@ impl App {
 /// Returns an I/O error if drawing or reading from the terminal fails.
 pub fn run(mut app: App, tui: &mut Tui) -> io::Result<RunOutcome> {
     loop {
+        app.ensure_preview_log();
         tui.terminal.draw(|frame| app.render(frame))?;
         app.drain_status();
         // Poll faster while refreshing so the spinner animates smoothly.
@@ -706,12 +728,22 @@ impl App {
         if self.filtering {
             return self.handle_filter_key(key);
         }
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Char('1') => self.switch_tab(Tab::GitRepos),
             KeyCode::Char('2') => self.switch_tab(Tab::FilesAndFolders),
             KeyCode::Char('3') => self.switch_tab(Tab::Archive),
+            KeyCode::Tab => self.cycle_tab(1),
+            KeyCode::BackTab => self.cycle_tab(-1),
             KeyCode::Up => self.on_arrow(key, -1),
             KeyCode::Down => self.on_arrow(key, 1),
+            KeyCode::Char('g') => self.cursor_to_edge(false),
+            KeyCode::Char('G') => self.cursor_to_edge(true),
+            KeyCode::PageUp => self.page(-1, false),
+            KeyCode::PageDown => self.page(1, false),
+            KeyCode::Char('u') if ctrl => self.page(-1, true),
+            KeyCode::Char('d') if ctrl => self.page(1, true),
+            KeyCode::Char('u') => self.undo(),
             KeyCode::Char(' ') => self.toggle_select(),
             KeyCode::Esc => self.clear_selection(),
             KeyCode::Enter => return self.open_selected(true),
@@ -734,6 +766,8 @@ impl App {
             }
             KeyCode::Char('z') => self.toggle_fav(),
             KeyCode::Char('y') => self.copy_path(),
+            KeyCode::Char('b') => self.open_on_github(),
+            KeyCode::Char('v') => self.cycle_preview(),
             KeyCode::Char('i') => self.toggle_slugs(),
             KeyCode::Char('A') => self.toggle_archive(),
             KeyCode::Char('S') => self.open_slug_prompt(),
@@ -789,14 +823,49 @@ impl App {
         None
     }
 
-    /// Switches to `tab`, resetting the cursor, clearing the selection and
-    /// persisting the active tab for the next run.
+    /// Switches to `tab`, remembering the current tab's cursor entry and
+    /// restoring the target tab's, clearing the selection and persisting state.
     fn switch_tab(&mut self, tab: Tab) {
+        if tab == self.tab {
+            return;
+        }
+        self.remember_focus();
         self.tab = tab;
-        self.cursor = 0;
         self.clear_selection();
+        self.restore_focus();
         self.save_ui_state();
         self.refresh_tab_on_first_visit();
+    }
+
+    /// Cycles to the next/previous tab (`Tab`/`Shift+Tab`).
+    fn cycle_tab(&mut self, delta: isize) {
+        let current = Tab::ALL.iter().position(|t| *t == self.tab).unwrap_or(0);
+        let next = navigation::cycle(current, Tab::ALL.len(), delta);
+        self.switch_tab(Tab::ALL[next]);
+    }
+
+    /// Records the current tab's cursor entry by path, to restore on return.
+    fn remember_focus(&mut self) {
+        if let Some(index) = self.selected_index()
+            && let Some(repo) = self.service.get(index)
+        {
+            let path = repo.path.clone();
+            self.tab_focus.insert(self.tab, path);
+        }
+    }
+
+    /// Restores the cursor to the remembered entry for the current tab (by
+    /// path), or the top when none is remembered or it is no longer visible.
+    fn restore_focus(&mut self) {
+        self.cursor = 0;
+        let Some(path) = self.tab_focus.get(&self.tab).cloned() else {
+            return;
+        };
+        let view = self.ordered_view();
+        let repos = self.service.repos();
+        if let Some(pos) = view.iter().position(|&i| repos[i].path == path) {
+            self.cursor = pos;
+        }
     }
 
     /// Runs the per-tab first-visit work: the Files tab checks that its paths
@@ -847,14 +916,21 @@ impl App {
         });
     }
 
-    /// Persists the sort mode, active tab and slug display (best-effort).
+    /// Cycles the detail/preview panel (off -> right -> bottom) and persists it.
+    fn cycle_preview(&mut self) {
+        self.preview = self.preview.next();
+        self.save_ui_state();
+    }
+
+    /// Persists the sort mode, active tab, slug display and preview mode.
     fn save_ui_state(&self) {
         let _ = ui_state::save(
             &self.ui_state_path,
-            ui_state::UiState {
+            &ui_state::UiState {
                 sort: self.sort,
                 tab: self.tab,
                 show_slugs: self.show_slugs,
+                preview: self.preview.as_key().to_string(),
             },
         );
     }
@@ -865,6 +941,46 @@ impl App {
         let len = self.ordered_view().len();
         self.cursor = navigation::cycle(self.cursor, len, delta);
         self.anchor = None;
+    }
+
+    /// Moves the cursor by `delta` without wrapping, clamped into the view.
+    fn move_clamped(&mut self, delta: isize) {
+        let len = self.ordered_view().len();
+        if len == 0 {
+            return;
+        }
+        let last = len as isize - 1;
+        self.cursor = (self.cursor as isize + delta).clamp(0, last) as usize;
+        self.anchor = None;
+    }
+
+    /// Jumps the cursor to the first (`g`) or last (`G`) entry.
+    fn cursor_to_edge(&mut self, to_end: bool) {
+        let len = self.ordered_view().len();
+        self.cursor = if to_end { len.saturating_sub(1) } else { 0 };
+        self.anchor = None;
+    }
+
+    /// Moves the cursor by whole (`pages` != 0) or half pages, using the last
+    /// rendered list height.
+    fn page(&mut self, pages: isize, half: bool) {
+        let height = self.list_height.get().max(1) as isize;
+        let step = if half { (height / 2).max(1) } else { height };
+        self.move_clamped(pages.signum() * step);
+    }
+
+    /// Reverts the last config mutation, keeping the cursor in range.
+    fn undo(&mut self) {
+        match self.service.undo() {
+            Ok(Some(label)) => {
+                self.clear_selection();
+                let len = self.ordered_view().len();
+                self.clamp_cursor(len);
+                self.set_status(format!("undid: {label}"));
+            }
+            Ok(None) => self.set_status("nothing to undo"),
+            Err(error) => self.set_status(format!("undo failed: {error}")),
+        }
     }
 
     /// Records the open, writes the handoff path and returns the outcome for
@@ -1102,6 +1218,33 @@ impl App {
         match crate::util::clipboard::copy(&path) {
             Ok(()) => self.set_status("copied path to clipboard"),
             Err(error) => self.set_status(format!("copy failed: {error}")),
+        }
+    }
+
+    /// Opens the selected git entry's GitHub page in the browser (a non-blocking
+    /// GUI handoff, so the TUI stays up).
+    fn open_on_github(&mut self) {
+        let name = self.selected_index().and_then(|index| {
+            let repo = self.service.get(index)?;
+            let info = if self.config.example_mode {
+                repo.example_git_info.as_ref()
+            } else {
+                repo.git_info.as_ref()
+            };
+            info.and_then(|info| info.github_repo_name.clone())
+        });
+        let url = name.and_then(|name| {
+            github_url(&name, self.config.github_username.as_deref())
+        });
+        let Some(url) = url else {
+            self.set_status("no GitHub remote");
+            return;
+        };
+        match crate::util::opener::open_url(&url) {
+            Ok(_) => self.set_status(format!("opening {url}")),
+            Err(error) => {
+                self.set_status(format!("could not open browser: {error}"))
+            }
         }
     }
 
@@ -1422,9 +1565,80 @@ impl App {
             width: rows[1].width.saturating_sub(2),
             ..rows[1]
         };
-        self.render_body(frame, body);
+        let (list_area, preview_area) = self.split_preview(body);
+        self.render_body(frame, list_area);
+        if let Some(preview_area) = preview_area {
+            self.render_preview(frame, preview_area);
+        }
         self.render_footer(frame, rows[2]);
         self.render_overlay(frame, area);
+    }
+
+    /// Splits `body` into the list area and an optional preview area, per the
+    /// active [`PreviewMode`] (right pane, bottom pane, or none).
+    fn split_preview(&self, body: Rect) -> (Rect, Option<Rect>) {
+        match self.preview {
+            PreviewMode::Off => (body, None),
+            PreviewMode::Right => {
+                let parts = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Min(20),
+                        Constraint::Percentage(40),
+                    ])
+                    .split(body);
+                (parts[0], Some(parts[1]))
+            }
+            PreviewMode::Bottom => {
+                let parts = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Min(3), Constraint::Length(9)])
+                    .split(body);
+                (parts[0], Some(parts[1]))
+            }
+        }
+    }
+
+    /// Caches the `git log` for the cursor entry when the preview is visible
+    /// (once per path; skipped in example mode). Runs in the event loop, never
+    /// during rendering.
+    fn ensure_preview_log(&mut self) {
+        if self.preview == PreviewMode::Off || self.config.example_mode {
+            return;
+        }
+        let Some(index) = self.selected_index() else {
+            return;
+        };
+        let Some(repo) = self.service.get(index) else {
+            return;
+        };
+        if repo.kind != RepoKind::Git {
+            return;
+        }
+        let path = repo.path.clone();
+        if self.preview_log.contains_key(&path) {
+            return;
+        }
+        let log = self.git_client.log(&path, 5);
+        self.preview_log.insert(path, log);
+    }
+
+    /// Renders the detail/preview panel for the cursor entry.
+    fn render_preview(&self, frame: &mut Frame, area: Rect) {
+        let repo = self.selected_index().and_then(|i| self.service.get(i));
+        let log = repo
+            .map(|r| self.preview_log.get(&r.path).map(Vec::as_slice))
+            .unwrap_or(None);
+        preview::render(
+            frame,
+            area,
+            preview::PreviewContext {
+                repo,
+                icons: &self.icons,
+                example_mode: self.config.example_mode,
+                log: log.unwrap_or(&[]),
+            },
+        );
     }
 
     /// Renders the rounded header box: brand + tabs on the first line, the
@@ -1492,15 +1706,38 @@ impl App {
             ));
             spans.push(sep());
         }
-        spans.push(Span::styled(
-            format!("{} {}", icons.count, self.ordered_view().len()),
-            muted,
-        ));
+        // Entry count, as shown/total when a filter narrows the list.
+        let shown = self.ordered_view().len();
+        let total = self.tab_indices().len();
+        let count = if shown == total {
+            format!("{} {shown}", icons.count)
+        } else {
+            format!("{} {shown}/{total}", icons.count)
+        };
+        spans.push(Span::styled(count, muted));
         spans.push(sep());
         spans.push(Span::styled(
             format!("{} {}", icons.sort, self.sort.label()),
             muted,
         ));
+        // Active view lenses (filter / changes-only / slugs) in the accent.
+        let mut lenses: Vec<&str> = Vec::new();
+        if self.filtering_active() {
+            lenses.push("filter");
+        }
+        if self.changes_only {
+            lenses.push("changes");
+        }
+        if self.show_slugs {
+            lenses.push("slugs");
+        }
+        if !lenses.is_empty() {
+            spans.push(sep());
+            spans.push(Span::styled(
+                lenses.join(" · "),
+                Style::default().fg(ACCENT),
+            ));
+        }
 
         // The status/remote times are git-specific, so skip them on the Files
         // and Folders tab.
@@ -1599,6 +1836,9 @@ impl App {
 
     /// Renders the entry table, or an empty hint.
     fn render_body(&self, frame: &mut Frame, area: Rect) {
+        // Remember the page size for page-wise navigation.
+        self.list_height
+            .set(area.height.saturating_sub(1).max(1) as usize);
         let view = self.ordered_view();
         if view.is_empty() {
             render_empty_hint(frame, area, empty_hint(self.tab));
@@ -1617,6 +1857,7 @@ impl App {
         // Which visible rows are part of the multi-selection.
         let selected: Vec<bool> =
             view.iter().map(|i| self.selected.contains(i)).collect();
+        let query = self.filter.value();
         let table_view = table::TableView {
             tab: self.tab,
             config: &self.config,
@@ -1627,6 +1868,7 @@ impl App {
             has_selection: !self.selected.is_empty(),
             missing: &self.files_missing,
             show_slugs: self.show_slugs,
+            query: self.filtering_active().then_some(query.as_str()),
         };
         table::render_table(frame, area, &visible, cursor, &table_view);
     }
@@ -1724,7 +1966,10 @@ fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
     } else {
         hints.push(("s", "sort"));
     }
-    hints.extend([("n", "add"), ("e", "edit"), ("d/Del", "del"), ("z", "fav")]);
+    hints.push(("v", "preview"));
+    hints.extend([("n", "add"), ("e", "edit"), ("d/Del", "del")]);
+    hints.push(("u", "undo"));
+    hints.push(("z", "fav"));
     // Archive tab restores; the others archive.
     hints.push(match tab {
         Tab::Archive => ("A", "restore"),
@@ -1733,6 +1978,7 @@ fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
     hints.push(("S", "slug"));
     hints.push(("i", "slugs"));
     hints.push(("y", "copy path"));
+    hints.push(("b", "github"));
     hints.push(("p", "fix path"));
     // Git status refresh only makes sense where entries are git repositories;
     // the Files tab uses `r` to check that paths still exist.
@@ -1836,6 +2082,9 @@ mod tests {
             GitInfo::default()
         }
         fn fetch(&self, _path: &Path) {}
+        fn log(&self, _path: &Path, _max: usize) -> Vec<String> {
+            Vec::new()
+        }
     }
 
     fn sample_app() -> App {

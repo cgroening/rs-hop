@@ -12,7 +12,12 @@ use crate::tui::widgets::centered_rect;
 /// The grouped shortcut list shown in the overlay.
 const SHORTCUTS: &[(&str, &str)] = &[
     ("1 / 2 / 3", "switch tab (Git Repos / Files / Archiv)"),
+    ("Tab / Shift+Tab", "cycle to the next / previous tab"),
     ("\u{2191} \u{2193}", "move cursor (wraps)"),
+    (
+        "g / G · PgUp/PgDn · Ctrl+u/d",
+        "top / bottom · page · half page",
+    ),
     (
         "Space",
         "toggle selection   ·   Shift+\u{2191}\u{2193}: extend range",
@@ -30,9 +35,17 @@ const SHORTCUTS: &[(&str, &str)] = &[
         "O",
         "force open with the default app (e.g. a text file in its GUI app)",
     ),
-    ("f", "live fuzzy filter (Esc clears)"),
+    (
+        "f",
+        "live fuzzy filter (Esc clears; matches are highlighted)",
+    ),
     ("F", "toggle showing only git repos with a status change"),
-    ("s", "git tabs: cycle sort   ·   Files: jump to section"),
+    ("b", "open the selected repo on GitHub in the browser"),
+    ("v", "cycle the detail panel (off / right / bottom)"),
+    (
+        "s",
+        "git tabs: cycle sort (name/recent/frecency/custom) · Files: jump",
+    ),
     ("M", "Files: manage sections (add / rename / delete / move)"),
     (
         "Alt+\u{2191}\u{2193}",
@@ -47,6 +60,10 @@ const SHORTCUTS: &[(&str, &str)] = &[
     (
         "d / Del / Backspace",
         "delete (acts on the selection, else the cursor)",
+    ),
+    (
+        "u",
+        "undo the last change (delete / archive / favourite / edit)",
     ),
     ("z", "toggle favourite (selection or cursor)"),
     ("A", "archive / restore (selection or cursor)"),

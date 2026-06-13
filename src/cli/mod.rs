@@ -65,6 +65,23 @@ enum Command {
     /// Print the resolved config file path.
     #[command(name = "config-path")]
     ConfigPath,
+    /// Add an entry for a path (default: the current directory).
+    Add {
+        /// Path to add (default: `.`).
+        path: Option<PathBuf>,
+        /// Slug for `hop <slug>`.
+        #[arg(long)]
+        slug: Option<String>,
+        /// Section (Files tab grouping).
+        #[arg(long)]
+        section: Option<String>,
+        /// Display name (default: the path's basename).
+        #[arg(long)]
+        name: Option<String>,
+        /// Entry kind: `git` or `path` (default: auto-detect).
+        #[arg(long)]
+        kind: Option<String>,
+    },
     /// Jump to a slug (`hop <slug>`).
     #[command(external_subcommand)]
     Jump(Vec<String>),
@@ -104,6 +121,13 @@ fn run_with_service(cli: Cli, config_path: PathBuf) -> ExitCode {
         }
         Some(Command::List) => cmd_list(&config, &service, &cli),
         Some(Command::Jump(args)) => cmd_jump(&config, service, args, &cli),
+        Some(Command::Add {
+            path,
+            slug,
+            section,
+            name,
+            kind,
+        }) => cmd_add(service, path.clone(), slug, section, name, kind),
         // ConfigPath and Import are handled before the service is built.
         Some(Command::ConfigPath | Command::Import { .. }) => ExitCode::SUCCESS,
     }
@@ -265,6 +289,39 @@ fn list_line(repo: &Repo) -> String {
         repo.kind.as_config_value(),
         repo.path.display(),
     )
+}
+
+/// Handles `hop add`: registers an entry for a path (default the current
+/// directory), auto-detecting the kind unless `--kind` is given.
+fn cmd_add(
+    mut service: RepoService,
+    path: Option<PathBuf>,
+    slug: &Option<String>,
+    section: &Option<String>,
+    name: &Option<String>,
+    kind: &Option<String>,
+) -> ExitCode {
+    let raw = path.unwrap_or_else(|| PathBuf::from("."));
+    let expanded = paths::expand_tilde(&raw.to_string_lossy());
+    let absolute = std::path::absolute(&expanded).unwrap_or(expanded);
+    let kind = match kind {
+        Some(value) => RepoKind::from_config_value(value),
+        None if absolute.join(".git").exists() => RepoKind::Git,
+        None => RepoKind::Path,
+    };
+    let mut repo = Repo::new(absolute.clone());
+    repo.name = name.clone();
+    repo.slug = slug.clone();
+    repo.section = section.clone();
+    repo.kind = kind;
+    if let Err(error) = service.add(repo) {
+        return output::report_error(&error);
+    }
+    if let Some(section) = section {
+        let _ = service.ensure_section(section);
+    }
+    println!("Added {} ({})", absolute.display(), kind.as_config_value());
+    ExitCode::SUCCESS
 }
 
 /// Handles `hop <slug>`: records the open, writes the handoff path and launches

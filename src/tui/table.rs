@@ -22,7 +22,8 @@ use crate::tui::colors::{
     header_style, selection_style,
 };
 use crate::tui::presentation::{
-    IconSet, name_plain, name_spans, render_scrollbar, status_text, truncate,
+    IconSet, highlight_name, name_plain, render_scrollbar, slug_style,
+    status_text, truncate,
 };
 
 /// The styling context for a table render, bundled to keep the parameter count
@@ -48,11 +49,27 @@ pub struct TableView<'a> {
     pub missing: &'a HashSet<PathBuf>,
     /// Whether to show each entry's slug (dim, italic) after its name.
     pub show_slugs: bool,
+    /// The active fuzzy query, to highlight matched characters in the name.
+    pub query: Option<&'a str>,
 }
 
 /// The slug to display after `repo`'s name, or `None` when slugs are hidden.
 fn shown_slug<'a>(repo: &'a Repo, view: &TableView) -> Option<&'a str> {
     repo.slug.as_deref().filter(|_| view.show_slugs)
+}
+
+/// The name-cell spans: the name (fuzzy-highlighted when a query is active),
+/// plus the dim-italic slug when shown.
+fn name_cell_spans(repo: &Repo, view: &TableView) -> Vec<Span<'static>> {
+    let name = repo.display_name();
+    let mut spans = match view.query {
+        Some(query) if !query.trim().is_empty() => highlight_name(&name, query),
+        _ => vec![Span::raw(name)],
+    };
+    if let Some(slug) = shown_slug(repo, view) {
+        spans.push(Span::styled(format!(" {slug}"), slug_style()));
+    }
+    spans
 }
 
 /// The git info to display for `repo`: example info in example mode, otherwise
@@ -244,10 +261,7 @@ fn row_for<'a>(repo: &Repo, view: &TableView, selected: bool) -> Row<'a> {
     }
     cells.push(marker_cell(repo, view));
     cells.push(fav_cell(repo, view.icons));
-    cells.push(Cell::from(Line::from(name_spans(
-        &repo.display_name(),
-        shown_slug(repo, view),
-    ))));
+    cells.push(Cell::from(Line::from(name_cell_spans(repo, view))));
     match view.tab {
         Tab::FilesAndFolders => {
             cells.push(Cell::from(type_label(repo)));

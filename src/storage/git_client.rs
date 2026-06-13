@@ -17,6 +17,9 @@ pub trait GitClient: Send + Sync {
     fn collect(&self, path: &Path) -> GitInfo;
     /// Fetches the remote for `path` (best-effort; ignores failures).
     fn fetch(&self, path: &Path);
+    /// The most recent `max` commits as one-line summaries (best-effort; empty
+    /// when `path` is not a repository).
+    fn log(&self, path: &Path, max: usize) -> Vec<String>;
 }
 
 /// Extracts an `owner/repo` name from a git remote `url`, stripping a trailing

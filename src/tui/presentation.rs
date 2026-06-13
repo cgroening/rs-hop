@@ -5,6 +5,8 @@
 //! renders. All glyphs are single-cell (no Nerd Font, no emoji) so column
 //! layout matches what the terminal draws.
 
+use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
+use nucleo_matcher::{Config, Matcher, Utf32Str};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Modifier, Style};
@@ -166,6 +168,82 @@ pub fn name_spans(name: &str, slug: Option<&str>) -> Vec<Span<'static>> {
         spans.push(Span::styled(format!(" {slug}"), slug_style()));
     }
     spans
+}
+
+/// Spans for `name` with the characters matched by the fuzzy `query` shown in
+/// accent + bold and the rest plain. Falls back to the plain name when the
+/// query is empty or does not match.
+pub fn highlight_name(name: &str, query: &str) -> Vec<Span<'static>> {
+    let matched = match_indices(name, query);
+    if matched.is_empty() {
+        return vec![Span::raw(name.to_string())];
+    }
+    let hit = Style::default().fg(ACCENT).add_modifier(Modifier::BOLD);
+    let mut spans: Vec<Span> = Vec::new();
+    let mut current = String::new();
+    let mut current_hit = false;
+    for (index, ch) in name.chars().enumerate() {
+        let is_hit = matched.contains(&(index as u32));
+        if is_hit != current_hit && !current.is_empty() {
+            spans.push(styled_run(
+                std::mem::take(&mut current),
+                current_hit,
+                hit,
+            ));
+        }
+        current_hit = is_hit;
+        current.push(ch);
+    }
+    if !current.is_empty() {
+        spans.push(styled_run(current, current_hit, hit));
+    }
+    spans
+}
+
+/// A run of characters styled as a match hit or plain text.
+fn styled_run(text: String, hit: bool, hit_style: Style) -> Span<'static> {
+    if hit {
+        Span::styled(text, hit_style)
+    } else {
+        Span::raw(text)
+    }
+}
+
+/// The char positions of `name` matched by the fuzzy `query` (empty when the
+/// query is blank or there is no match).
+fn match_indices(name: &str, query: &str) -> Vec<u32> {
+    if query.trim().is_empty() {
+        return Vec::new();
+    }
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let pattern =
+        Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+    let mut buf = Vec::new();
+    let haystack = Utf32Str::new(name, &mut buf);
+    let mut indices = Vec::new();
+    pattern.indices(haystack, &mut matcher, &mut indices);
+    indices.sort_unstable();
+    indices.dedup();
+    indices
+}
+
+/// Builds a browseable GitHub URL from a stored `github_repo_name`: an
+/// `owner/repo` value maps directly; a bare `repo` (the owner was stripped as
+/// the configured `username`) needs that `username` to rebuild the owner.
+/// Returns `None` when no URL can be formed (assumes github.com).
+pub fn github_url(name: &str, username: Option<&str>) -> Option<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    if name.contains('/') {
+        return Some(format!("https://github.com/{name}"));
+    }
+    let owner = username?.trim();
+    if owner.is_empty() {
+        return None;
+    }
+    Some(format!("https://github.com/{owner}/{name}"))
 }
 
 /// Maximum footer rows, so a long hint never crowds out the list.
@@ -333,5 +411,30 @@ mod tests {
     fn name_spans_adds_slug_only_when_present() {
         assert_eq!(name_spans("hop", None).len(), 1);
         assert_eq!(name_spans("hop", Some("hp")).len(), 2);
+    }
+
+    #[test]
+    fn highlight_name_marks_matched_chars() {
+        // No query -> a single plain span.
+        assert_eq!(highlight_name("hop", "").len(), 1);
+        // A match produces more than one span (hit/non-hit runs).
+        assert!(highlight_name("readme", "rm").len() > 1);
+        // A non-match falls back to a single plain span.
+        assert_eq!(highlight_name("abc", "xyz").len(), 1);
+    }
+
+    #[test]
+    fn github_url_handles_owner_repo_and_bare_repo() {
+        assert_eq!(
+            github_url("owner/repo", None).as_deref(),
+            Some("https://github.com/owner/repo")
+        );
+        assert_eq!(
+            github_url("hop", Some("cgroening")).as_deref(),
+            Some("https://github.com/cgroening/hop")
+        );
+        // A bare repo without a username cannot be resolved.
+        assert_eq!(github_url("hop", None), None);
+        assert_eq!(github_url("", Some("x")), None);
     }
 }

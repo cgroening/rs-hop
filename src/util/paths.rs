@@ -53,13 +53,32 @@ fn xdg_dir(env_var: &str, fallback: &str) -> PathBuf {
     home.join(fallback).join(APP_NAME)
 }
 
-/// Config directory (`$XDG_CONFIG_HOME/hop` or `~/.config/hop`).
+/// On Windows, `%<env_var>%/hop` when the variable is set.
+#[cfg(windows)]
+fn windows_dir(env_var: &str) -> Option<PathBuf> {
+    env::var(env_var)
+        .ok()
+        .filter(|base| !base.is_empty())
+        .map(|base| PathBuf::from(base).join(APP_NAME))
+}
+
+/// Config directory: `%APPDATA%\hop` on Windows, else `$XDG_CONFIG_HOME/hop`
+/// or `~/.config/hop`.
 pub fn config_dir() -> PathBuf {
+    #[cfg(windows)]
+    if let Some(dir) = windows_dir("APPDATA") {
+        return dir;
+    }
     xdg_dir("XDG_CONFIG_HOME", ".config")
 }
 
-/// State directory (`$XDG_STATE_HOME/hop` or `~/.local/state/hop`).
+/// State directory: `%LOCALAPPDATA%\hop` on Windows, else `$XDG_STATE_HOME/hop`
+/// or `~/.local/state/hop`.
 pub fn state_dir() -> PathBuf {
+    #[cfg(windows)]
+    if let Some(dir) = windows_dir("LOCALAPPDATA") {
+        return dir;
+    }
     xdg_dir("XDG_STATE_HOME", ".local/state")
 }
 

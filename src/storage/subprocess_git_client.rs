@@ -66,6 +66,16 @@ impl GitClient for SubprocessGitClient {
             .args(["fetch", "--quiet"])
             .output();
     }
+
+    fn log(&self, path: &Path, max: usize) -> Vec<String> {
+        if !path.exists() {
+            return Vec::new();
+        }
+        let arg = format!("-{max}");
+        git_output(path, &["log", "--oneline", "--no-color", &arg])
+            .map(|out| out.lines().map(str::to_string).collect())
+            .unwrap_or_default()
+    }
 }
 
 /// Runs `git -C <path> <args>` and returns trimmed stdout on success.

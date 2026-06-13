@@ -1,8 +1,7 @@
 # hop
 
 A fast, fuzzy-finder TUI to jump between your git repositories and folders -
-a Rust port of [git-repo-jumper](../../Python/cli/git-repo-jumper), built on
-[ratatui](https://ratatui.rs).
+a Rust port of [git-repo-jumper](https://github.com/cgroening/py-git-repo-jumper), built on [ratatui](https://ratatui.rs).
 
 Pick an entry and hop writes its path to a handoff file your shell reads to
 `cd` into it; for git repos it also launches your git tool (lazygit by
@@ -24,9 +23,13 @@ for a one-word jump, sort modes and repair for paths that have moved.
   folder `cd`s, a text file (by extension; configurable via `editor_extensions`)
   opens in the editor, and any other file (image, PDF, …) opens with the
   system's default app.
-- **Slugs**: `hop <slug>` jumps straight to an entry from the shell.
-- **Sort modes**: by name, most recently used, or a custom drag order;
-  favourites are pinned to the top (except in the recent view).
+- **Slugs**: `hop <slug>` jumps straight to an entry from the shell;
+  `hop add [PATH]` registers one without opening the TUI.
+- **Sort modes**: by name, most recently used, frecency (frequency weighted by
+  recency), or a custom drag order; favourites are pinned to the top (except in
+  the recent view).
+- **Detail panel** (`v`): an optional pane (right or bottom) with the entry's
+  details and a recent `git log`.
 - **Missing-path marker** (a red `!`) with a picker that opens at the closest
   existing ancestor to repair the path, plus an error list (`!`) to repair /
   edit / delete all broken entries.
@@ -78,6 +81,24 @@ new shell).
 Now `hop` (or `hp`) opens the TUI and drops you into the selected directory, and
 `hop <slug>` jumps directly.
 
+### Windows (PowerShell)
+
+The handoff file is shell-agnostic; on Windows it lives under
+`%LOCALAPPDATA%\hop\selected-repo.txt`. Add this to your PowerShell profile
+(`$PROFILE`):
+
+```powershell
+function hop {
+    & hop.exe @args
+    $f = Join-Path $env:LOCALAPPDATA 'hop\selected-repo.txt'
+    if (Test-Path $f) {
+        $d = Get-Content $f
+        if (Test-Path $d) { Set-Location $d }
+    }
+}
+Set-Alias hp hop
+```
+
 ## Configuration
 
 hop reads `$XDG_CONFIG_HOME/hop/config.toml` (default
@@ -128,6 +149,7 @@ HOP_CONFIG=examples/config.toml cargo run
 hop                 open the TUI
 hop <slug>          jump to a slug: write the path + launch the git tool
 hop <slug> -s       jump only: write the path, no tool (cd)
+hop add [PATH]      add an entry (default: the current dir; --slug/--section/--name/--kind)
 hop list            list entries as plain text
 hop import [--from PATH]  import a git-repo-jumper config.yaml
 hop config-path     print the resolved config file path
@@ -141,20 +163,25 @@ hop config-path     print the resolved config file path
 | Key | Action |
 |-----|--------|
 | `1` / `2` / `3` | switch tab (Git Repos / Files / Archiv) |
+| `Tab` / `Shift+Tab` | cycle to the next / previous tab |
 | `↑` / `↓` | move cursor (wraps) |
+| `g` / `G` · `PgUp`/`PgDn` · `Ctrl+u`/`Ctrl+d` | top / bottom · page · half page |
 | `Space` | toggle selection · `Shift+↑/↓`: extend range · `Esc`: clear |
 | `Enter` | open: git → tool · folder → cd · text file → editor · other file → default app |
 | `o` | jump only: write path and exit (folder → cd, file → its parent) |
 | `O` | force open with the default app (regardless of kind) |
-| `f` | live fuzzy filter (`Esc` clears) |
+| `b` | open the selected repo on GitHub in the browser |
+| `v` | cycle the detail panel (off → right → bottom) |
+| `f` | live fuzzy filter (`Esc` clears; matched characters are highlighted) |
 | `F` | toggle showing only git repos with a status change |
-| `s` | git tabs: cycle sort (name / recent / custom) · Files: jump to a section |
+| `s` | git tabs: cycle sort (name / recent / frecency / custom) · Files: jump to a section |
 | `M` | Files tab: manage sections (add / rename / delete / reorder) |
 | `Alt+↑/↓` | reorder the entry (custom sort, or within a Files section; favourites stay on top) |
 | `Ctrl+↑/↓` | Files tab: jump to the previous / next section |
 | `n` | add an entry (fill the form; `^O` opens the path picker) |
 | `e` | edit the selected entry |
 | `d` / `Del` / `Backspace` | delete (acts on the selection, else the cursor; confirm) |
+| `u` | undo the last change |
 | `z` | toggle favourite (selection or cursor) |
 | `A` | archive / restore (selection or cursor) |
 | `S` | set or change the slug |

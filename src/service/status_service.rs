@@ -84,6 +84,9 @@ mod tests {
             }
         }
         fn fetch(&self, _path: &Path) {}
+        fn log(&self, _path: &Path, _max: usize) -> Vec<String> {
+            Vec::new()
+        }
     }
 
     #[test]

@@ -22,8 +22,10 @@ Main screen: **ratatui** + **crossterm** TUI with three tabs (Git Repos / Files 
 - **Kinds and opening.** `RepoKind` is `Git | Path` (the legacy `folder`/`file` config values fold into `Path`; `as_config_value` writes `"path"`). A `Path` entry is told apart at open time by `domain::repo::classify_path(path, &editor_extensions) -> PathClass { Folder, TextFile, OtherFile }`: an existing dir (or a non-existent path written with a trailing `/`, via `is_dir_target`) is a Folder; otherwise a file split by `is_text_file` (no extension, or an extension in `Config::editor_extensions`, default `DEFAULT_EDITOR_EXTENSIONS`). **Opening** (`tui::open_selected` -> `RunOutcome`, acted on by `cli` after the terminal is restored): Enter launches the git tool (Git), `cd`s (Folder), opens `$EDITOR` (TextFile -> `RunOutcome::OpenFile`) or the OS default app (OtherFile -> `RunOutcome::OpenWith` -> `util::opener::open_default_app`, macOS `open`); `o` writes the handoff path only (a file `cd`s to its parent). The add/edit form warns when a `Path` is saved without a trailing `/` and the path does not exist (assumed a file). `hop <slug>` mirrors Enter; `--save-only`/`-s` mirrors `o`.
 - **Slugs** (`domain::slug`) are `[a-z0-9-]+`, validated against reserved command names (`list`, `import`, `config-path`, `help`) and for uniqueness by the service.
 - **Multi-select / bulk**: `App::selected` (service indices) + `anchor`; `Space` toggles, `Shift+↑/↓` ranges (`extend_selection`), `Esc`/tab-switch clears. `App::targets()` returns the selection or the cursor entry; `d`/`A`/`z`/`x` act on it via the service bulk methods (`delete_many`/`set_archived_many`/`set_fav_many`, each one undo frame) and clear the selection. Selected rows get the `colors::MULTI_SELECT_BG` tint (`TableView::selected`).
-- **Custom order / reorder**: `SortMode::Custom` keeps the stored `[[repos]]` order (favourites floated on top, stable). `Alt+↑/↓` (`move_entry`, only in custom sort) swaps the cursor entry with its neighbour within the same favourite group via `RepoService::swap_entries`, which persists the new `[[repos]]` order. Footer hints are tab-specific (`hints(tab)`); the Archive tab shows `A: restore`, the Git tab shows the refresh keys. The chosen sort mode, the active tab **and the inline-slug toggle** are persisted across runs in `$XDG_STATE_HOME/hop/ui-state.toml` (`storage::ui_state` holds `UiState { sort, tab, show_slugs }`; loaded in `App::new`, written together via `save_ui_state` so no field clobbers another). `Tab::as_key`/`Tab::from_key` map the tab to/from its stored string. `i` toggles `App::show_slugs`: when on, the slug is rendered inline after the name (dim + italic, no separate column) via `presentation::name_spans`/`name_plain`/`slug_style`, used by both `tui::table` and `tui::sections_view`; the name column is sized to include it.
+- **Custom order / reorder**: `SortMode::Custom` keeps the stored `[[repos]]` order (favourites floated on top, stable). `Alt+↑/↓` (`move_entry`, only in custom sort) swaps the cursor entry with its neighbour within the same favourite group via `RepoService::swap_entries`, which persists the new `[[repos]]` order. Footer hints are tab-specific (`hints(tab)`); the Archive tab shows `A: restore`, the Git tab shows the refresh keys. The sort mode, active tab, inline-slug toggle **and preview-panel mode** are persisted across runs in `$XDG_STATE_HOME/hop/ui-state.toml` (`storage::ui_state` holds `UiState { sort, tab, show_slugs, preview }`; `preview` is a raw key string since the `PreviewMode` enum lives in the TUI layer; loaded in `App::new`, written together via `save_ui_state` so no field clobbers another). `Tab::as_key`/`Tab::from_key` map the tab to/from its stored string. `i` toggles `App::show_slugs`: when on, the slug is rendered inline after the name (dim + italic, no separate column) via `presentation::name_spans`/`name_plain`/`slug_style`, used by both `tui::table` and `tui::sections_view`; the name column is sized to include it.
 - **Missing paths**: the table shows a red `!` in the leftmost column; `p` opens the path picker at the nearest existing ancestor (`domain::path_repair::nearest_existing`).
+- **Navigation / misc keys**: `Tab`/`Shift+Tab` cycle tabs (`cycle_tab`); `g`/`G` jump to the list ends, `PageUp`/`PageDown` and `Ctrl+u`/`Ctrl+d` page/half-page (`page`, using `App::list_height` set during render); `u` runs `RepoService::undo`; the cursor entry's path is remembered per tab (`App::tab_focus`) and restored on return (`remember_focus`/`restore_focus`). `b` opens the entry on GitHub (`presentation::github_url` + `util::opener::open_url`, github.com assumed, non-blocking so the TUI stays up). Sorting adds **frecency** (`SortMode::Frecency`, `open_count` weighted by recency decay; `sort_indices`/`sort_repos` take `now: i64`). The header info line shows `shown/total` plus active-lens markers (filter / changes / slugs) when narrowed. Fuzzy matches are highlighted in the name (`presentation::highlight_name`, only in `tui::table` since filtering disables the sectioned view).
+- **Preview panel** (`v` cycles `PreviewMode::{Off,Right,Bottom}`, in `tui::preview`, persisted): `render` splits the body and `preview::render` draws the cursor entry's in-memory details + a cached `git log`. The log is gathered lazily by `App::ensure_preview_log` (event loop, once per path, skipped in example mode) via `GitClient::log`, cached in `App::preview_log`.
 - **One-level undo** is in the service (`RepoService` records the pre-change entry list per config mutation and rolls back if a write fails). The TUI does not yet bind an undo key.
 
 ## 3. Architecture (layered; dependencies point inward)
@@ -36,7 +38,7 @@ src/
   main.rs           thin binary: parse Cli, init file logging, dispatch
   domain/
     repo.rs         Repo, RepoKind{Git,Path}, GitInfo, classify_path (pure)
-    sort.rs         SortMode + sort_repos / sort_indices (pure)
+    sort.rs         SortMode (name/recent/frecency/custom) + sort_indices (pure)
     slug.rs         slugify + validate_format (reserved names) (pure)
     filter.rs       Tab, belongs_to_tab, searchable_text, fuzzy_indices
     sections.rs     group / flatten / section_starts / jump_target (pure)
@@ -60,7 +62,7 @@ src/
     migrate.rs git-repo-jumper YAML -> TOML (show -> archived inverted)
   cli/
     mod.rs    clap Cli/Command; bare -> TUI; external-subcommand slug jump;
-              list / import / config-path; composition root for commands
+              add / list / import / config-path; composition root for commands
     output.rs error reporting at the binary edge
   tui/
     mod.rs        App + run loop (poll + drain status) + key handling + render
@@ -73,13 +75,15 @@ src/
     table.rs      repo table rendering + column widths (TableView context)
     sections_view.rs Files-tab List of section headers + entry rows (carried offset)
     sections_modal.rs manage-sections overlay (add/rename/delete/reorder)
+    preview.rs    detail panel (PreviewMode off/right/bottom) + git-log lines
     widgets.rs    confirm / text prompt / select modals + centered_rect
     path_picker.rs filesystem picker (repair / form path), starts near a path
     form.rs       add/edit form (path/name/section/slug/kind/fav)
     help.rs       help overlay (?)
   util/
-    paths.rs      XDG resolution + ~ expansion
-    opener.rs     launch git tool / editor / default app (terminal handed over)
+    paths.rs      XDG (Unix) / %APPDATA%,%LOCALAPPDATA% (Windows) + ~ expansion
+    opener.rs     launch git tool / editor / default app / url (cross-platform)
+    clipboard.rs  copy via pbcopy / clip / wl-copy|xclip|xsel (cross-platform)
     logging.rs    file-only log backend
     app_info.rs   APP_NAME / APP_VERSION / APP_ABOUT
 ```
