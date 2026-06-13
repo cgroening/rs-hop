@@ -7,7 +7,8 @@
 use crate::domain::error::{Error, Result};
 
 /// Subcommand names a slug must never shadow (`hop <reserved>` is a command).
-pub const RESERVED: &[&str] = &["list", "import", "config-path", "help"];
+/// Kept in sync with the clap subcommands; a CLI test cross-checks it.
+pub const RESERVED: &[&str] = &["add", "list", "import", "config-path", "help"];
 
 /// Maximum slug length, keeping shortcuts terse.
 const MAX_LEN: usize = 40;
@@ -108,6 +109,7 @@ mod tests {
     #[test]
     fn validate_rejects_reserved_and_malformed() {
         assert!(validate_format("list").is_err());
+        assert!(validate_format("add").is_err());
         assert!(validate_format("").is_err());
         assert!(validate_format("Has Space").is_err());
         assert!(validate_format("UPPER").is_err());

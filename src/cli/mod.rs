@@ -343,7 +343,9 @@ fn cmd_jump(
         return output::fail("no slug given");
     };
     let Some(index) = service.index_by_slug(&slug) else {
-        return output::fail(&format!("unknown slug '{slug}'"));
+        return output::fail(&format!(
+            "unknown command or slug '{slug}' (see `hop --help`)"
+        ));
     };
     let Some(repo) = service.get(index).cloned() else {
         return output::fail("entry vanished");
@@ -446,7 +448,23 @@ fn cmd_import(from: Option<PathBuf>, config_path: &Path) -> ExitCode {
 
 #[cfg(test)]
 mod tests {
+    use clap::CommandFactory;
+
     use super::*;
+    use crate::domain::slug;
+
+    #[test]
+    fn every_subcommand_name_is_a_reserved_slug() {
+        // A slug must never shadow a real command, so each clap subcommand
+        // (including the auto-generated `help`) must be in `slug::RESERVED`.
+        for sub in Cli::command().get_subcommands() {
+            let name = sub.get_name();
+            assert!(
+                slug::RESERVED.contains(&name),
+                "subcommand '{name}' is not in slug::RESERVED"
+            );
+        }
+    }
 
     fn entry(name: &str, kind: RepoKind, path: &str) -> Repo {
         let mut repo = Repo::new(PathBuf::from(path));
