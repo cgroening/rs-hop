@@ -146,7 +146,8 @@ hop config-path     print the resolved config file path
 | `y` | copy the selected entry's path to the clipboard |
 | `p` | repair a missing path |
 | `!` | list entries with path errors, then repair / edit / delete |
-| `r` | reload git status   ·   `R`: `git fetch` + reload |
+| `r` | reload git status (all)   ·   `R`: `git fetch` + reload |
+| `x` | refresh the selected entry   ·   `X`: with `git fetch` |
 | `?` | toggle the help overlay |
 | `q` / `Ctrl+Q` | quit |
 

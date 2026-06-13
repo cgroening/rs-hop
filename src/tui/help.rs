@@ -27,6 +27,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("p", "repair a missing path"),
     ("!", "list entries with path errors and fix them"),
     ("r", "reload git status   ·   R: git fetch + reload"),
+    ("x", "refresh the selected entry   ·   X: with git fetch"),
     ("?", "toggle this help"),
     ("q / Ctrl+Q", "quit"),
 ];

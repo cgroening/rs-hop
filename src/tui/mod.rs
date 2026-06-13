@@ -264,11 +264,17 @@ impl App {
             if self.refresh_fetched {
                 self.last_fetched = Some(now);
             }
-            let _ = cache::save(
-                &self.cache_path,
-                &self.collected,
-                self.last_fetched,
-            );
+            // Persist the full current state (not just this pass's `collected`),
+            // so a single-entry refresh never drops the other entries' cache.
+            let infos: Vec<(PathBuf, crate::domain::repo::GitInfo)> = self
+                .service
+                .repos()
+                .iter()
+                .filter_map(|repo| {
+                    repo.git_info.clone().map(|info| (repo.path.clone(), info))
+                })
+                .collect();
+            let _ = cache::save(&self.cache_path, &infos, self.last_fetched);
             self.loading = None;
         } else {
             self.status_rx = Some(rx);
@@ -411,6 +417,8 @@ impl App {
             KeyCode::Char('!') => self.open_error_list(),
             KeyCode::Char('r') => self.reload_status(false),
             KeyCode::Char('R') => self.reload_status(true),
+            KeyCode::Char('x') => self.refresh_one(false),
+            KeyCode::Char('X') => self.refresh_one(true),
             KeyCode::Char('?') => self.overlay = Overlay::Help,
             _ => {}
         }
@@ -670,6 +678,33 @@ impl App {
             "reloading status…"
         });
         self.start_refresh(fetch);
+    }
+
+    /// Refreshes only the selected entry in the background, optionally fetching
+    /// first. The global "remote: fetched …" line is left untouched (a single
+    /// fetch is not a full fetch).
+    fn refresh_one(&mut self, fetch: bool) {
+        if self.config.example_mode {
+            self.set_status("example mode: live status is off");
+            return;
+        }
+        let Some(index) = self.selected_index() else {
+            return;
+        };
+        let Some(repo) = self.service.get(index) else {
+            return;
+        };
+        let path = repo.path.clone();
+        let name = repo.display_name();
+        self.collected.clear();
+        self.loading = None; // no full-width bar for a single entry
+        self.refresh_fetched = false;
+        self.set_status(format!("refreshing {name}…"));
+        self.status_rx = Some(spawn_refresh(
+            Arc::clone(&self.git_client),
+            vec![path],
+            fetch,
+        ));
     }
 
     /// Deletes the entry at `index` after confirmation.
