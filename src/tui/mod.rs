@@ -33,7 +33,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Gauge, Paragraph};
+use ratatui::widgets::Paragraph;
 
 pub use terminal::Tui;
 
@@ -1000,23 +1000,49 @@ fn hint_line(_tab: Tab) -> Line<'static> {
 }
 
 /// Renders a solid progress bar for an in-flight status refresh, filling the
-/// whole `area` (full height and width) with a centred label.
+/// whole `area` (full height and width) with a centred label. The label colour
+/// is chosen per cell from whether it sits over the filled or unfilled part, so
+/// it never ends up dark text on the dark (unfilled) background.
 fn render_progress(frame: &mut Frame, area: Rect, done: usize, total: usize) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
     let ratio = if total == 0 {
         0.0
     } else {
         (done as f64 / total as f64).clamp(0.0, 1.0)
     };
-    let gauge = Gauge::default()
-        .ratio(ratio)
-        .gauge_style(Style::default().fg(ACCENT).bg(SELECTION_BG))
-        .label(Span::styled(
-            format!("refreshing {done}/{total}"),
-            Style::default()
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD),
-        ));
-    frame.render_widget(gauge, area);
+    let filled = (f64::from(area.width) * ratio).round() as u16;
+    let label: Vec<char> =
+        format!("refreshing {done}/{total}").chars().collect();
+    let label_width = label.len() as u16;
+    let label_start = area.x + area.width.saturating_sub(label_width) / 2;
+    let label_row = area.y + area.height / 2;
+
+    let buf = frame.buffer_mut();
+    for y in area.y..area.bottom() {
+        for x in area.x..area.right() {
+            let over_filled = (x - area.x) < filled;
+            let bg = if over_filled { ACCENT } else { SELECTION_BG };
+            let is_label = y == label_row
+                && x >= label_start
+                && x < label_start + label_width;
+            let (symbol, fg) = if is_label {
+                let ch = label[(x - label_start) as usize];
+                // Dark text on the light filled bar, light text on the rest.
+                let fg = if over_filled { Color::Black } else { ACCENT };
+                (ch.to_string(), fg)
+            } else {
+                (" ".to_string(), bg)
+            };
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.set_symbol(&symbol);
+                cell.set_style(
+                    Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+                );
+            }
+        }
+    }
 }
 
 /// A short relative age like `2d`, `5h` or `3m` for the remote line.
