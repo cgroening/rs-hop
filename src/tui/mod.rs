@@ -1203,7 +1203,7 @@ impl App {
         if self.filtering {
             let mut spans =
                 vec![Span::styled("filter: ", Style::default().fg(ACCENT))];
-            spans.extend(self.filter.render_line(Style::default()).spans);
+            spans.extend(self.filter.render_line(Style::default(), true).spans);
             let lines = vec![
                 Line::from(spans),
                 Line::from(Span::styled(

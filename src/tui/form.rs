@@ -97,8 +97,10 @@ impl RepoForm {
             KeyCode::Char('s') if ctrl => {
                 return FormResult::Save(self.draft());
             }
-            KeyCode::Tab => self.focus = (self.focus + 1) % FIELD_COUNT,
-            KeyCode::BackTab => {
+            KeyCode::Tab | KeyCode::Down => {
+                self.focus = (self.focus + 1) % FIELD_COUNT;
+            }
+            KeyCode::BackTab | KeyCode::Up => {
                 self.focus = (self.focus + FIELD_COUNT - 1) % FIELD_COUNT;
             }
             _ => self.edit_focused(key),
@@ -180,7 +182,8 @@ impl RepoForm {
         index: usize,
     ) -> Line<'static> {
         let mut spans = vec![self.label_span(label, index)];
-        spans.extend(input.render_line(Style::default()).spans);
+        let focused = index == self.focus;
+        spans.extend(input.render_line(Style::default(), focused).spans);
         self.styled(spans, index)
     }
 

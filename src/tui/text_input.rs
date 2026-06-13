@@ -79,9 +79,13 @@ impl TextInput {
         }
     }
 
-    /// Renders the value as a line with a block caret, styling the text with
-    /// `base`.
-    pub fn render_line(&self, base: Style) -> Line<'static> {
+    /// Renders the value as a line, styling the text with `base`. The block
+    /// caret is shown only when `show_cursor` is set (i.e. the field is
+    /// focused); otherwise the plain value is rendered.
+    pub fn render_line(&self, base: Style, show_cursor: bool) -> Line<'static> {
+        if !show_cursor {
+            return Line::from(Span::styled(self.value(), base));
+        }
         let cursor_style = Style::default().fg(Color::Black).bg(CURSOR);
         let mut spans: Vec<Span> = Vec::new();
         for (index, ch) in self.chars.iter().enumerate() {

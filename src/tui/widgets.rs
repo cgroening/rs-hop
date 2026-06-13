@@ -116,7 +116,7 @@ impl TextPrompt {
             format!("{}: ", self.label),
             Style::default().fg(DIM),
         )];
-        field.extend(self.input.render_line(Style::default()).spans);
+        field.extend(self.input.render_line(Style::default(), true).spans);
         let body = vec![
             Line::from(field),
             Line::raw(""),
