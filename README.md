@@ -70,12 +70,20 @@ sources):
 hop() {
     command hop "$@"
     local f="${XDG_STATE_HOME:-$HOME/.local/state}/hop/selected-repo.txt"
-    [[ -f "$f" ]] && { local d="$(cat "$f")"; [[ -d "$d" ]] && cd "$d"; }
+    if [[ -f "$f" ]]; then
+        local d="$(cat "$f")"
+        : > "$f"   # clear so a stale path can't cd on the next non-jump run
+        [[ -d "$d" ]] && cd "$d"
+    fi
 }
 
 # Optional short alias.
 alias hp='hop'
 ```
+
+Clearing the file right after reading matters: commands that do not pick an
+entry (`hop scan`/`add`/`list`/`doctor`) leave it untouched, so without the
+reset a stale path from an earlier jump would `cd` you around unexpectedly.
 
 The function is named `hop` and shadows the binary; it runs the real binary via
 `command hop`, so there is no conflict. Reload with `source ~/.zshrc` (or open a
@@ -96,7 +104,8 @@ function hop {
     $f = Join-Path $env:LOCALAPPDATA 'hop\selected-repo.txt'
     if (Test-Path $f) {
         $d = Get-Content $f
-        if (Test-Path $d) { Set-Location $d }
+        Clear-Content $f   # clear so a stale path can't cd on the next non-jump run
+        if ($d -and (Test-Path $d)) { Set-Location $d }
     }
 }
 Set-Alias hp hop
