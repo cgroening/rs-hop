@@ -46,7 +46,7 @@ use crate::service::repo_service::RepoService;
 use crate::service::status_service::spawn_refresh;
 use crate::storage::cache;
 use crate::storage::git_client::GitClient;
-use crate::tui::colors::{ACCENT, CHANGES, DIM, SELECTION_BG};
+use crate::tui::colors::{ACCENT, CHANGES, DANGER, DIM, SELECTION_BG};
 use crate::tui::form::{FormResult, RepoDraft, RepoForm};
 use crate::tui::path_picker::{PathPicker, PickerResult};
 use crate::tui::presentation::{IconSet, footer_lines, render_empty_hint};
@@ -860,15 +860,17 @@ impl App {
                 Constraint::Length(1),
                 Constraint::Length(1),
                 Constraint::Length(1),
+                Constraint::Length(1),
                 Constraint::Min(1),
                 Constraint::Length(2),
             ])
             .split(area);
         self.render_tab_bar(frame, rows[0]);
         self.render_info(frame, rows[1]);
-        self.render_remote(frame, rows[2]);
-        self.render_body(frame, rows[3]);
-        self.render_footer(frame, rows[4]);
+        self.render_local_status(frame, rows[2]);
+        self.render_remote(frame, rows[3]);
+        self.render_body(frame, rows[4]);
+        self.render_footer(frame, rows[5]);
         self.render_overlay(frame, area);
     }
 
@@ -890,30 +892,60 @@ impl App {
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 
-    /// Renders the local info line: entry count, sort and the local status
-    /// time - or a progress bar while a refresh is running.
+    /// Renders the top info line: entry count, sort and an error indicator -
+    /// or a progress bar while a refresh is running.
     fn render_info(&self, frame: &mut Frame, area: Rect) {
         if let Some((done, total)) = self.loading {
             render_progress(frame, area, done, total);
             return;
         }
         let count = self.ordered_view().len();
-        let mut parts = vec![
-            format!("{count} entries"),
-            format!("sort: {}", self.sort.label()),
-        ];
-        if self.config.example_mode {
-            parts.push("example mode".to_string());
-        } else if let Some(at) = self.cache_generated_at {
-            parts.push(format!("status as of {}", at.format("%Y-%m-%d %H:%M")));
+        let mut spans = vec![Span::styled(
+            format!(" {count} entries  ·  sort: {}", self.sort.label()),
+            Style::default().fg(DIM),
+        )];
+        let errors = self.error_count();
+        if errors > 0 {
+            // A leading "!" flags broken entries; press ! to list and fix them.
+            spans.push(Span::styled(
+                format!("  ·  ! {errors}"),
+                Style::default().fg(DANGER).add_modifier(Modifier::BOLD),
+            ));
         }
+        frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    }
+
+    /// Renders the local-status line: when the cached status was generated, on
+    /// its own line, with a relative age.
+    fn render_local_status(&self, frame: &mut Frame, area: Rect) {
+        let text = if self.config.example_mode {
+            " status: example mode".to_string()
+        } else if let Some(at) = self.cache_generated_at {
+            let age = Local::now().signed_duration_since(at);
+            format!(
+                " status as of {} ({} ago)",
+                at.format("%Y-%m-%d %H:%M"),
+                relative_age(age),
+            )
+        } else {
+            " status: not loaded yet".to_string()
+        };
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                format!(" {}", parts.join("  ·  ")),
+                text,
                 Style::default().fg(DIM),
             ))),
             area,
         );
+    }
+
+    /// The number of entries with a missing or invalid path.
+    fn error_count(&self) -> usize {
+        self.service
+            .repos()
+            .iter()
+            .filter(|repo| repo.entry_error().is_some())
+            .count()
     }
 
     /// Renders the remote line: when the entries were last fetched, warning in
