@@ -12,4 +12,8 @@ pub trait RepoRepository {
     fn find_all(&self) -> Result<Vec<Repo>>;
     /// Persists the full entry list, preserving the settings block.
     fn save_all(&self, repos: &[Repo]) -> Result<()>;
+    /// The ordered list of user section names (Files tab grouping).
+    fn find_sections(&self) -> Result<Vec<String>>;
+    /// Persists the ordered list of section names, preserving everything else.
+    fn save_sections(&self, sections: &[String]) -> Result<()>;
 }

@@ -4,11 +4,16 @@
 #
 # It mixes a favourite, an archived entry, a deliberately broken path (shown
 # with a red "!" - press p to repair it), a folder and a file, plus a slug.
+# The Files and Folders tab groups entries by section (press s to jump, M to
+# manage); entries without a section fall into "Ungrouped".
 
 git_program = "lazygit"
 github_username = "cgroening"
 example_mode = false
 # fetch_on_start = false   # git fetch in the background when hop starts
+
+# Section order for the Files and Folders tab.
+sections = ["Code", "Docs"]
 
 [icons]
 variant = "unicode"   # unicode | ascii
@@ -49,11 +54,24 @@ name = "Code folder"
 path = "/Users/cgroening/Documents/Code"
 kind = "folder"
 slug = "code"
+section = "Code"
+
+[[repos]]
+name = "Rust projects"
+path = "/Users/cgroening/Documents/Code/Rust"
+kind = "folder"
+section = "Code"
 
 [[repos]]
 name = "hop README"
 path = "/Users/cgroening/Documents/Code/Rust/hop/README.md"
 kind = "file"
+section = "Docs"
+
+[[repos]]
+name = "Documents"
+path = "/Users/cgroening/Documents"
+kind = "folder"
 
 [[repos]]
 name = "Old project"

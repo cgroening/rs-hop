@@ -10,13 +10,15 @@ use crate::storage::repository::RepoRepository;
 /// Holds entries in memory; `save_all` replaces the whole list.
 pub struct InMemoryRepoRepository {
     repos: RefCell<Vec<Repo>>,
+    sections: RefCell<Vec<String>>,
 }
 
 impl InMemoryRepoRepository {
-    /// Creates a repository seeded with `initial`.
+    /// Creates a repository seeded with `initial` entries and no sections.
     pub fn new(initial: Vec<Repo>) -> Self {
         InMemoryRepoRepository {
             repos: RefCell::new(initial),
+            sections: RefCell::new(Vec::new()),
         }
     }
 }
@@ -28,6 +30,15 @@ impl RepoRepository for InMemoryRepoRepository {
 
     fn save_all(&self, repos: &[Repo]) -> Result<()> {
         *self.repos.borrow_mut() = repos.to_vec();
+        Ok(())
+    }
+
+    fn find_sections(&self) -> Result<Vec<String>> {
+        Ok(self.sections.borrow().clone())
+    }
+
+    fn save_sections(&self, sections: &[String]) -> Result<()> {
+        *self.sections.borrow_mut() = sections.to_vec();
         Ok(())
     }
 }

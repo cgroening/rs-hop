@@ -79,6 +79,9 @@ pub struct Repo {
     pub fav: bool,
     /// Whether the entry lives in the archive tab.
     pub archived: bool,
+    /// The user section this entry belongs to (Files tab grouping); `None`
+    /// means the implicit "Ungrouped" section.
+    pub section: Option<String>,
     /// What the entry points at.
     pub kind: RepoKind,
     /// Demo git info shown when `example_mode` is on.
@@ -100,6 +103,7 @@ impl Repo {
             slug: None,
             fav: false,
             archived: false,
+            section: None,
             kind: RepoKind::Git,
             example_git_info: None,
             git_info: None,

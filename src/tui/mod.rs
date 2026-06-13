@@ -13,6 +13,8 @@ pub mod help;
 pub mod navigation;
 pub mod path_picker;
 pub mod presentation;
+pub mod sections_modal;
+pub mod sections_view;
 pub mod table;
 pub mod terminal;
 pub mod text_input;
@@ -41,6 +43,7 @@ use crate::config::Config;
 use crate::domain::filter::{Tab, belongs_to_tab, fuzzy_indices};
 use crate::domain::path_repair::nearest_existing_on_disk;
 use crate::domain::repo::{Repo, RepoKind};
+use crate::domain::sections;
 use crate::domain::sort::{SortMode, sort_indices};
 use crate::service::repo_service::RepoService;
 use crate::service::status_service::spawn_refresh;
@@ -53,6 +56,7 @@ use crate::tui::colors::{
 use crate::tui::form::{FormResult, RepoDraft, RepoForm};
 use crate::tui::path_picker::{PathPicker, PickerResult};
 use crate::tui::presentation::{IconSet, footer_lines, render_empty_hint};
+use crate::tui::sections_modal::{SectionsAction, SectionsModal};
 use crate::tui::widgets::{
     ConfirmModal, ConfirmResult, PromptResult, SelectModal, SelectResult,
     TextPrompt,
@@ -86,6 +90,22 @@ enum Overlay {
     Errors(SelectModal, Vec<usize>),
     /// The action menu for an errored entry at the given service index.
     ErrorAction(SelectModal, usize),
+    /// The jump-to-section picker; the vec maps rows to entry display positions.
+    SectionJump(SelectModal, Vec<usize>),
+    /// The manage-sections list.
+    Sections(SectionsModal),
+    /// A prompt to add or rename a section.
+    SectionPrompt(TextPrompt, SectionPromptKind),
+    /// A confirm dialog to delete the named section.
+    SectionDelete(ConfirmModal, String),
+}
+
+/// Why the section prompt is open.
+enum SectionPromptKind {
+    /// Create a new section.
+    New,
+    /// Rename the section with this current name.
+    Rename(String),
 }
 
 /// Why the path picker is open.
@@ -125,6 +145,9 @@ pub struct App {
     selected: HashSet<usize>,
     /// Anchor display row for `Shift`-range selection.
     anchor: Option<usize>,
+    /// Scroll offset of the sectioned Files list, kept across frames so the
+    /// cursor pages within the viewport (the git tabs scroll statelessly).
+    list_offset: std::cell::Cell<usize>,
     /// Whether the startup mode permits background refreshes (drives the
     /// first-visit refresh of the Git Repos / Archive tabs).
     auto_refresh: bool,
@@ -183,6 +206,7 @@ impl App {
             refresh_started: Instant::now(),
             selected: HashSet::new(),
             anchor: None,
+            list_offset: std::cell::Cell::new(0),
             auto_refresh: false,
             refreshed_tabs: HashSet::new(),
         };
@@ -209,7 +233,7 @@ impl App {
         let repos = self.service.repos();
         let tab_indices = self.tab_indices();
         let query = self.filter.value();
-        if self.filtering && !query.trim().is_empty() {
+        if self.filtering_active() {
             let subset: Vec<Repo> =
                 tab_indices.iter().map(|&i| repos[i].clone()).collect();
             return fuzzy_indices(&subset, &query)
@@ -217,9 +241,142 @@ impl App {
                 .map(|pos| tab_indices[pos])
                 .collect();
         }
+        // The Files tab groups entries by section (favourites floated within
+        // each group); the git tabs apply the chosen sort mode.
+        if self.is_sectioned() {
+            return sections::flatten(&self.section_groups());
+        }
         let mut indices = tab_indices;
         sort_indices(repos, &mut indices, self.sort);
         indices
+    }
+
+    /// Whether the live fuzzy filter is currently narrowing the list.
+    fn filtering_active(&self) -> bool {
+        self.filtering && !self.filter.value().trim().is_empty()
+    }
+
+    /// Whether the current view groups entries into sections (the Files tab,
+    /// when not live-filtering).
+    fn is_sectioned(&self) -> bool {
+        self.tab == Tab::FilesAndFolders && !self.filtering_active()
+    }
+
+    /// The display-ordered sections for the Files tab: entries grouped by
+    /// section (in the stored section order), favourites first within each
+    /// group, the rest in stored order, with Ungrouped last.
+    fn section_groups(&self) -> Vec<sections::SectionGroup> {
+        let repos = self.service.repos();
+        let mut indices = self.tab_indices();
+        // Stable: favourites float to the top of their section.
+        indices.sort_by_key(|&i| !repos[i].fav);
+        sections::group(self.service.sections(), &indices, |i| {
+            repos[i].section.clone()
+        })
+    }
+
+    /// Opens the jump-to-section picker for the Files tab.
+    fn open_section_jump(&mut self) {
+        let groups = self.section_groups();
+        if groups.len() < 2 {
+            self.set_status("no other sections");
+            return;
+        }
+        let starts = sections::section_starts(&groups);
+        let labels: Vec<String> =
+            groups.iter().map(|g| g.label.clone()).collect();
+        let current =
+            sections::current_section(&starts, self.cursor).unwrap_or(0);
+        self.overlay = Overlay::SectionJump(
+            SelectModal::new("Jump to section", labels, current),
+            starts,
+        );
+    }
+
+    /// Moves the cursor to the start of the adjacent section (Ctrl+arrow).
+    fn jump_section(&mut self, delta: isize) {
+        let groups = self.section_groups();
+        let starts = sections::section_starts(&groups);
+        let dir = if delta < 0 {
+            sections::SectionJump::Previous
+        } else {
+            sections::SectionJump::Next
+        };
+        if let Some(target) = sections::jump_target(&starts, self.cursor, dir) {
+            self.cursor = target;
+        }
+    }
+
+    /// Opens the manage-sections overlay at `cursor` over the current sections.
+    fn open_sections_manager_at(&mut self, cursor: usize) {
+        let names = self.service.sections().to_vec();
+        self.overlay = Overlay::Sections(SectionsModal::new(names, cursor));
+    }
+
+    /// Opens the manage-sections overlay at the first section.
+    fn open_sections_manager(&mut self) {
+        self.open_sections_manager_at(0);
+    }
+
+    /// Runs a section-manager action, reporting errors and re-opening the
+    /// manager (or a sub-prompt) afterwards.
+    fn run_sections_action(
+        &mut self,
+        modal: SectionsModal,
+        action: SectionsAction,
+    ) {
+        match action {
+            SectionsAction::Pending => {
+                self.overlay = Overlay::Sections(modal);
+            }
+            SectionsAction::Close => {}
+            SectionsAction::New => {
+                self.overlay = Overlay::SectionPrompt(
+                    TextPrompt::new("New section", "name", ""),
+                    SectionPromptKind::New,
+                );
+            }
+            SectionsAction::Rename(old) => {
+                self.overlay = Overlay::SectionPrompt(
+                    TextPrompt::new("Rename section", "name", &old),
+                    SectionPromptKind::Rename(old),
+                );
+            }
+            SectionsAction::Delete(name) => {
+                let message = format!(
+                    "Delete section \"{name}\"? Entries become Ungrouped."
+                );
+                self.overlay = Overlay::SectionDelete(
+                    ConfirmModal::new("Delete section", message),
+                    name,
+                );
+            }
+            SectionsAction::Move { from, to } => {
+                if let Err(error) = self.service.move_section(from, to) {
+                    self.set_status(format!("{error}"));
+                }
+                self.open_sections_manager_at(to);
+            }
+        }
+    }
+
+    /// Applies a submitted section prompt (new or rename) and re-opens the
+    /// manager.
+    fn submit_section_prompt(
+        &mut self,
+        kind: SectionPromptKind,
+        value: String,
+    ) {
+        let result = match &kind {
+            SectionPromptKind::New => self.service.add_section(&value),
+            SectionPromptKind::Rename(old) => {
+                self.service.rename_section(old, &value)
+            }
+        };
+        if let Err(error) = result {
+            self.set_status(format!("{error}"));
+        }
+        self.open_sections_manager();
     }
 
     /// The selected service index, if the view is non-empty.
@@ -459,6 +616,48 @@ impl App {
                     }
                 }
             }
+            Overlay::SectionJump(mut modal, starts) => {
+                match modal.handle_key(key) {
+                    SelectResult::Selected(row) => {
+                        if let Some(&pos) = starts.get(row) {
+                            self.cursor = pos;
+                        }
+                    }
+                    SelectResult::Cancel => {}
+                    SelectResult::Pending => {
+                        self.overlay = Overlay::SectionJump(modal, starts);
+                    }
+                }
+            }
+            Overlay::Sections(mut modal) => {
+                let action = modal.handle_key(key);
+                self.run_sections_action(modal, action);
+            }
+            Overlay::SectionPrompt(mut prompt, kind) => {
+                match prompt.handle_key(key) {
+                    PromptResult::Submit(value) => {
+                        self.submit_section_prompt(kind, value);
+                    }
+                    PromptResult::Cancel => self.open_sections_manager(),
+                    PromptResult::Pending => {
+                        self.overlay = Overlay::SectionPrompt(prompt, kind);
+                    }
+                }
+            }
+            Overlay::SectionDelete(confirm, name) => {
+                match confirm.handle_key(key) {
+                    ConfirmResult::Yes => {
+                        if let Err(error) = self.service.delete_section(&name) {
+                            self.set_status(format!("{error}"));
+                        }
+                        self.open_sections_manager();
+                    }
+                    ConfirmResult::No => self.open_sections_manager(),
+                    ConfirmResult::Pending => {
+                        self.overlay = Overlay::SectionDelete(confirm, name);
+                    }
+                }
+            }
             Overlay::None => {}
         }
     }
@@ -480,10 +679,18 @@ impl App {
             KeyCode::Char('o') => return self.open_selected(false),
             KeyCode::Char('q') => return Some(RunOutcome::Quit),
             KeyCode::Char('f') => self.filtering = true,
+            KeyCode::Char('s') if self.is_sectioned() => {
+                self.open_section_jump()
+            }
             KeyCode::Char('s') => self.cycle_sort(),
+            KeyCode::Char('M') if self.tab == Tab::FilesAndFolders => {
+                self.open_sections_manager()
+            }
             KeyCode::Char('n') => self.open_add(),
             KeyCode::Char('e') => self.open_edit_form(),
-            KeyCode::Char('d') => self.open_delete_confirm(),
+            KeyCode::Char('d') | KeyCode::Delete | KeyCode::Backspace => {
+                self.open_delete_confirm()
+            }
             KeyCode::Char('z') => self.toggle_fav(),
             KeyCode::Char('y') => self.copy_path(),
             KeyCode::Char('A') => self.toggle_archive(),
@@ -500,11 +707,16 @@ impl App {
         None
     }
 
-    /// Routes an arrow key: `Alt` reorders, `Shift` extends the selection,
-    /// otherwise the cursor moves.
+    /// Routes an arrow key: `Alt` reorders, `Ctrl` jumps section-to-section (on
+    /// the Files tab), `Shift` extends the selection, otherwise the cursor
+    /// moves.
     fn on_arrow(&mut self, key: KeyEvent, delta: isize) {
         if key.modifiers.contains(KeyModifiers::ALT) {
             self.move_entry(delta);
+        } else if key.modifiers.contains(KeyModifiers::CONTROL)
+            && self.is_sectioned()
+        {
+            self.jump_section(delta);
         } else if key.modifiers.contains(KeyModifiers::SHIFT) {
             self.extend_selection(delta);
         } else {
@@ -628,7 +840,8 @@ impl App {
             Tab::GitRepos => RepoKind::Git,
             _ => RepoKind::Folder,
         };
-        let form = RepoForm::for_add("", kind);
+        let form = RepoForm::for_add("", kind)
+            .with_known_sections(self.service.sections());
         self.overlay = Overlay::Form(form, None);
     }
 
@@ -659,13 +872,8 @@ impl App {
         let Some(repo) = self.service.get(index) else {
             return;
         };
-        let form = RepoForm::for_edit(
-            repo.name.as_deref().unwrap_or(""),
-            &repo.path.to_string_lossy(),
-            repo.slug.as_deref().unwrap_or(""),
-            repo.kind,
-            repo.fav,
-        );
+        let form = RepoForm::for_edit(repo)
+            .with_known_sections(self.service.sections());
         self.overlay = Overlay::Form(form, Some(index));
     }
 
@@ -919,7 +1127,9 @@ impl App {
 
     /// Moves the cursor entry within the custom order (only in custom sort).
     fn move_entry(&mut self, delta: isize) {
-        if self.sort != SortMode::Custom {
+        // The Files tab reorders within a section regardless of sort mode; the
+        // git tabs require the custom sort.
+        if !self.is_sectioned() && self.sort != SortMode::Custom {
             self.set_status("switch to custom sort (s) to reorder");
             return;
         }
@@ -936,6 +1146,10 @@ impl App {
         let repos = self.service.repos();
         // Stay within the favourites / non-favourites group (favs keep on top).
         if repos[a].fav != repos[b].fav {
+            return;
+        }
+        // On the Files tab, only reorder within the same section.
+        if self.is_sectioned() && repos[a].section != repos[b].section {
             return;
         }
         let moved = repos[a].path.clone();
@@ -980,29 +1194,35 @@ impl App {
         }
     }
 
-    /// Saves the add or edit form into a new or existing entry.
+    /// Saves the add or edit form into a new or existing entry, registering a
+    /// newly typed section name.
     fn do_save_form(&mut self, index: Option<usize>, draft: RepoDraft) {
         let path = crate::util::paths::expand_tilde(draft.path.trim());
         if draft.path.trim().is_empty() {
             self.set_status("path must not be empty");
             return;
         }
-        match index {
+        let section = draft.section.clone();
+        let (result, ok_message) = match index {
             Some(index) => {
                 let Some(mut repo) = self.service.get(index).cloned() else {
                     return;
                 };
                 apply_draft(&mut repo, draft, path);
-                let result = self.service.update(index, repo);
-                self.report(result, "entry updated");
+                (self.service.update(index, repo), "entry updated")
             }
             None => {
                 let mut repo = Repo::new(path.clone());
                 apply_draft(&mut repo, draft, path);
-                let result = self.service.add(repo);
-                self.report(result, "entry added");
+                (self.service.add(repo), "entry added")
             }
+        };
+        if result.is_ok()
+            && let Some(name) = section
+        {
+            let _ = self.service.ensure_section(&name);
         }
+        self.report(result, ok_message);
         if !self.config.example_mode {
             self.start_refresh(false);
         }
@@ -1049,6 +1269,7 @@ fn apply_draft(repo: &mut Repo, draft: RepoDraft, path: PathBuf) {
     repo.name = draft.name;
     repo.path = path;
     repo.slug = draft.slug;
+    repo.section = draft.section;
     repo.kind = draft.kind;
     repo.fav = draft.fav;
 }
@@ -1226,6 +1447,10 @@ impl App {
             render_empty_hint(frame, area, empty_hint(self.tab));
             return;
         }
+        if self.is_sectioned() {
+            self.render_sections(frame, area, view.len());
+            return;
+        }
         let repos = self.service.repos();
         let visible: Vec<&Repo> = view.iter().map(|&i| &repos[i]).collect();
         let cursor = self.cursor.min(visible.len() - 1);
@@ -1245,6 +1470,21 @@ impl App {
             has_selection: !self.selected.is_empty(),
         };
         table::render_table(frame, area, &visible, cursor, &table_view);
+    }
+
+    /// Renders the Files tab as a sectioned list (`view_len` entries total).
+    fn render_sections(&self, frame: &mut Frame, area: Rect, view_len: usize) {
+        let groups = self.section_groups();
+        let cursor = self.cursor.min(view_len.saturating_sub(1));
+        let view = sections_view::SectionedView {
+            groups: &groups,
+            repos: self.service.repos(),
+            icons: &self.icons,
+            selected: &self.selected,
+            has_selection: !self.selected.is_empty(),
+            offset: &self.list_offset,
+        };
+        sections_view::render(frame, area, cursor, &view);
     }
 
     /// Renders the footer: the filter line, a status message, or key hints.
@@ -1289,6 +1529,10 @@ impl App {
             Overlay::Picker(picker, _) => picker.render(frame, area),
             Overlay::Errors(modal, _) => modal.render(frame, area),
             Overlay::ErrorAction(modal, _) => modal.render(frame, area),
+            Overlay::SectionJump(modal, _) => modal.render(frame, area),
+            Overlay::Sections(modal) => modal.render(frame, area),
+            Overlay::SectionPrompt(prompt, _) => prompt.render(frame, area),
+            Overlay::SectionDelete(confirm, _) => confirm.render(frame, area),
         }
     }
 }
@@ -1309,12 +1553,15 @@ fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
         ("o", "cd"),
         ("Space", "select"),
         ("f", "filter"),
-        ("s", "sort"),
-        ("n", "add"),
-        ("e", "edit"),
-        ("d", "del"),
-        ("z", "fav"),
     ];
+    // The Files tab groups into sections: s jumps, M manages them.
+    if tab == Tab::FilesAndFolders {
+        hints.push(("s", "section"));
+        hints.push(("M", "sections"));
+    } else {
+        hints.push(("s", "sort"));
+    }
+    hints.extend([("n", "add"), ("e", "edit"), ("d/Del", "del"), ("z", "fav")]);
     // Archive tab restores; the others archive.
     hints.push(match tab {
         Tab::Archive => ("A", "restore"),

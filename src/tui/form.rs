@@ -14,7 +14,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
-use crate::domain::repo::RepoKind;
+use crate::domain::repo::{Repo, RepoKind};
 use crate::domain::slug::slugify;
 use crate::tui::colors::{ACCENT, DIM, SELECTION_BG};
 use crate::tui::text_input::TextInput;
@@ -23,11 +23,12 @@ use crate::tui::widgets::centered_rect;
 /// Field positions in display (focus) order.
 const PATH_FIELD: usize = 0;
 const NAME_FIELD: usize = 1;
-const SLUG_FIELD: usize = 2;
-const KIND_FIELD: usize = 3;
-const FAV_FIELD: usize = 4;
+const SECTION_FIELD: usize = 2;
+const SLUG_FIELD: usize = 3;
+const KIND_FIELD: usize = 4;
+const FAV_FIELD: usize = 5;
 /// The number of fields in the form.
-const FIELD_COUNT: usize = 5;
+const FIELD_COUNT: usize = 6;
 
 /// The values captured by the form on save.
 pub struct RepoDraft {
@@ -37,6 +38,8 @@ pub struct RepoDraft {
     pub path: String,
     /// Slug, or `None` when blank.
     pub slug: Option<String>,
+    /// Section name, or `None` for Ungrouped.
+    pub section: Option<String>,
     /// The entry kind.
     pub kind: RepoKind,
     /// Whether the entry is a favourite.
@@ -61,9 +64,11 @@ pub struct RepoForm {
     name: TextInput,
     path: TextInput,
     slug: TextInput,
+    section: TextInput,
     kind: RepoKind,
     fav: bool,
     focus: usize,
+    known_sections: Vec<String>,
 }
 
 impl RepoForm {
@@ -74,29 +79,33 @@ impl RepoForm {
             name: TextInput::new(""),
             path: TextInput::new(path),
             slug: TextInput::new(""),
+            section: TextInput::new(""),
             kind,
             fav: false,
             focus: PATH_FIELD,
+            known_sections: Vec::new(),
         }
     }
 
     /// An edit form seeded from an existing entry's fields.
-    pub fn for_edit(
-        name: &str,
-        path: &str,
-        slug: &str,
-        kind: RepoKind,
-        fav: bool,
-    ) -> Self {
+    pub fn for_edit(repo: &Repo) -> Self {
         RepoForm {
             title: "Edit entry".to_string(),
-            name: TextInput::new(name),
-            path: TextInput::new(path),
-            slug: TextInput::new(slug),
-            kind,
-            fav,
+            name: TextInput::new(repo.name.as_deref().unwrap_or("")),
+            path: TextInput::new(&repo.path.to_string_lossy()),
+            slug: TextInput::new(repo.slug.as_deref().unwrap_or("")),
+            section: TextInput::new(repo.section.as_deref().unwrap_or("")),
+            kind: repo.kind,
+            fav: repo.fav,
             focus: PATH_FIELD,
+            known_sections: Vec::new(),
         }
+    }
+
+    /// Records the existing section names shown as a hint under the form.
+    pub fn with_known_sections(mut self, sections: &[String]) -> Self {
+        self.known_sections = sections.to_vec();
+        self
     }
 
     /// Handles a key, returning a save draft, a cancel, or pending.
@@ -132,6 +141,9 @@ impl RepoForm {
             }
             NAME_FIELD => {
                 self.name.handle_key(key);
+            }
+            SECTION_FIELD => {
+                self.section.handle_key(key);
             }
             SLUG_FIELD => {
                 self.slug.handle_key(key);
@@ -176,10 +188,12 @@ impl RepoForm {
     fn draft(&self) -> RepoDraft {
         let name = non_empty(self.name.value());
         let slug = non_empty(slugify(&self.slug.value()));
+        let section = non_empty(self.section.value().trim().to_string());
         RepoDraft {
             name,
             path: self.path.value(),
             slug,
+            section,
             kind: self.kind,
             fav: self.fav,
         }
@@ -187,7 +201,7 @@ impl RepoForm {
 
     /// Renders the form centred in `area`.
     pub fn render(&self, frame: &mut Frame, area: Rect) {
-        let rect = centered_rect(70, 11, area);
+        let rect = centered_rect(70, 13, area);
         frame.render_widget(Clear, rect);
         let block = Block::default()
             .title(Span::styled(
@@ -200,10 +214,11 @@ impl RepoForm {
         let lines = vec![
             self.text_line("Path", &self.path, PATH_FIELD),
             self.text_line("Name", &self.name, NAME_FIELD),
+            self.text_line("Section", &self.section, SECTION_FIELD),
             self.text_line("Slug", &self.slug, SLUG_FIELD),
             self.kind_line(KIND_FIELD),
             self.fav_line(FAV_FIELD),
-            Line::raw(""),
+            self.known_sections_line(),
             Line::from(Span::styled(
                 "Tab field · \u{2190}\u{2192} kind · Space fav · ^O pick path · \
                  Enter save · Esc cancel",
@@ -211,6 +226,18 @@ impl RepoForm {
             )),
         ];
         frame.render_widget(Paragraph::new(lines).block(block), rect);
+    }
+
+    /// A dim line listing the existing section names, or blank when there are
+    /// none (a new name typed in the Section field creates a section on save).
+    fn known_sections_line(&self) -> Line<'static> {
+        if self.known_sections.is_empty() {
+            return Line::raw("");
+        }
+        Line::from(Span::styled(
+            format!("existing: {}", self.known_sections.join(", ")),
+            Style::default().fg(DIM),
+        ))
     }
 
     /// A labelled text field line, highlighting it when focused.
@@ -253,7 +280,7 @@ impl RepoForm {
         } else {
             Style::default().fg(DIM)
         };
-        Span::styled(format!("{label:<6}"), style)
+        Span::styled(format!("{label:<8}"), style)
     }
 
     /// Applies the focus background tint to a field line.

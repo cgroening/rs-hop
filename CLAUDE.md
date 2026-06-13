@@ -13,6 +13,7 @@ Main screen: **ratatui** + **crossterm** TUI with three tabs (Git Repos / Files 
 - **XDG paths, replicated by hand** in `src/util/paths.rs` (the `directories` crate resolves differently on macOS): config `$XDG_CONFIG_HOME/hop/config.toml`, state `$XDG_STATE_HOME/hop/` for the git-info cache (`git-info-cache.toml`), usage state (`usage.toml`), the selected-repo handoff (`selected-repo.txt`) and the log (`hop.log`). `~` is expanded in config paths. Home prefers `$HOME`, then `%USERPROFILE%`.
 - **Config = settings, repository = entries, same file.** `config::loader` reads only the settings (`git_program`, `github_username`, `example_mode`, `editor`, `[icons]`, `[column_widths]`) and ignores `[[repos]]`; `storage::toml_repo_repository` reads/writes the `[[repos]]` array. Both point at the resolved config path. Writing entries back goes through `config::writer` (`toml_edit`), so the settings block and its comments survive; the `[[repos]]` array is rebuilt (per-entry comments are not preserved). Runtime fields (live git info, usage counters) are never persisted.
 - **`show` became `archived`, inverted.** The git-repo-jumper YAML import (`config::migrate`) maps a hidden `show: false` entry to `archived = true`; everything else to `archived = false`. The archive tab shows `archived = true` entries.
+- **Sections (Files tab only).** Each entry has an optional `section` (a `Repo` field, persisted per `[[repos]]`); the section order is a separate top-level `sections = [...]` array in `config.toml` (read by `storage::toml_repo_repository::find_sections`, written comment-preservingly by `config::writer::save_sections`; the `RepoRepository` trait carries `find_sections`/`save_sections`). The service holds the ordered list and offers `add_section`/`rename_section` (also rewrites entries) / `delete_section` (entries → Ungrouped) / `move_section` / `ensure_section` (registers a name typed in the form). `domain::sections` is the pure grouping (`group`, `flatten`, `section_starts`, `current_section`, `jump_target`, and the `UNGROUPED` label). Only the **Files and Folders** tab renders grouped (`App::is_sectioned`): `tui::sections_view` draws a `List` of full-width header bars + entry rows, carrying the scroll offset across frames in `App::list_offset` (mdtask pattern: predict the offset, snap to top when only headers would hide, scrollbar via `presentation::render_scrollbar`). The cursor stays an entry display position (headers are non-selectable); the git tabs keep the `tui::table` view. On the Files tab `s` opens the jump-to-section picker (`Overlay::SectionJump`), `Ctrl+↑/↓` jumps section-to-section, `Alt+↑/↓` reorders within a section, and `M` opens the manage-sections overlay (`tui::sections_modal`, `Overlay::Sections` + `SectionPrompt`/`SectionDelete`); "Ungrouped" is virtual and locked.
 - **Auto-naming**: an entry's `name` is optional; `Repo::display_name` falls back to the path's basename.
 - **Runtime hydration**: usage counters are loaded onto entries in `RepoService::new`; git status is loaded from the cache at TUI start and refreshed in the background (`service::status_service::spawn_refresh`, one worker thread streaming `StatusUpdate`s over an mpsc channel). The run loop polls with a 150 ms timeout and drains updates, so the list shows immediately and fills in. `example_mode` shows each entry's `example_git_info` and skips all git calls.
 - **Fetch / startup status**: `tui::StartupStatus` (`Cached` | `Refresh { fetch }`) decides what `App::new` does on start; `cli::startup_status` derives it from `--cached` (cache only, no git), `--fetch` and the `fetch_on_start` config key (`fetch = --fetch || fetch_on_start`). In the TUI `R` = `git fetch` + reload all, `r` = reload all only (`reload_status`); `x`/`X` = refresh only the selected entry without/with fetch (`refresh_one`, which leaves the global `fetched_at` untouched). `hop <slug> --fetch` fetches the repo before launching the tool. The cache is rewritten from the full entry state on every refresh finish, so a single-entry refresh never drops the others. `GitClient::fetch` runs `git fetch --quiet` and must capture output / skip missing paths (otherwise git's stderr corrupts the alternate screen).
@@ -38,6 +39,7 @@ src/
     sort.rs         SortMode + sort_repos / sort_indices (pure)
     slug.rs         slugify + validate_format (reserved names) (pure)
     filter.rs       Tab, belongs_to_tab, searchable_text, fuzzy_indices
+    sections.rs     group / flatten / section_starts / jump_target (pure)
     path_repair.rs  nearest_existing ancestor (pure, predicate-injected)
     error.rs        Error (thiserror) + Result alias
   storage/
@@ -69,9 +71,11 @@ src/
     text_input.rs single-line input with a block caret (the one edit primitive)
     navigation.rs cyclic cursor helper
     table.rs      repo table rendering + column widths (TableView context)
+    sections_view.rs Files-tab List of section headers + entry rows (carried offset)
+    sections_modal.rs manage-sections overlay (add/rename/delete/reorder)
     widgets.rs    confirm / text prompt / select modals + centered_rect
-    path_picker.rs filesystem picker (repair / add), starts near a path
-    form.rs       add/edit form (name/path/slug/kind/fav)
+    path_picker.rs filesystem picker (repair / form path), starts near a path
+    form.rs       add/edit form (path/name/section/slug/kind/fav)
     help.rs       help overlay (?)
   util/
     paths.rs      XDG resolution + ~ expansion
@@ -87,7 +91,7 @@ src/
 
 - **New list key / behaviour**: `App::handle_list_key` in `src/tui/mod.rs`; keep the footer `hints`, the `help::SHORTCUTS` list and `README.md` in sync.
 - **New overlay**: add an `Overlay` variant + its state struct (model the existing widgets), handle it in `handle_overlay_key` and `render_overlay`.
-- **New entry field**: extend `domain::repo::Repo`, then the (de)serialize in `storage::toml_repo_repository` / `config::writer` (keep them in sync), the form in `tui::form`, and the table in `tui::table`.
+- **New entry field**: extend `domain::repo::Repo`, then the (de)serialize in `storage::toml_repo_repository` / `config::writer` (keep them in sync), the form in `tui::form` (+ `RepoDraft` and `apply_draft` in `tui::mod`), and both renderers (`tui::table` for the git tabs, `tui::sections_view` for the Files tab).
 - **New config setting**: `config/mod.rs` (field + default) + `config/loader.rs` (resolve, honouring any `HOP_` env override).
 - **New CLI command**: add a `Command` variant + handler in `src/cli/mod.rs`.
 - **Git status detail**: `storage::subprocess_git_client` gathers it; `tui::presentation::status_text` formats it from the structured counts.

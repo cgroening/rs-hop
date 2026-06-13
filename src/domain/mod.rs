@@ -4,5 +4,6 @@ pub mod error;
 pub mod filter;
 pub mod path_repair;
 pub mod repo;
+pub mod sections;
 pub mod slug;
 pub mod sort;

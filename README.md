@@ -16,6 +16,8 @@ for a one-word jump, sort modes and repair for paths that have moved.
 - **Live git status** (branch, uncommitted changes, ahead/behind, GitHub repo
   name), gathered in the background and cached so the list shows instantly.
 - **Three tabs**: Git Repos, Files and Folders, Archiv.
+- **Sections** on the Files and Folders tab: group folders/files under named,
+  reorderable section headers; `s` jumps to a section and `M` manages them.
 - **In-app management**: add, edit, delete, favourite, archive/restore, set a
   slug - the config is written back preserving its comments.
 - **Slugs**: `hop <slug>` jumps straight to an entry from the shell.
@@ -138,11 +140,13 @@ hop config-path     print the resolved config file path
 | `Enter` | open: write path + launch git tool, then exit |
 | `o` | jump only: write path and exit (cd, no tool) |
 | `f` | live fuzzy filter (`Esc` clears) |
-| `s` | cycle sort (name / recent / custom; favourites pinned except recent) |
-| `Alt+↑/↓` | reorder the entry (custom sort only; favourites stay on top) |
-| `n` | add an entry (pick a path, then fill the form) |
+| `s` | git tabs: cycle sort (name / recent / custom) · Files: jump to a section |
+| `M` | Files tab: manage sections (add / rename / delete / reorder) |
+| `Alt+↑/↓` | reorder the entry (custom sort, or within a Files section; favourites stay on top) |
+| `Ctrl+↑/↓` | Files tab: jump to the previous / next section |
+| `n` | add an entry (fill the form; `^O` opens the path picker) |
 | `e` | edit the selected entry |
-| `d` | delete (acts on the selection, else the cursor; confirm) |
+| `d` / `Del` / `Backspace` | delete (acts on the selection, else the cursor; confirm) |
 | `z` | toggle favourite (selection or cursor) |
 | `A` | archive / restore (selection or cursor) |
 | `S` | set or change the slug |
