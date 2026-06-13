@@ -6,8 +6,9 @@ use ratatui::style::{Color, Modifier, Style};
 /// Accent for the header, the active tab and highlighted keys (muted magenta:
 /// distinct from the warm semantic colours, like mdtask's purple accent).
 pub const ACCENT: Color = Color::Rgb(247, 163, 189);
-/// Dim colour for secondary text (footer hints, separators).
-pub const DIM: Color = Color::DarkGray;
+/// Dim colour for secondary text (footer hints, separators); a concrete grey
+/// like mdtask's, slightly brighter than the terminal's `DarkGray`.
+pub const DIM: Color = Color::Rgb(0x88, 0x88, 0x88);
 /// Slightly brighter grey for the header info line.
 pub const MUTED: Color = Color::Rgb(170, 170, 178);
 /// Background tint for the cursor row.

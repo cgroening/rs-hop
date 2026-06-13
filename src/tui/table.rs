@@ -42,6 +42,8 @@ pub struct TableView<'a> {
     pub spinner: Option<(&'a HashSet<PathBuf>, &'a str)>,
     /// Per visible row: whether it is part of the multi-selection.
     pub selected: &'a [bool],
+    /// Whether a multi-selection is active (shows the leading marker column).
+    pub has_selection: bool,
 }
 
 /// The git info to display for `repo`: example info in example mode, otherwise
@@ -79,8 +81,9 @@ pub fn render_table(
         .iter()
         .enumerate()
         .map(|(row, repo)| {
-            let built = row_for(repo, view);
-            if view.selected.get(row).copied().unwrap_or(false) {
+            let selected = view.selected.get(row).copied().unwrap_or(false);
+            let built = row_for(repo, view, selected);
+            if selected {
                 built.style(Style::default().bg(MULTI_SELECT_BG))
             } else {
                 built
@@ -88,7 +91,7 @@ pub fn render_table(
         })
         .collect();
     let table = Table::new(rows, widths(repos, view))
-        .header(header_row(view.tab))
+        .header(header_row(view))
         .column_spacing(1)
         .row_highlight_style(selection_style());
     let mut state = TableState::default().with_selected(Some(cursor));
@@ -116,14 +119,26 @@ pub fn render_table(
 fn widths(repos: &[&Repo], view: &TableView) -> Vec<Constraint> {
     let cols = &view.config.column_widths;
     let name = sized(content_width(repos, |r| r.display_name()), 4, cols.name);
+    // A 2-cell selection-marker column, only while a selection is active.
+    let lead: &[Constraint] = if view.has_selection {
+        &[
+            Constraint::Length(2),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ]
+    } else {
+        &[Constraint::Length(1), Constraint::Length(1)]
+    };
     match view.tab {
-        Tab::FilesAndFolders => vec![
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(name),
-            Constraint::Length(6),
-            Constraint::Min(20),
-        ],
+        Tab::FilesAndFolders => [
+            lead,
+            &[
+                Constraint::Length(name),
+                Constraint::Length(6),
+                Constraint::Min(20),
+            ],
+        ]
+        .concat(),
         _ => {
             let branch = sized(
                 content_width(repos, |r| {
@@ -144,14 +159,16 @@ fn widths(repos: &[&Repo], view: &TableView) -> Vec<Constraint> {
                 6,
                 cols.github_repo_name,
             );
-            vec![
-                Constraint::Length(1),
-                Constraint::Length(1),
-                Constraint::Length(name),
-                Constraint::Length(branch),
-                Constraint::Length(status),
-                Constraint::Length(github),
+            [
+                lead,
+                &[
+                    Constraint::Length(name),
+                    Constraint::Length(branch),
+                    Constraint::Length(status),
+                    Constraint::Length(github),
+                ],
             ]
+            .concat()
         }
     }
 }
@@ -189,32 +206,38 @@ fn status_display(repo: &Repo, view: &TableView) -> String {
     }
 }
 
-/// The header row for `tab`.
-fn header_row(tab: Tab) -> Row<'static> {
-    let titles: Vec<&str> = match tab {
+/// The header row for `tab` (a leading blank cell for the selection column when
+/// a selection is active).
+fn header_row(view: &TableView) -> Row<'static> {
+    let titles: Vec<&str> = match view.tab {
         Tab::FilesAndFolders => vec!["", "", "Name", "Type", "Path"],
         _ => vec!["", "", "Name", "Branch", "Status", "GitHub"],
     };
-    Row::new(titles.into_iter().map(Cell::from).collect::<Vec<_>>())
-        .style(header_style())
+    let mut cells: Vec<Cell> = Vec::new();
+    if view.has_selection {
+        cells.push(Cell::from(""));
+    }
+    cells.extend(titles.into_iter().map(Cell::from));
+    Row::new(cells).style(header_style())
 }
 
-/// Builds the data row for one entry.
-fn row_for<'a>(repo: &Repo, view: &TableView) -> Row<'a> {
-    let marker = marker_cell(repo, view.icons);
-    let fav = fav_cell(repo, view.icons);
-    let name = Cell::from(repo.display_name());
+/// Builds the data row for one entry; `selected` drives the marker column.
+fn row_for<'a>(repo: &Repo, view: &TableView, selected: bool) -> Row<'a> {
+    let mut cells: Vec<Cell> = Vec::new();
+    if view.has_selection {
+        cells.push(selection_cell(selected));
+    }
+    cells.push(marker_cell(repo, view.icons));
+    cells.push(fav_cell(repo, view.icons));
+    cells.push(Cell::from(repo.display_name()));
     match view.tab {
-        Tab::FilesAndFolders => Row::new(vec![
-            marker,
-            fav,
-            name,
-            Cell::from(kind_label(repo.kind)),
-            Cell::from(Span::styled(
+        Tab::FilesAndFolders => {
+            cells.push(Cell::from(kind_label(repo.kind)));
+            cells.push(Cell::from(Span::styled(
                 repo.path.to_string_lossy().into_owned(),
                 Style::default().fg(DIM),
-            )),
-        ]),
+            )));
+        }
         _ => {
             let info = effective_info(repo, view.example_mode);
             // Only ellipsize a branch that exceeds its configured maximum; the
@@ -225,16 +248,21 @@ fn row_for<'a>(repo: &Repo, view: &TableView) -> Row<'a> {
                 .current_branch_name
                 .max
                 .unwrap_or(usize::MAX);
-            Row::new(vec![
-                marker,
-                fav,
-                name,
-                Cell::from(truncate(&branch_text(info), branch_cap)),
-                status_cell(repo, info, view),
-                Cell::from(github_text(info)),
-            ])
+            cells.push(Cell::from(truncate(&branch_text(info), branch_cap)));
+            cells.push(status_cell(repo, info, view));
+            cells.push(Cell::from(github_text(info)));
         }
     }
+    Row::new(cells)
+}
+
+/// The selection-marker cell: a bold accent `▸` when selected, else blank.
+fn selection_cell<'a>(selected: bool) -> Cell<'a> {
+    let symbol = if selected { "\u{25b8} " } else { "  " };
+    Cell::from(Span::styled(
+        symbol,
+        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+    ))
 }
 
 /// The marker cell: a red warning glyph when the entry has an error (missing or

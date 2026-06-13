@@ -7,7 +7,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
@@ -151,11 +151,11 @@ pub const FOOTER_MAX_ROWS: usize = 3;
 const FOOTER_SEPARATOR: &str = " · ";
 
 /// Wraps footer hints into lines, keeping each `(keys, description)` token
-/// whole. Keys are accent-coloured and bold, descriptions dim.
+/// whole. Keys are in the soft accent colour, descriptions dim (like mdtask).
 pub fn footer_lines(items: &[(&str, &str)], width: u16) -> Vec<Line<'static>> {
     let budget = (width.max(1) as usize).saturating_sub(1);
     let separator_width = UnicodeWidthStr::width(FOOTER_SEPARATOR);
-    let key_style = Style::default().fg(ACCENT).add_modifier(Modifier::BOLD);
+    let key_style = Style::default().fg(ACCENT);
     let dim = Style::default().fg(DIM);
 
     let mut lines: Vec<Line> = Vec::new();

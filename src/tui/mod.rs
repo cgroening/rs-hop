@@ -1017,7 +1017,13 @@ impl App {
             ])
             .split(area);
         self.render_header(frame, rows[0]);
-        self.render_body(frame, rows[1]);
+        // One column of margin on each side of the list.
+        let body = Rect {
+            x: rows[1].x.saturating_add(1),
+            width: rows[1].width.saturating_sub(2),
+            ..rows[1]
+        };
+        self.render_body(frame, body);
         self.render_footer(frame, rows[2]);
         self.render_overlay(frame, area);
     }
@@ -1179,6 +1185,7 @@ impl App {
             example_mode: self.config.example_mode,
             spinner,
             selected: &selected,
+            has_selection: !self.selected.is_empty(),
         };
         table::render_table(frame, area, &visible, cursor, &table_view);
     }
