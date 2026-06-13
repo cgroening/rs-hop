@@ -35,6 +35,25 @@ impl Tab {
             Tab::Archive => "Archiv",
         }
     }
+
+    /// A stable key used to persist the active tab.
+    pub fn as_key(self) -> &'static str {
+        match self {
+            Tab::GitRepos => "git",
+            Tab::FilesAndFolders => "files",
+            Tab::Archive => "archive",
+        }
+    }
+
+    /// Parses a persisted [`as_key`](Self::as_key) value, defaulting to the
+    /// first tab.
+    pub fn from_key(value: &str) -> Self {
+        match value.trim().to_lowercase().as_str() {
+            "files" => Tab::FilesAndFolders,
+            "archive" => Tab::Archive,
+            _ => Tab::GitRepos,
+        }
+    }
 }
 
 /// Whether `repo` is shown in `tab`. Archived entries appear only in the

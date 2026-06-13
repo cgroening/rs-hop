@@ -151,7 +151,7 @@ impl App {
     ) -> Self {
         let icons = IconSet::new(config.icons);
         let cached = cache::load(&cache_path);
-        let sort = ui_state::load_sort(&ui_state_path);
+        let ui = ui_state::load(&ui_state_path);
         let mut service = service;
         service.apply_git_infos(&cached.infos);
         let mut app = App {
@@ -161,9 +161,9 @@ impl App {
             git_client,
             cache_path,
             ui_state_path,
-            tab: Tab::default(),
+            tab: ui.tab,
             cursor: 0,
-            sort,
+            sort: ui.sort,
             filtering: false,
             filter: text_input::TextInput::new(""),
             overlay: Overlay::None,
@@ -518,17 +518,30 @@ impl App {
         None
     }
 
-    /// Switches to `tab`, resetting the cursor and clearing the selection.
+    /// Switches to `tab`, resetting the cursor, clearing the selection and
+    /// persisting the active tab for the next run.
     fn switch_tab(&mut self, tab: Tab) {
         self.tab = tab;
         self.cursor = 0;
         self.clear_selection();
+        self.save_ui_state();
     }
 
     /// Cycles the sort mode and persists it for the next run.
     fn cycle_sort(&mut self) {
         self.sort = self.sort.next();
-        let _ = ui_state::save_sort(&self.ui_state_path, self.sort);
+        self.save_ui_state();
+    }
+
+    /// Persists the active tab and sort mode (best-effort).
+    fn save_ui_state(&self) {
+        let _ = ui_state::save(
+            &self.ui_state_path,
+            ui_state::UiState {
+                sort: self.sort,
+                tab: self.tab,
+            },
+        );
     }
 
     /// Moves the cursor cyclically within the current view; a plain move drops
