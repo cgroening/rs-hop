@@ -23,7 +23,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("f", "live fuzzy filter (Esc clears)"),
     ("s", "cycle sort (name / recent / custom)"),
     ("Alt+\u{2191}\u{2193}", "reorder entry (custom sort only)"),
-    ("a", "add an entry (pick a path, then fill the form)"),
+    ("n", "add an entry (pick a path, then fill the form)"),
     ("e", "edit the selected entry"),
     ("d", "delete (acts on the selection, else the cursor)"),
     ("z", "toggle favourite (selection or cursor)"),

@@ -461,7 +461,7 @@ impl App {
             KeyCode::Char('q') => return Some(RunOutcome::Quit),
             KeyCode::Char('f') => self.filtering = true,
             KeyCode::Char('s') => self.cycle_sort(),
-            KeyCode::Char('a') => self.open_add_picker(),
+            KeyCode::Char('n') => self.open_add_picker(),
             KeyCode::Char('e') => self.open_edit_form(),
             KeyCode::Char('d') => self.open_delete_confirm(),
             KeyCode::Char('z') => self.toggle_fav(),
@@ -1239,8 +1239,8 @@ impl App {
 /// The placeholder text for an empty tab.
 fn empty_hint(tab: Tab) -> &'static str {
     match tab {
-        Tab::GitRepos => "No git repos. Press a to add one.",
-        Tab::FilesAndFolders => "No folders or files. Press a to add one.",
+        Tab::GitRepos => "No git repos. Press n to add one.",
+        Tab::FilesAndFolders => "No folders or files. Press n to add one.",
         Tab::Archive => "Nothing archived.",
     }
 }
@@ -1253,7 +1253,7 @@ fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
         ("Space", "select"),
         ("f", "filter"),
         ("s", "sort"),
-        ("a", "add"),
+        ("n", "add"),
         ("e", "edit"),
         ("d", "del"),
         ("z", "fav"),

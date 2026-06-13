@@ -140,7 +140,7 @@ hop config-path     print the resolved config file path
 | `f` | live fuzzy filter (`Esc` clears) |
 | `s` | cycle sort (name / recent / custom; favourites pinned except recent) |
 | `Alt+↑/↓` | reorder the entry (custom sort only; favourites stay on top) |
-| `a` | add an entry (pick a path, then fill the form) |
+| `n` | add an entry (pick a path, then fill the form) |
 | `e` | edit the selected entry |
 | `d` | delete (acts on the selection, else the cursor; confirm) |
 | `z` | toggle favourite (selection or cursor) |
