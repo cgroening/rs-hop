@@ -3,8 +3,9 @@
 
 use ratatui::style::{Color, Modifier, Style};
 
-/// Accent for the header, the active tab and highlighted keys.
-pub const ACCENT: Color = Color::Rgb(109, 208, 255);
+/// Accent for the header, the active tab and highlighted keys (muted magenta:
+/// distinct from the warm semantic colours, like mdtask's purple accent).
+pub const ACCENT: Color = Color::Rgb(247, 163, 189);
 /// Dim colour for secondary text.
 pub const DIM: Color = Color::DarkGray;
 /// Background tint for the selected row.
