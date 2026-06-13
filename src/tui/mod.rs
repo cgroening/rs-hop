@@ -1235,10 +1235,20 @@ impl App {
             return;
         }
         let section = draft.section.clone();
+        let kind = draft.kind;
         // A folder needs a trailing slash to be recognised before it exists.
-        let assumed_file = draft.kind == RepoKind::Path
+        let assumed_file = kind == RepoKind::Path
             && !draft.path.trim().ends_with('/')
             && !path.exists();
+        // A git entry refreshes its own status only when its path changed (or
+        // when it is newly added); other edits never touch git.
+        let path_changed = match index {
+            Some(index) => {
+                self.service.get(index).map(|r| &r.path) != Some(&path)
+            }
+            None => true,
+        };
+        let new_path = path.clone();
         let (result, ok_message) = match index {
             Some(index) => {
                 let Some(mut repo) = self.service.get(index).cloned() else {
@@ -1263,8 +1273,12 @@ impl App {
                 "no trailing / — treated as a file (end with / for a folder)",
             );
         }
-        if !self.config.example_mode {
-            self.start_refresh(false);
+        if saved
+            && kind == RepoKind::Git
+            && path_changed
+            && !self.config.example_mode
+        {
+            self.refresh_paths(vec![new_path], false, false);
         }
     }
 
