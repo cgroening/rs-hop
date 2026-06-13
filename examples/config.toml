@@ -1,0 +1,61 @@
+# Example hop configuration for trying the TUI:
+#
+#   HOP_CONFIG=examples/config.toml cargo run
+#
+# It mixes a favourite, an archived entry, a deliberately broken path (shown
+# with a red "!" - press p to repair it), a folder and a file, plus a slug.
+
+git_program = "lazygit"
+github_username = "cgroening"
+example_mode = false
+
+[icons]
+variant = "nerdfont"   # nerdfont | unicode | ascii
+
+[column_widths]
+name = 30
+status = 6
+github_repo_name = 20
+[column_widths.current_branch_name]
+min = 10
+max = 14
+
+[[repos]]
+name = "(rs) hop"
+path = "/Users/cgroening/Documents/Code/Rust/hop"
+kind = "git"
+slug = "hop"
+fav = true
+
+[[repos]]
+name = "(rs) mdtask"
+path = "/Users/cgroening/Documents/Code/Rust/mdtask"
+kind = "git"
+slug = "md"
+
+[[repos]]
+name = "(rs) numcli"
+path = "/Users/cgroening/Documents/Code/Rust/numcli"
+kind = "git"
+
+[[repos]]
+name = "Broken example"
+path = "/Users/cgroening/Documents/Code/Rust/does-not-exist"
+kind = "git"
+
+[[repos]]
+name = "Code folder"
+path = "/Users/cgroening/Documents/Code"
+kind = "folder"
+slug = "code"
+
+[[repos]]
+name = "hop README"
+path = "/Users/cgroening/Documents/Code/Rust/hop/README.md"
+kind = "file"
+
+[[repos]]
+name = "Old project"
+path = "/Users/cgroening/Documents/Code/Rust/zipsync"
+kind = "git"
+archived = true

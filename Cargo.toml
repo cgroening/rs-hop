@@ -1,0 +1,40 @@
+[package]
+name = "hop"
+version = "0.1.0"
+edition = "2024"
+description = "Fuzzy-finder TUI to jump between git repositories and folders"
+license = "MIT"
+
+[[bin]]
+name = "hop"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+# Fuzzy matching for the live filter and pickers.
+# https://crates.io/crates/nucleo-matcher
+nucleo-matcher = "0.3"
+# CLI parsing (subcommands + the `hop <slug>` fast jump).
+# https://crates.io/crates/clap
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+# Comment-preserving rewrites of the user's config.toml.
+# https://crates.io/crates/toml_edit
+toml_edit = "0.22"
+# Only used to import a legacy git-repo-jumper config.yaml into TOML.
+# https://crates.io/crates/serde_yaml
+serde_yaml = "0.9"
+chrono = { version = "0.4", default-features = false, features = [
+    "clock",
+    "std",
+] }
+thiserror = "2"
+anyhow = "1"
+log = { version = "0.4", features = ["std"] }
+# Display-width measurement for aligning table columns (wide glyphs = 2).
+unicode-width = "0.2"
+
+[profile.release]
+opt-level = 3

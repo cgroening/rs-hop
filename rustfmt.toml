@@ -1,0 +1,4 @@
+max_width = 80
+# Nightly-only knobs; harmless on stable. Group imports std -> extern -> crate.
+group_imports = "StdExternalCrate"
+imports_granularity = "Module"
