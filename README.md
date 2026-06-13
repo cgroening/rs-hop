@@ -129,12 +129,12 @@ hop config-path     print the resolved config file path
 | `↑` / `↓` | move cursor (wraps) |
 | `Enter` | open: write path + launch git tool, then exit |
 | `o` | jump only: write path and exit (cd, no tool) |
-| `F` | live fuzzy filter (`Esc` clears) |
+| `f` | live fuzzy filter (`Esc` clears) |
 | `s` | cycle sort (favourites / recent / name) |
 | `a` | add an entry (pick a path, then fill the form) |
 | `e` | edit the selected entry |
 | `d` | delete the selected entry (confirm) |
-| `f` | toggle favourite |
+| `z` | toggle favourite |
 | `A` | archive / restore the selected entry |
 | `S` | set or change the slug |
 | `p` | repair a missing path |
