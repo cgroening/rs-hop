@@ -46,6 +46,7 @@ use crate::service::repo_service::RepoService;
 use crate::service::status_service::spawn_refresh;
 use crate::storage::cache;
 use crate::storage::git_client::GitClient;
+use crate::storage::ui_state;
 use crate::tui::colors::{ACCENT, CHANGES, DANGER, DIM, SELECTION_BG};
 use crate::tui::form::{FormResult, RepoDraft, RepoForm};
 use crate::tui::path_picker::{PathPicker, PickerResult};
@@ -100,6 +101,7 @@ pub struct App {
     icons: IconSet,
     git_client: Arc<dyn GitClient>,
     cache_path: PathBuf,
+    ui_state_path: PathBuf,
     tab: Tab,
     cursor: usize,
     sort: SortMode,
@@ -142,10 +144,12 @@ impl App {
         service: RepoService,
         git_client: Arc<dyn GitClient>,
         cache_path: PathBuf,
+        ui_state_path: PathBuf,
         startup: StartupStatus,
     ) -> Self {
         let icons = IconSet::new(config.icons);
         let cached = cache::load(&cache_path);
+        let sort = ui_state::load_sort(&ui_state_path);
         let mut service = service;
         service.apply_git_infos(&cached.infos);
         let mut app = App {
@@ -154,9 +158,10 @@ impl App {
             icons,
             git_client,
             cache_path,
+            ui_state_path,
             tab: Tab::default(),
             cursor: 0,
-            sort: SortMode::default(),
+            sort,
             filtering: false,
             filter: text_input::TextInput::new(""),
             overlay: Overlay::None,
@@ -453,7 +458,7 @@ impl App {
             KeyCode::Char('o') => return self.open_selected(false),
             KeyCode::Char('q') => return Some(RunOutcome::Quit),
             KeyCode::Char('f') => self.filtering = true,
-            KeyCode::Char('s') => self.sort = self.sort.next(),
+            KeyCode::Char('s') => self.cycle_sort(),
             KeyCode::Char('a') => self.open_add_picker(),
             KeyCode::Char('e') => self.open_edit_form(),
             KeyCode::Char('d') => self.open_delete_confirm(),
@@ -510,6 +515,12 @@ impl App {
         self.tab = tab;
         self.cursor = 0;
         self.clear_selection();
+    }
+
+    /// Cycles the sort mode and persists it for the next run.
+    fn cycle_sort(&mut self) {
+        self.sort = self.sort.next();
+        let _ = ui_state::save_sort(&self.ui_state_path, self.sort);
     }
 
     /// Moves the cursor cyclically within the current view; a plain move drops
@@ -1350,6 +1361,7 @@ mod tests {
             service,
             Arc::new(NoGit),
             dir.join("cache.toml"),
+            dir.join("ui-state.toml"),
             StartupStatus::Refresh { fetch: false },
         )
     }

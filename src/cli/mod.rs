@@ -177,6 +177,7 @@ fn run_tui(
         service,
         git_client,
         paths::cache_file(),
+        paths::ui_state_file(),
         startup,
     );
     let mut tui = match Tui::new() {

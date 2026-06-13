@@ -11,4 +11,5 @@ pub mod in_memory_repository;
 pub mod repository;
 pub mod subprocess_git_client;
 pub mod toml_repo_repository;
+pub mod ui_state;
 pub mod usage_state;

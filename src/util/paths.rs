@@ -93,3 +93,8 @@ pub fn selected_repo_file() -> PathBuf {
 pub fn log_file() -> PathBuf {
     state_dir().join("hop.log")
 }
+
+/// Persisted UI state file (`<state_dir>/ui-state.toml`), e.g. the sort mode.
+pub fn ui_state_file() -> PathBuf {
+    state_dir().join("ui-state.toml")
+}

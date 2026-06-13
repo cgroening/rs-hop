@@ -27,12 +27,21 @@ impl SortMode {
         }
     }
 
-    /// A short label for the header line.
+    /// A short label for the header line (also the persisted value).
     pub fn label(self) -> &'static str {
         match self {
             SortMode::Name => "name",
             SortMode::Recent => "recent",
             SortMode::Custom => "custom",
+        }
+    }
+
+    /// Parses a stored [`label`](Self::label) value, defaulting to `Name`.
+    pub fn from_config_value(value: &str) -> Self {
+        match value.trim().to_lowercase().as_str() {
+            "recent" => SortMode::Recent,
+            "custom" => SortMode::Custom,
+            _ => SortMode::Name,
         }
     }
 }
