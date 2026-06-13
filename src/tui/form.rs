@@ -40,6 +40,8 @@ pub enum FormResult {
     Pending,
     /// The user saved these values.
     Save(RepoDraft),
+    /// The user asked to pick the path with the filesystem picker.
+    PickPath,
     /// The user cancelled.
     Cancel,
 }
@@ -97,6 +99,7 @@ impl RepoForm {
             KeyCode::Char('s') if ctrl => {
                 return FormResult::Save(self.draft());
             }
+            KeyCode::Char('o') if ctrl => return FormResult::PickPath,
             KeyCode::Tab | KeyCode::Down => {
                 self.focus = (self.focus + 1) % FIELD_COUNT;
             }
@@ -133,6 +136,17 @@ impl RepoForm {
         }
     }
 
+    /// The path field's current value (used to seed the path picker).
+    pub fn path_value(&self) -> String {
+        self.path.value()
+    }
+
+    /// Replaces the path field and moves focus to it (after picking a path).
+    pub fn set_path(&mut self, path: &str) {
+        self.path = TextInput::new(path);
+        self.focus = 1;
+    }
+
     /// Builds the draft from the current field values.
     fn draft(&self) -> RepoDraft {
         let name = non_empty(self.name.value());
@@ -166,8 +180,8 @@ impl RepoForm {
             self.fav_line(4),
             Line::raw(""),
             Line::from(Span::styled(
-                "Tab field · \u{2190}\u{2192} kind · Space fav · Enter save · \
-                 Esc cancel",
+                "Tab field · \u{2190}\u{2192} kind · Space fav · ^O pick path · \
+                 Enter save · Esc cancel",
                 Style::default().fg(DIM),
             )),
         ];

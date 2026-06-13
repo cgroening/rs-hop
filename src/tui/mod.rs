@@ -94,6 +94,8 @@ enum PickerIntent {
     Repair(usize),
     /// Choose a path for a new entry, then open the add form.
     Add,
+    /// Fill the path field of a form already in progress.
+    FormPath(RepoForm, Option<usize>),
 }
 
 /// The interactive application state.
@@ -405,6 +407,7 @@ impl App {
             }
             Overlay::Form(mut form, index) => match form.handle_key(key) {
                 FormResult::Save(draft) => self.do_save_form(index, draft),
+                FormResult::PickPath => self.open_form_path_picker(form, index),
                 FormResult::Cancel => {}
                 FormResult::Pending => {
                     self.overlay = Overlay::Form(form, index)
@@ -467,7 +470,7 @@ impl App {
             KeyCode::Char('q') => return Some(RunOutcome::Quit),
             KeyCode::Char('f') => self.filtering = true,
             KeyCode::Char('s') => self.cycle_sort(),
-            KeyCode::Char('n') => self.open_add_picker(),
+            KeyCode::Char('n') => self.open_add(),
             KeyCode::Char('e') => self.open_edit_form(),
             KeyCode::Char('d') => self.open_delete_confirm(),
             KeyCode::Char('z') => self.toggle_fav(),
@@ -590,12 +593,34 @@ impl App {
         }
     }
 
-    /// Opens the path picker to choose a path for a new entry.
-    fn open_add_picker(&mut self) {
+    /// Starts adding an entry. On the Files and Folders tab the form opens
+    /// directly (its path is a plain text field, `^O` opens the picker);
+    /// elsewhere the path picker opens first.
+    fn open_add(&mut self) {
+        if self.tab == Tab::FilesAndFolders {
+            let form = RepoForm::for_add("", RepoKind::Folder);
+            self.overlay = Overlay::Form(form, None);
+            return;
+        }
         let start = crate::util::paths::home_dir()
             .unwrap_or_else(|| PathBuf::from("/"));
         self.overlay =
             Overlay::Picker(PathPicker::new(&start, true), PickerIntent::Add);
+    }
+
+    /// Opens the path picker to fill the path field of `form`, seeded near the
+    /// path typed so far.
+    fn open_form_path_picker(&mut self, form: RepoForm, index: Option<usize>) {
+        let typed = form.path_value();
+        let start = if typed.trim().is_empty() {
+            crate::util::paths::home_dir().unwrap_or_else(|| PathBuf::from("/"))
+        } else {
+            crate::util::paths::expand_tilde(&typed)
+        };
+        self.overlay = Overlay::Picker(
+            PathPicker::new(&start, true),
+            PickerIntent::FormPath(form, index),
+        );
     }
 
     /// Opens the edit form for the selected entry.
@@ -979,6 +1004,10 @@ impl App {
                 let kind = guess_kind(&path);
                 let form = RepoForm::for_add(&path.to_string_lossy(), kind);
                 self.overlay = Overlay::Form(form, None);
+            }
+            PickerIntent::FormPath(mut form, index) => {
+                form.set_path(&path.to_string_lossy());
+                self.overlay = Overlay::Form(form, index);
             }
         }
     }
