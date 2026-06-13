@@ -35,6 +35,14 @@ pub struct IconSet {
     pub ahead: &'static str,
     /// Behind-upstream marker (prefixes the count).
     pub behind: &'static str,
+    /// Entry-count marker in the info line.
+    pub count: &'static str,
+    /// Sort-mode marker in the info line.
+    pub sort: &'static str,
+    /// Local-status (last gathered) marker in the info line.
+    pub clock: &'static str,
+    /// Remote (last fetched) marker in the info line.
+    pub remote: &'static str,
     /// Animation frames for the "refreshing" spinner (single-cell each).
     pub spinner: &'static [&'static str],
 }
@@ -53,12 +61,16 @@ impl IconSet {
     pub fn new(variant: IconVariant) -> Self {
         match variant {
             IconVariant::Unicode => IconSet {
-                missing: "!",
+                missing: "\u{2717}",   // ✗
                 favourite: "\u{2605}", // ★
                 clean: "\u{2713}",     // ✓
                 changes: "\u{2260}",   // ≠
                 ahead: "\u{2191}",     // ↑
                 behind: "\u{2193}",    // ↓
+                count: "\u{2261}",     // ≡
+                sort: "\u{2195}",      // ↕
+                clock: "\u{21bb}",     // ↻
+                remote: "\u{21a7}",    // ↧
                 spinner: UNICODE_SPINNER,
             },
             IconVariant::Ascii => IconSet {
@@ -68,6 +80,10 @@ impl IconSet {
                 changes: "~",
                 ahead: "^",
                 behind: "v",
+                count: "#",
+                sort: "~",
+                clock: "@",
+                remote: "v",
                 spinner: ASCII_SPINNER,
             },
         }

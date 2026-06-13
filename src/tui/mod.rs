@@ -33,7 +33,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 pub use terminal::Tui;
 
@@ -47,7 +47,9 @@ use crate::service::status_service::spawn_refresh;
 use crate::storage::cache;
 use crate::storage::git_client::GitClient;
 use crate::storage::ui_state;
-use crate::tui::colors::{ACCENT, CHANGES, DANGER, DIM, SELECTION_BG};
+use crate::tui::colors::{
+    ACCENT, CHANGES, DANGER, DIM, MUTED, SELECTION_BG, tab_active,
+};
 use crate::tui::form::{FormResult, RepoDraft, RepoForm};
 use crate::tui::path_picker::{PathPicker, PickerResult};
 use crate::tui::presentation::{IconSet, footer_lines, render_empty_hint};
@@ -1009,33 +1011,53 @@ impl App {
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1),
-                Constraint::Length(1),
-                Constraint::Length(1),
-                Constraint::Length(1),
+                Constraint::Length(4), // header box: 2 lines + rounded border
                 Constraint::Min(1),
                 Constraint::Length(2),
             ])
             .split(area);
-        self.render_tab_bar(frame, rows[0]);
-        self.render_info(frame, rows[1]);
-        self.render_local_status(frame, rows[2]);
-        self.render_remote(frame, rows[3]);
-        self.render_body(frame, rows[4]);
-        self.render_footer(frame, rows[5]);
+        self.render_header(frame, rows[0]);
+        self.render_body(frame, rows[1]);
+        self.render_footer(frame, rows[2]);
         self.render_overlay(frame, area);
     }
 
-    /// Renders the top tab bar.
+    /// Renders the rounded header box: brand + tabs on the first line, the
+    /// combined info line (counts, sort, status and remote) on the second.
+    fn render_header(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(ACCENT));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let lines = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(inner);
+        self.render_tab_bar(frame, lines[0]);
+        self.render_info(frame, lines[1]);
+    }
+
+    /// Renders the tab line: the `hop` brand (accent), then `[n] Label` tabs -
+    /// the active one bold green, the rest dim, separated by a dim `│`.
     fn render_tab_bar(&self, frame: &mut Frame, area: Rect) {
         let mut spans = vec![Span::styled(
-            " hop ",
+            " hop   ",
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         )];
         for (index, tab) in Tab::ALL.iter().enumerate() {
-            let label = format!(" {} {} ", index + 1, tab.title());
+            if index > 0 {
+                spans.push(Span::styled(
+                    "  \u{2502}  ",
+                    Style::default().fg(DIM),
+                ));
+            }
+            let label = format!("[{}] {}", index + 1, tab.title());
             let style = if *tab == self.tab {
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(tab_active())
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(DIM)
             };
@@ -1044,51 +1066,85 @@ impl App {
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 
-    /// Renders the top info line: entry count, sort and an error indicator -
-    /// or a progress bar while a refresh is running.
+    /// Renders the single info line - error count, entry count, sort, local
+    /// status and remote fetch time, each behind its icon - or the progress bar
+    /// while a refresh is running.
     fn render_info(&self, frame: &mut Frame, area: Rect) {
         if let Some((done, total)) = self.loading {
             render_progress(frame, area, done, total);
             return;
         }
-        let count = self.ordered_view().len();
-        let mut spans = vec![Span::styled(
-            format!(" {count} entries  ·  sort: {}", self.sort.label()),
-            Style::default().fg(DIM),
-        )];
+        let icons = self.icons;
+        let muted = Style::default().fg(MUTED);
+        let sep = || Span::styled("   ", Style::default().fg(DIM));
+        let mut spans = vec![Span::raw(" ")];
+
         let errors = self.error_count();
         if errors > 0 {
-            // A leading "!" flags broken entries; press ! to list and fix them.
             spans.push(Span::styled(
-                format!("  ·  ! {errors}"),
+                format!("{}{errors}", icons.missing),
                 Style::default().fg(DANGER).add_modifier(Modifier::BOLD),
             ));
+            spans.push(sep());
+        }
+        spans.push(Span::styled(
+            format!("{} {}", icons.count, self.ordered_view().len()),
+            muted,
+        ));
+        spans.push(sep());
+        spans.push(Span::styled(
+            format!("{} {}", icons.sort, self.sort.label()),
+            muted,
+        ));
+
+        if self.config.example_mode {
+            spans.push(sep());
+            spans.push(Span::styled("example mode", muted));
+        } else {
+            if let Some(at) = self.cache_generated_at {
+                let age = Local::now().signed_duration_since(at);
+                spans.push(sep());
+                spans.push(Span::styled(
+                    format!(
+                        "{} {} ({} ago)",
+                        icons.clock,
+                        at.format("%Y-%m-%d %H:%M"),
+                        relative_age(age),
+                    ),
+                    muted,
+                ));
+            }
+            spans.push(sep());
+            spans.push(self.remote_span(icons.remote, muted));
         }
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 
-    /// Renders the local-status line: when the cached status was generated, on
-    /// its own line, with a relative age.
-    fn render_local_status(&self, frame: &mut Frame, area: Rect) {
-        let text = if self.config.example_mode {
-            " status: example mode".to_string()
-        } else if let Some(at) = self.cache_generated_at {
-            let age = Local::now().signed_duration_since(at);
-            format!(
-                " status as of {} ({} ago)",
-                at.format("%Y-%m-%d %H:%M"),
-                relative_age(age),
-            )
-        } else {
-            " status: not loaded yet".to_string()
-        };
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                text,
-                Style::default().fg(DIM),
-            ))),
-            area,
-        );
+    /// The remote-fetch segment of the info line: amber when over a day old or
+    /// never fetched, muted otherwise.
+    fn remote_span(&self, icon: &str, muted: Style) -> Span<'static> {
+        match self.last_fetched {
+            None => Span::styled(
+                format!("{icon} never fetched"),
+                Style::default().fg(CHANGES),
+            ),
+            Some(at) => {
+                let age = Local::now().signed_duration_since(at);
+                let stale = age.num_hours() >= 24;
+                let suffix = if stale { "  (stale)" } else { "" };
+                let text = format!(
+                    "{icon} {} ({} ago){suffix}",
+                    at.format("%Y-%m-%d %H:%M"),
+                    relative_age(age),
+                );
+                let style = if stale {
+                    Style::default().fg(CHANGES)
+                } else {
+                    muted
+                };
+                Span::styled(text, style)
+            }
+        }
     }
 
     /// The number of entries with a missing or invalid path.
@@ -1098,39 +1154,6 @@ impl App {
             .iter()
             .filter(|repo| repo.entry_error().is_some())
             .count()
-    }
-
-    /// Renders the remote line: when the entries were last fetched, warning in
-    /// amber when that is over a day ago or never.
-    fn render_remote(&self, frame: &mut Frame, area: Rect) {
-        let (text, warn) = if self.config.example_mode {
-            (" remote: example mode (no live status)".to_string(), false)
-        } else {
-            match self.last_fetched {
-                None => (" remote: never fetched — press R".to_string(), true),
-                Some(at) => {
-                    let age = Local::now().signed_duration_since(at);
-                    let stale = age.num_hours() >= 24;
-                    let suffix = if stale { "  (stale)" } else { "" };
-                    (
-                        format!(
-                            " remote: fetched {} ({} ago){suffix}",
-                            at.format("%Y-%m-%d %H:%M"),
-                            relative_age(age),
-                        ),
-                        stale,
-                    )
-                }
-            }
-        };
-        let color = if warn { CHANGES } else { DIM };
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                text,
-                Style::default().fg(color),
-            ))),
-            area,
-        );
     }
 
     /// Renders the entry table, or an empty hint.
@@ -1256,6 +1279,12 @@ fn hint_line(_tab: Tab) -> Line<'static> {
 /// is chosen per cell from whether it sits over the filled or unfilled part, so
 /// it never ends up dark text on the dark (unfilled) background.
 fn render_progress(frame: &mut Frame, area: Rect, done: usize, total: usize) {
+    // Leave one blank cell of padding on each side of the bar.
+    let area = Rect {
+        x: area.x.saturating_add(1),
+        width: area.width.saturating_sub(2),
+        ..area
+    };
     if area.width == 0 || area.height == 0 {
         return;
     }
