@@ -159,6 +159,8 @@ pub struct App {
     /// Paths of `Path`-kind entries found missing by the on-demand existence
     /// check (`r` on the Files tab). Empty until checked; never run on start.
     files_missing: HashSet<PathBuf>,
+    /// Whether slugs are shown inline (dim, italic) after the entry name.
+    show_slugs: bool,
 }
 
 /// How the status is sourced on start.
@@ -215,6 +217,7 @@ impl App {
             auto_refresh: false,
             refreshed_tabs: HashSet::new(),
             files_missing: HashSet::new(),
+            show_slugs: ui.show_slugs,
         };
         if let StartupStatus::Refresh { fetch } = startup
             && !app.config.example_mode
@@ -707,6 +710,7 @@ impl App {
             }
             KeyCode::Char('z') => self.toggle_fav(),
             KeyCode::Char('y') => self.copy_path(),
+            KeyCode::Char('i') => self.toggle_slugs(),
             KeyCode::Char('A') => self.toggle_archive(),
             KeyCode::Char('S') => self.open_slug_prompt(),
             KeyCode::Char('p') => self.open_repair_picker(),
@@ -799,13 +803,20 @@ impl App {
         self.save_ui_state();
     }
 
-    /// Persists the active tab and sort mode (best-effort).
+    /// Toggles the inline slug display and persists it for the next run.
+    fn toggle_slugs(&mut self) {
+        self.show_slugs = !self.show_slugs;
+        self.save_ui_state();
+    }
+
+    /// Persists the sort mode, active tab and slug display (best-effort).
     fn save_ui_state(&self) {
         let _ = ui_state::save(
             &self.ui_state_path,
             ui_state::UiState {
                 sort: self.sort,
                 tab: self.tab,
+                show_slugs: self.show_slugs,
             },
         );
     }
@@ -1577,6 +1588,7 @@ impl App {
             selected: &selected,
             has_selection: !self.selected.is_empty(),
             missing: &self.files_missing,
+            show_slugs: self.show_slugs,
         };
         table::render_table(frame, area, &visible, cursor, &table_view);
     }
@@ -1592,6 +1604,7 @@ impl App {
             selected: &self.selected,
             has_selection: !self.selected.is_empty(),
             missing: &self.files_missing,
+            show_slugs: self.show_slugs,
             offset: &self.list_offset,
         };
         sections_view::render(frame, area, cursor, &view);
@@ -1679,6 +1692,7 @@ fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
         _ => ("A", "archive"),
     });
     hints.push(("S", "slug"));
+    hints.push(("i", "slugs"));
     hints.push(("y", "copy path"));
     hints.push(("p", "fix path"));
     // Git status refresh only makes sense where entries are git repositories;

@@ -50,6 +50,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("z", "toggle favourite (selection or cursor)"),
     ("A", "archive / restore (selection or cursor)"),
     ("S", "set or change the slug"),
+    ("i", "toggle showing slugs (dim, italic) after the name"),
     ("y", "copy the selected entry's path to the clipboard"),
     ("p", "repair a missing path"),
     ("!", "list entries with path errors and fix them"),

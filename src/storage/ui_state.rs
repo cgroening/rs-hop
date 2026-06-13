@@ -18,6 +18,8 @@ pub struct UiState {
     pub sort: SortMode,
     /// The active tab.
     pub tab: Tab,
+    /// Whether slugs are shown inline after the entry name.
+    pub show_slugs: bool,
 }
 
 /// The on-disk UI state document.
@@ -25,6 +27,7 @@ pub struct UiState {
 struct UiStateDoc {
     sort: Option<String>,
     tab: Option<String>,
+    show_slugs: Option<bool>,
 }
 
 /// Loads the persisted UI state, defaulting when the file is missing/corrupt.
@@ -41,6 +44,7 @@ pub fn load(path: &Path) -> UiState {
             .as_deref()
             .map_or_else(SortMode::default, SortMode::from_config_value),
         tab: doc.tab.as_deref().map_or_else(Tab::default, Tab::from_key),
+        show_slugs: doc.show_slugs.unwrap_or(false),
     }
 }
 
@@ -52,6 +56,7 @@ pub fn save(path: &Path, state: UiState) -> Result<()> {
     let doc = UiStateDoc {
         sort: Some(state.sort.label().to_string()),
         tab: Some(state.tab.as_key().to_string()),
+        show_slugs: Some(state.show_slugs),
     };
     let text = toml::to_string_pretty(&doc)
         .map_err(|e| Error::invalid(format!("serialise ui state: {e}")))?;
@@ -74,6 +79,7 @@ mod tests {
         let state = UiState {
             sort: SortMode::Custom,
             tab: Tab::Archive,
+            show_slugs: true,
         };
         save(&file, state).unwrap();
         assert_eq!(load(&file), state);

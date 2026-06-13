@@ -7,7 +7,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
@@ -142,6 +142,30 @@ pub fn truncate(text: &str, width: usize) -> String {
     }
     result.push('…');
     result
+}
+
+/// The style for an inline slug shown after an entry name: dim and italic.
+pub fn slug_style() -> Style {
+    Style::default().fg(DIM).add_modifier(Modifier::ITALIC)
+}
+
+/// The plain name text used to size the name column: the name, plus ` slug`
+/// when a slug is shown.
+pub fn name_plain(name: &str, slug: Option<&str>) -> String {
+    match slug {
+        Some(slug) => format!("{name} {slug}"),
+        None => name.to_string(),
+    }
+}
+
+/// The spans for an entry name: the name, plus a dim-italic ` slug` when shown.
+/// Used by the git table, where ratatui clips to the column width.
+pub fn name_spans(name: &str, slug: Option<&str>) -> Vec<Span<'static>> {
+    let mut spans = vec![Span::raw(name.to_string())];
+    if let Some(slug) = slug {
+        spans.push(Span::styled(format!(" {slug}"), slug_style()));
+    }
+    spans
 }
 
 /// Maximum footer rows, so a long hint never crowds out the list.
@@ -297,5 +321,17 @@ mod tests {
     fn truncate_adds_ellipsis_when_too_long() {
         assert_eq!(truncate("hello", 3), "he…");
         assert_eq!(truncate("hi", 5), "hi");
+    }
+
+    #[test]
+    fn name_plain_appends_slug_when_present() {
+        assert_eq!(name_plain("hop", Some("hp")), "hop hp");
+        assert_eq!(name_plain("hop", None), "hop");
+    }
+
+    #[test]
+    fn name_spans_adds_slug_only_when_present() {
+        assert_eq!(name_spans("hop", None).len(), 1);
+        assert_eq!(name_spans("hop", Some("hp")).len(), 2);
     }
 }

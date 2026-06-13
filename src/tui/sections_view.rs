@@ -22,7 +22,9 @@ use crate::domain::sections::SectionGroup;
 use crate::tui::colors::{
     ACCENT, DANGER, DIM, FAVOURITE, MULTI_SELECT_BG, selection_style,
 };
-use crate::tui::presentation::{IconSet, render_scrollbar, truncate};
+use crate::tui::presentation::{
+    IconSet, name_plain, render_scrollbar, slug_style, truncate,
+};
 
 /// The lower and upper bound for the auto-sized name column.
 const NAME_MIN: usize = 4;
@@ -45,6 +47,8 @@ pub struct SectionedView<'a> {
     pub has_selection: bool,
     /// Paths flagged missing by the on-demand existence check.
     pub missing: &'a HashSet<PathBuf>,
+    /// Whether to show each entry's slug (dim, italic) after its name.
+    pub show_slugs: bool,
     /// The scroll offset carried across frames.
     pub offset: &'a Cell<usize>,
 }
@@ -184,7 +188,11 @@ fn entry_item<'a>(
     } else {
         Span::raw("  ")
     };
-    let name = pad(&repo.display_name(), name_width);
+    let name_field = name_field_spans(
+        &repo.display_name(),
+        shown_slug(view, repo),
+        name_width,
+    );
     let kind = pad(type_label(repo), TYPE_WIDTH);
     // Cells before the path: lead(2) + marker(1) + fav(1) + space(1) + name
     //  + gap(2) + type + gap(2).
@@ -192,17 +200,19 @@ fn entry_item<'a>(
     let path =
         truncate(&repo.path.to_string_lossy(), width.saturating_sub(used));
 
-    let spans = vec![
+    let mut spans = vec![
         lead,
         marker_span(repo, view),
         fav_span(repo, view.icons),
         Span::raw(" "),
-        Span::raw(name),
+    ];
+    spans.extend(name_field);
+    spans.extend([
         Span::raw("  "),
         Span::raw(kind),
         Span::raw("  "),
         Span::styled(path, Style::default().fg(DIM)),
-    ];
+    ]);
     let item = ListItem::new(Line::from(spans));
     if selected {
         item.style(Style::default().bg(MULTI_SELECT_BG))
@@ -236,17 +246,51 @@ fn fav_span(repo: &Repo, icons: &IconSet) -> Span<'static> {
     }
 }
 
-/// The auto-sized name column width: the widest name, bounded.
+/// The auto-sized name column width: the widest name (plus its slug when
+/// shown), bounded.
 fn name_width(view: &SectionedView) -> usize {
     view.groups
         .iter()
         .flat_map(|group| group.items.iter())
         .map(|&index| {
-            UnicodeWidthStr::width(view.repos[index].display_name().as_str())
+            let repo = &view.repos[index];
+            UnicodeWidthStr::width(
+                name_plain(&repo.display_name(), shown_slug(view, repo))
+                    .as_str(),
+            )
         })
         .max()
         .unwrap_or(NAME_MIN)
         .clamp(NAME_MIN, NAME_MAX)
+}
+
+/// The slug to display after `repo`'s name, or `None` when slugs are hidden.
+fn shown_slug<'a>(view: &SectionedView, repo: &'a Repo) -> Option<&'a str> {
+    repo.slug.as_deref().filter(|_| view.show_slugs)
+}
+
+/// The name-column spans: the name, plus a dim-italic ` slug` when shown, fit
+/// and padded to `width` (the slug is shortened first when space is tight).
+fn name_field_spans(
+    name: &str,
+    slug: Option<&str>,
+    width: usize,
+) -> Vec<Span<'static>> {
+    let Some(slug) = slug else {
+        return vec![Span::raw(pad(name, width))];
+    };
+    let name_w = UnicodeWidthStr::width(name);
+    if width <= name_w + 1 {
+        // No room for a space and at least one slug character.
+        return vec![Span::raw(pad(name, width))];
+    }
+    let slug_text = truncate(slug, width - name_w - 1);
+    let used = name_w + 1 + UnicodeWidthStr::width(slug_text.as_str());
+    vec![
+        Span::raw(name.to_string()),
+        Span::styled(format!(" {slug_text}"), slug_style()),
+        Span::raw(" ".repeat(width.saturating_sub(used))),
+    ]
 }
 
 /// Pads `text` with trailing spaces to `width`, truncating when it is longer.

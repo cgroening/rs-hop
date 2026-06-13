@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::Span;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Cell, Row, Table, TableState};
 use unicode_width::UnicodeWidthStr;
 
@@ -22,7 +22,7 @@ use crate::tui::colors::{
     header_style, selection_style,
 };
 use crate::tui::presentation::{
-    IconSet, render_scrollbar, status_text, truncate,
+    IconSet, name_plain, name_spans, render_scrollbar, status_text, truncate,
 };
 
 /// The styling context for a table render, bundled to keep the parameter count
@@ -46,6 +46,13 @@ pub struct TableView<'a> {
     pub has_selection: bool,
     /// Paths flagged missing by the on-demand file/folder existence check.
     pub missing: &'a HashSet<PathBuf>,
+    /// Whether to show each entry's slug (dim, italic) after its name.
+    pub show_slugs: bool,
+}
+
+/// The slug to display after `repo`'s name, or `None` when slugs are hidden.
+fn shown_slug<'a>(repo: &'a Repo, view: &TableView) -> Option<&'a str> {
+    repo.slug.as_deref().filter(|_| view.show_slugs)
 }
 
 /// The git info to display for `repo`: example info in example mode, otherwise
@@ -120,7 +127,13 @@ pub fn render_table(
 /// flexible to use the leftover space.
 fn widths(repos: &[&Repo], view: &TableView) -> Vec<Constraint> {
     let cols = &view.config.column_widths;
-    let name = sized(content_width(repos, |r| r.display_name()), 4, cols.name);
+    let name = sized(
+        content_width(repos, |r| {
+            name_plain(&r.display_name(), shown_slug(r, view))
+        }),
+        4,
+        cols.name,
+    );
     // A 2-cell selection-marker column, only while a selection is active.
     let lead: &[Constraint] = if view.has_selection {
         &[
@@ -231,7 +244,10 @@ fn row_for<'a>(repo: &Repo, view: &TableView, selected: bool) -> Row<'a> {
     }
     cells.push(marker_cell(repo, view));
     cells.push(fav_cell(repo, view.icons));
-    cells.push(Cell::from(repo.display_name()));
+    cells.push(Cell::from(Line::from(name_spans(
+        &repo.display_name(),
+        shown_slug(repo, view),
+    ))));
     match view.tab {
         Tab::FilesAndFolders => {
             cells.push(Cell::from(type_label(repo)));
