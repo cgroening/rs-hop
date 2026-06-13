@@ -186,13 +186,19 @@ impl App {
         app
     }
 
+    /// The service indices belonging to the current tab (unsorted, unfiltered).
+    fn tab_indices(&self) -> Vec<usize> {
+        let repos = self.service.repos();
+        (0..repos.len())
+            .filter(|&i| belongs_to_tab(&repos[i], self.tab))
+            .collect()
+    }
+
     /// The ordered service indices visible in the current tab, after the sort
     /// or live fuzzy filter.
     fn ordered_view(&self) -> Vec<usize> {
         let repos = self.service.repos();
-        let tab_indices: Vec<usize> = (0..repos.len())
-            .filter(|&i| belongs_to_tab(&repos[i], self.tab))
-            .collect();
+        let tab_indices = self.tab_indices();
         let query = self.filter.value();
         if self.filtering && !query.trim().is_empty() {
             let subset: Vec<Repo> =
@@ -235,13 +241,13 @@ impl App {
         }
     }
 
-    /// Starts a full background refresh over all entries (with progress bar).
+    /// Starts a background refresh over the current tab's entries (with the
+    /// progress bar).
     fn start_refresh(&mut self, fetch: bool) {
         let paths: Vec<PathBuf> = self
-            .service
-            .repos()
+            .tab_indices()
             .iter()
-            .map(|r| r.path.clone())
+            .filter_map(|&i| self.service.get(i).map(|r| r.path.clone()))
             .collect();
         self.refresh_paths(paths, fetch, true);
     }
@@ -1153,12 +1159,12 @@ impl App {
         }
     }
 
-    /// The number of entries with a missing or invalid path.
+    /// The number of current-tab entries with a missing or invalid path.
     fn error_count(&self) -> usize {
-        self.service
-            .repos()
+        let repos = self.service.repos();
+        self.tab_indices()
             .iter()
-            .filter(|repo| repo.entry_error().is_some())
+            .filter(|&&i| repos[i].entry_error().is_some())
             .count()
     }
 
