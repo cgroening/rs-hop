@@ -8,6 +8,7 @@
 
 use std::cell::Cell;
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -42,6 +43,8 @@ pub struct SectionedView<'a> {
     pub selected: &'a HashSet<usize>,
     /// Whether a multi-selection is active (shows the leading marker column).
     pub has_selection: bool,
+    /// Paths flagged missing by the on-demand existence check.
+    pub missing: &'a HashSet<PathBuf>,
     /// The scroll offset carried across frames.
     pub offset: &'a Cell<usize>,
 }
@@ -191,7 +194,7 @@ fn entry_item<'a>(
 
     let spans = vec![
         lead,
-        marker_span(repo, view.icons),
+        marker_span(repo, view),
         fav_span(repo, view.icons),
         Span::raw(" "),
         Span::raw(name),
@@ -208,11 +211,12 @@ fn entry_item<'a>(
     }
 }
 
-/// The error marker glyph (red) when the entry's path is missing, else blank.
-fn marker_span(repo: &Repo, icons: &IconSet) -> Span<'static> {
-    if repo.entry_error().is_some() {
+/// The error marker glyph (red) when the entry's path was flagged missing by
+/// the existence check, else blank.
+fn marker_span(repo: &Repo, view: &SectionedView) -> Span<'static> {
+    if view.missing.contains(&repo.path) {
         Span::styled(
-            icons.missing.to_string(),
+            view.icons.missing.to_string(),
             Style::default().fg(DANGER).add_modifier(Modifier::BOLD),
         )
     } else {

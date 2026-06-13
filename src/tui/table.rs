@@ -16,7 +16,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::config::{ColumnWidth, Config};
 use crate::domain::filter::Tab;
-use crate::domain::repo::{GitInfo, Repo, is_dir_target};
+use crate::domain::repo::{GitInfo, Repo, RepoKind, is_dir_target};
 use crate::tui::colors::{
     ACCENT, CHANGES, DANGER, DIM, FAVOURITE, MULTI_SELECT_BG, POSITIVE,
     header_style, selection_style,
@@ -44,6 +44,8 @@ pub struct TableView<'a> {
     pub selected: &'a [bool],
     /// Whether a multi-selection is active (shows the leading marker column).
     pub has_selection: bool,
+    /// Paths flagged missing by the on-demand file/folder existence check.
+    pub missing: &'a HashSet<PathBuf>,
 }
 
 /// The git info to display for `repo`: example info in example mode, otherwise
@@ -227,7 +229,7 @@ fn row_for<'a>(repo: &Repo, view: &TableView, selected: bool) -> Row<'a> {
     if view.has_selection {
         cells.push(selection_cell(selected));
     }
-    cells.push(marker_cell(repo, view.icons));
+    cells.push(marker_cell(repo, view));
     cells.push(fav_cell(repo, view.icons));
     cells.push(Cell::from(repo.display_name()));
     match view.tab {
@@ -265,12 +267,17 @@ fn selection_cell<'a>(selected: bool) -> Cell<'a> {
     ))
 }
 
-/// The marker cell: a red warning glyph when the entry has an error (missing or
-/// invalid path), else blank.
-fn marker_cell<'a>(repo: &Repo, icons: &IconSet) -> Cell<'a> {
-    if repo.entry_error().is_some() {
+/// The marker cell: a red warning glyph when the entry has a path error, else
+/// blank. A git entry is flagged live (missing or invalid repository); a
+/// file/folder entry only once the on-demand existence check flagged its path.
+fn marker_cell<'a>(repo: &Repo, view: &TableView) -> Cell<'a> {
+    let errored = match repo.kind {
+        RepoKind::Git => repo.entry_error().is_some(),
+        RepoKind::Path => view.missing.contains(&repo.path),
+    };
+    if errored {
         Cell::from(Span::styled(
-            icons.missing.to_string(),
+            view.icons.missing.to_string(),
             Style::default().fg(DANGER).add_modifier(Modifier::BOLD),
         ))
     } else {

@@ -156,6 +156,9 @@ pub struct App {
     /// Tabs whose entries have been refreshed since start, so a tab is only
     /// auto-refreshed on its first visit.
     refreshed_tabs: HashSet<Tab>,
+    /// Paths of `Path`-kind entries found missing by the on-demand existence
+    /// check (`r` on the Files tab). Empty until checked; never run on start.
+    files_missing: HashSet<PathBuf>,
 }
 
 /// How the status is sourced on start.
@@ -211,6 +214,7 @@ impl App {
             list_offset: std::cell::Cell::new(0),
             auto_refresh: false,
             refreshed_tabs: HashSet::new(),
+            files_missing: HashSet::new(),
         };
         if let StartupStatus::Refresh { fetch } = startup
             && !app.config.example_mode
@@ -700,6 +704,9 @@ impl App {
             KeyCode::Char('S') => self.open_slug_prompt(),
             KeyCode::Char('p') => self.open_repair_picker(),
             KeyCode::Char('!') => self.open_error_list(),
+            KeyCode::Char('r' | 'R') if self.tab == Tab::FilesAndFolders => {
+                self.check_files_existence()
+            }
             KeyCode::Char('r') => self.reload_status(false),
             KeyCode::Char('R') => self.reload_status(true),
             KeyCode::Char('x') => self.refresh_targets(false),
@@ -982,7 +989,7 @@ impl App {
         let mut indices = Vec::new();
         let mut labels = Vec::new();
         for (index, repo) in repos.iter().enumerate() {
-            if let Some(error) = repo.entry_error() {
+            if let Some(error) = self.path_error(repo) {
                 labels.push(format!("{} — {error}", repo.display_name()));
                 indices.push(index);
             }
@@ -1485,13 +1492,47 @@ impl App {
         }
     }
 
-    /// The number of current-tab entries with a missing or invalid path.
+    /// The number of current-tab entries flagged with a path error.
     fn error_count(&self) -> usize {
         let repos = self.service.repos();
         self.tab_indices()
             .iter()
-            .filter(|&&i| repos[i].entry_error().is_some())
+            .filter(|&&i| self.path_error(&repos[i]).is_some())
             .count()
+    }
+
+    /// The path error for `repo`, if any. A git entry reports a missing or
+    /// invalid repository live; a file/folder entry only reports a missing path
+    /// once the on-demand existence check (`r` on the Files tab) has flagged it.
+    fn path_error(&self, repo: &Repo) -> Option<String> {
+        match repo.kind {
+            RepoKind::Git => repo.entry_error(),
+            RepoKind::Path => self
+                .files_missing
+                .contains(&repo.path)
+                .then(|| "path not found".to_string()),
+        }
+    }
+
+    /// Checks on disk which file/folder entries are missing, recording them so
+    /// the marker and the error count reflect the result. Triggered by `r` on
+    /// the Files tab; never on start. Reports a transient summary.
+    fn check_files_existence(&mut self) {
+        self.files_missing = self
+            .service
+            .repos()
+            .iter()
+            .filter(|repo| repo.kind == RepoKind::Path && !repo.path.exists())
+            .map(|repo| repo.path.clone())
+            .collect();
+        let missing = self.files_missing.len();
+        self.set_status(if missing == 0 {
+            "checked paths: all exist".to_string()
+        } else if missing == 1 {
+            "checked paths: 1 missing".to_string()
+        } else {
+            format!("checked paths: {missing} missing")
+        });
     }
 
     /// Renders the entry table, or an empty hint.
@@ -1522,6 +1563,7 @@ impl App {
             spinner,
             selected: &selected,
             has_selection: !self.selected.is_empty(),
+            missing: &self.files_missing,
         };
         table::render_table(frame, area, &visible, cursor, &table_view);
     }
@@ -1536,6 +1578,7 @@ impl App {
             icons: &self.icons,
             selected: &self.selected,
             has_selection: !self.selected.is_empty(),
+            missing: &self.files_missing,
             offset: &self.list_offset,
         };
         sections_view::render(frame, area, cursor, &view);
@@ -1625,9 +1668,12 @@ fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
     hints.push(("S", "slug"));
     hints.push(("y", "copy path"));
     hints.push(("p", "fix path"));
-    // Git status refresh only makes sense where entries are git repositories.
-    if tab == Tab::GitRepos {
-        hints.push(("x/r", "refresh"));
+    // Git status refresh only makes sense where entries are git repositories;
+    // the Files tab uses `r` to check that paths still exist.
+    match tab {
+        Tab::GitRepos => hints.push(("x/r", "refresh")),
+        Tab::FilesAndFolders => hints.push(("r", "check paths")),
+        Tab::Archive => {}
     }
     hints.push(("!", "errors"));
     hints.push(("?", "help"));

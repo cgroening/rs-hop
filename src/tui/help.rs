@@ -53,7 +53,10 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("y", "copy the selected entry's path to the clipboard"),
     ("p", "repair a missing path"),
     ("!", "list entries with path errors and fix them"),
-    ("r", "reload all git status   ·   R: git fetch + reload"),
+    (
+        "r",
+        "git tabs: reload status (R: + fetch) · Files: check paths exist",
+    ),
     ("x", "refresh selection/cursor   ·   X: with git fetch"),
     ("?", "toggle this help"),
     ("q / Ctrl+Q", "quit"),
