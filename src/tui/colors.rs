@@ -8,8 +8,10 @@ use ratatui::style::{Color, Modifier, Style};
 pub const ACCENT: Color = Color::Rgb(247, 163, 189);
 /// Dim colour for secondary text.
 pub const DIM: Color = Color::DarkGray;
-/// Background tint for the selected row.
+/// Background tint for the cursor row.
 pub const SELECTION_BG: Color = Color::Rgb(40, 40, 60);
+/// Background tint for multi-selected (checked) rows; fainter than the cursor.
+pub const MULTI_SELECT_BG: Color = Color::Rgb(58, 44, 64);
 /// Colour for the missing-path marker and destructive prompts.
 pub const DANGER: Color = Color::Rgb(208, 80, 80);
 /// Colour for a clean git status.

@@ -133,21 +133,23 @@ hop config-path     print the resolved config file path
 |-----|--------|
 | `1` / `2` / `3` | switch tab (Git Repos / Files / Archiv) |
 | `↑` / `↓` | move cursor (wraps) |
+| `Space` | toggle selection · `Shift+↑/↓`: extend range · `Esc`: clear |
 | `Enter` | open: write path + launch git tool, then exit |
 | `o` | jump only: write path and exit (cd, no tool) |
 | `f` | live fuzzy filter (`Esc` clears) |
-| `s` | cycle sort (favourites / recent / name) |
+| `s` | cycle sort (favourites / recent / name / custom) |
+| `Alt+↑/↓` | reorder the entry (custom sort only; favourites stay on top) |
 | `a` | add an entry (pick a path, then fill the form) |
 | `e` | edit the selected entry |
-| `d` | delete the selected entry (confirm) |
-| `z` | toggle favourite |
-| `A` | archive / restore the selected entry |
+| `d` | delete (acts on the selection, else the cursor; confirm) |
+| `z` | toggle favourite (selection or cursor) |
+| `A` | archive / restore (selection or cursor) |
 | `S` | set or change the slug |
 | `y` | copy the selected entry's path to the clipboard |
 | `p` | repair a missing path |
 | `!` | list entries with path errors, then repair / edit / delete |
-| `r` | reload git status (all)   ·   `R`: `git fetch` + reload |
-| `x` | refresh the selected entry   ·   `X`: with `git fetch` |
+| `r` | reload all git status   ·   `R`: `git fetch` + reload |
+| `x` | refresh selection/cursor   ·   `X`: with `git fetch` |
 | `?` | toggle the help overlay |
 | `q` / `Ctrl+Q` | quit |
 

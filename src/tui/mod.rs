@@ -75,7 +75,7 @@ pub enum RunOutcome {
 enum Overlay {
     None,
     Help,
-    Confirm(ConfirmModal, usize),
+    Confirm(ConfirmModal, Vec<usize>),
     Prompt(TextPrompt, usize),
     Form(RepoForm, Option<usize>),
     Picker(PathPicker, PickerIntent),
@@ -117,6 +117,10 @@ pub struct App {
     refreshing: HashSet<PathBuf>,
     /// When the active refresh started, for animating the spinner frame.
     refresh_started: Instant,
+    /// Multi-selection by service index (survives sort/filter). Empty = none.
+    selected: HashSet<usize>,
+    /// Anchor display row for `Shift`-range selection.
+    anchor: Option<usize>,
 }
 
 /// How the status is sourced on start.
@@ -164,6 +168,8 @@ impl App {
             status_rx: None,
             refreshing: HashSet::new(),
             refresh_started: Instant::now(),
+            selected: HashSet::new(),
+            anchor: None,
         };
         if let StartupStatus::Refresh { fetch } = startup
             && !app.config.example_mode
@@ -222,7 +228,7 @@ impl App {
         }
     }
 
-    /// Starts (or restarts) the background status refresh over all paths.
+    /// Starts a full background refresh over all entries (with progress bar).
     fn start_refresh(&mut self, fetch: bool) {
         let paths: Vec<PathBuf> = self
             .service
@@ -230,13 +236,30 @@ impl App {
             .iter()
             .map(|r| r.path.clone())
             .collect();
+        self.refresh_paths(paths, fetch, true);
+    }
+
+    /// Starts a background refresh over `paths`, optionally fetching first.
+    /// `show_bar` drives the full-width progress bar (and the global
+    /// `fetched_at` update); a subset refresh passes `false`.
+    fn refresh_paths(
+        &mut self,
+        paths: Vec<PathBuf>,
+        fetch: bool,
+        show_bar: bool,
+    ) {
         if paths.is_empty() {
             return;
         }
         self.refreshing = paths.iter().cloned().collect();
         self.refresh_started = Instant::now();
-        self.loading = Some((0, paths.len()));
-        self.refresh_fetched = fetch;
+        self.loading = if show_bar {
+            Some((0, paths.len()))
+        } else {
+            None
+        };
+        // Only a full refresh updates the global "remote: fetched …" time.
+        self.refresh_fetched = fetch && show_bar;
         self.status_rx =
             Some(spawn_refresh(Arc::clone(&self.git_client), paths, fetch));
     }
@@ -349,11 +372,11 @@ impl App {
                     self.overlay = Overlay::Help;
                 }
             }
-            Overlay::Confirm(modal, index) => match modal.handle_key(key) {
-                ConfirmResult::Yes => self.do_delete(index),
+            Overlay::Confirm(modal, targets) => match modal.handle_key(key) {
+                ConfirmResult::Yes => self.do_delete(targets),
                 ConfirmResult::No => {}
                 ConfirmResult::Pending => {
-                    self.overlay = Overlay::Confirm(modal, index);
+                    self.overlay = Overlay::Confirm(modal, targets);
                 }
             },
             Overlay::Prompt(mut prompt, index) => {
@@ -422,8 +445,10 @@ impl App {
             KeyCode::Char('1') => self.switch_tab(Tab::GitRepos),
             KeyCode::Char('2') => self.switch_tab(Tab::FilesAndFolders),
             KeyCode::Char('3') => self.switch_tab(Tab::Archive),
-            KeyCode::Up => self.move_cursor(-1),
-            KeyCode::Down => self.move_cursor(1),
+            KeyCode::Up => self.on_arrow(key, -1),
+            KeyCode::Down => self.on_arrow(key, 1),
+            KeyCode::Char(' ') => self.toggle_select(),
+            KeyCode::Esc => self.clear_selection(),
             KeyCode::Enter => return self.open_selected(true),
             KeyCode::Char('o') => return self.open_selected(false),
             KeyCode::Char('q') => return Some(RunOutcome::Quit),
@@ -440,12 +465,24 @@ impl App {
             KeyCode::Char('!') => self.open_error_list(),
             KeyCode::Char('r') => self.reload_status(false),
             KeyCode::Char('R') => self.reload_status(true),
-            KeyCode::Char('x') => self.refresh_one(false),
-            KeyCode::Char('X') => self.refresh_one(true),
+            KeyCode::Char('x') => self.refresh_targets(false),
+            KeyCode::Char('X') => self.refresh_targets(true),
             KeyCode::Char('?') => self.overlay = Overlay::Help,
             _ => {}
         }
         None
+    }
+
+    /// Routes an arrow key: `Alt` reorders, `Shift` extends the selection,
+    /// otherwise the cursor moves.
+    fn on_arrow(&mut self, key: KeyEvent, delta: isize) {
+        if key.modifiers.contains(KeyModifiers::ALT) {
+            self.move_entry(delta);
+        } else if key.modifiers.contains(KeyModifiers::SHIFT) {
+            self.extend_selection(delta);
+        } else {
+            self.move_cursor(delta);
+        }
     }
 
     /// Handles a key while the live filter is active.
@@ -468,16 +505,19 @@ impl App {
         None
     }
 
-    /// Switches to `tab`, resetting the cursor.
+    /// Switches to `tab`, resetting the cursor and clearing the selection.
     fn switch_tab(&mut self, tab: Tab) {
         self.tab = tab;
         self.cursor = 0;
+        self.clear_selection();
     }
 
-    /// Moves the cursor cyclically within the current view.
+    /// Moves the cursor cyclically within the current view; a plain move drops
+    /// the range anchor so the next `Shift`-move re-anchors at the cursor.
     fn move_cursor(&mut self, delta: isize) {
         let len = self.ordered_view().len();
         self.cursor = navigation::cycle(self.cursor, len, delta);
+        self.anchor = None;
     }
 
     /// Records the open, writes the handoff path and returns the outcome for
@@ -548,25 +588,33 @@ impl App {
         self.overlay = Overlay::Form(form, Some(index));
     }
 
-    /// Opens the delete confirmation for the selected entry.
+    /// Opens the delete confirmation for the target entries (selection/cursor).
     fn open_delete_confirm(&mut self) {
-        if let Some(index) = self.selected_index() {
-            self.delete_confirm_for(index);
+        let targets = self.targets();
+        if !targets.is_empty() {
+            self.confirm_delete(targets);
         }
     }
 
-    /// Opens the delete confirmation for the entry at `index`.
+    /// Opens the delete confirmation for a single entry at `index`.
     fn delete_confirm_for(&mut self, index: usize) {
-        let name = self
-            .service
-            .get(index)
-            .map_or_else(String::new, Repo::display_name);
+        self.confirm_delete(vec![index]);
+    }
+
+    /// Opens a delete confirmation whose message names the count of `targets`.
+    fn confirm_delete(&mut self, targets: Vec<usize>) {
+        let message = if targets.len() == 1 {
+            let name = self
+                .service
+                .get(targets[0])
+                .map_or_else(String::new, Repo::display_name);
+            format!("Delete \"{name}\" from the list?")
+        } else {
+            format!("Delete {} entries from the list?", targets.len())
+        };
         self.overlay = Overlay::Confirm(
-            ConfirmModal::new(
-                "Delete entry",
-                format!("Delete \"{name}\" from the list?"),
-            ),
-            index,
+            ConfirmModal::new("Delete entries", message),
+            targets,
         );
     }
 
@@ -667,29 +715,53 @@ impl App {
         }
     }
 
-    /// Toggles the favourite flag of the selected entry.
-    fn toggle_fav(&mut self) {
-        if let Some(index) = self.selected_index()
-            && let Err(error) = self.service.toggle_fav(index)
-        {
-            self.set_status(format!("could not toggle favourite: {error}"));
+    /// The entries an action applies to: the multi-selection, or the cursor
+    /// entry when nothing is selected. Sorted ascending.
+    fn targets(&self) -> Vec<usize> {
+        if self.selected.is_empty() {
+            return self.selected_index().into_iter().collect();
         }
+        let mut indices: Vec<usize> = self.selected.iter().copied().collect();
+        indices.sort_unstable();
+        indices
     }
 
-    /// Archives or restores the selected entry and keeps the cursor in range.
-    fn toggle_archive(&mut self) {
-        let Some(index) = self.selected_index() else {
+    /// Toggles the favourite flag of the target entries (all on, else all off).
+    fn toggle_fav(&mut self) {
+        let targets = self.targets();
+        if targets.is_empty() {
             return;
-        };
-        let archived = self.service.get(index).is_some_and(|r| r.archived);
-        if let Err(error) = self.service.set_archived(index, !archived) {
+        }
+        let all_fav = targets
+            .iter()
+            .all(|&i| self.service.get(i).is_some_and(|r| r.fav));
+        if let Err(error) = self.service.set_fav_many(&targets, !all_fav) {
+            self.set_status(format!("could not change favourite: {error}"));
+        }
+        self.clear_selection();
+    }
+
+    /// Archives or restores the target entries (all archived, else all on) and
+    /// keeps the cursor in range.
+    fn toggle_archive(&mut self) {
+        let targets = self.targets();
+        if targets.is_empty() {
+            return;
+        }
+        let all_archived = targets
+            .iter()
+            .all(|&i| self.service.get(i).is_some_and(|r| r.archived));
+        if let Err(error) =
+            self.service.set_archived_many(&targets, !all_archived)
+        {
             self.set_status(format!("could not change archive: {error}"));
         }
+        self.clear_selection();
         let len = self.ordered_view().len();
         self.clamp_cursor(len);
     }
 
-    /// Restarts the background refresh, optionally fetching first.
+    /// Restarts the full background refresh, optionally fetching first.
     fn reload_status(&mut self, fetch: bool) {
         if self.config.example_mode {
             self.set_status("example mode: live status is off");
@@ -703,43 +775,112 @@ impl App {
         self.start_refresh(fetch);
     }
 
-    /// Refreshes only the selected entry in the background, optionally fetching
-    /// first. The global "remote: fetched …" line is left untouched (a single
-    /// fetch is not a full fetch).
-    fn refresh_one(&mut self, fetch: bool) {
+    /// Refreshes the target entries in the background, optionally fetching
+    /// first. The global "remote: fetched …" line is left untouched.
+    fn refresh_targets(&mut self, fetch: bool) {
         if self.config.example_mode {
             self.set_status("example mode: live status is off");
             return;
         }
-        let Some(index) = self.selected_index() else {
+        let targets = self.targets();
+        let paths: Vec<PathBuf> = targets
+            .iter()
+            .filter_map(|&i| self.service.get(i).map(|r| r.path.clone()))
+            .collect();
+        if paths.is_empty() {
             return;
+        }
+        let message = if targets.len() == 1 {
+            let name = self
+                .service
+                .get(targets[0])
+                .map_or_else(String::new, Repo::display_name);
+            format!("refreshing {name}…")
+        } else {
+            format!("refreshing {} entries…", targets.len())
         };
-        let Some(repo) = self.service.get(index) else {
-            return;
-        };
-        let path = repo.path.clone();
-        let name = repo.display_name();
-        self.refreshing = std::iter::once(path.clone()).collect();
-        self.refresh_started = Instant::now();
-        self.loading = None; // no full-width bar for a single entry
-        self.refresh_fetched = false;
-        self.set_status(format!("refreshing {name}…"));
-        self.status_rx = Some(spawn_refresh(
-            Arc::clone(&self.git_client),
-            vec![path],
-            fetch,
-        ));
+        self.set_status(message);
+        self.refresh_paths(paths, fetch, false);
+        self.clear_selection();
     }
 
-    /// Deletes the entry at `index` after confirmation.
-    fn do_delete(&mut self, index: usize) {
-        match self.service.delete(index) {
+    /// Toggles the selection of the cursor entry and re-anchors the range.
+    fn toggle_select(&mut self) {
+        if let Some(index) = self.selected_index() {
+            if !self.selected.remove(&index) {
+                self.selected.insert(index);
+            }
+            self.anchor = Some(self.cursor);
+        }
+    }
+
+    /// Clears the multi-selection.
+    fn clear_selection(&mut self) {
+        self.selected.clear();
+        self.anchor = None;
+    }
+
+    /// Extends the range selection by moving the cursor (clamped, not cyclic)
+    /// and selecting every row between the anchor and the cursor.
+    fn extend_selection(&mut self, delta: isize) {
+        let view = self.ordered_view();
+        if view.is_empty() {
+            return;
+        }
+        let anchor = *self.anchor.get_or_insert(self.cursor);
+        let last = view.len() - 1;
+        let new =
+            (self.cursor as isize + delta).clamp(0, last as isize) as usize;
+        self.cursor = new;
+        let (lo, hi) = (anchor.min(new).min(last), anchor.max(new).min(last));
+        self.selected = view[lo..=hi].iter().copied().collect();
+    }
+
+    /// Moves the cursor entry within the custom order (only in custom sort).
+    fn move_entry(&mut self, delta: isize) {
+        if self.sort != SortMode::Custom {
+            self.set_status("switch to custom sort (s) to reorder");
+            return;
+        }
+        let view = self.ordered_view();
+        if view.is_empty() {
+            return;
+        }
+        let cur = self.cursor.min(view.len() - 1);
+        let neighbor = cur as isize + delta;
+        if neighbor < 0 || neighbor as usize >= view.len() {
+            return;
+        }
+        let (a, b) = (view[cur], view[neighbor as usize]);
+        let repos = self.service.repos();
+        // Stay within the favourites / non-favourites group (favs keep on top).
+        if repos[a].fav != repos[b].fav {
+            return;
+        }
+        let moved = repos[a].path.clone();
+        if self.service.swap_entries(a, b).is_ok()
+            && let Some(pos) = self
+                .ordered_view()
+                .iter()
+                .position(|&i| self.service.repos()[i].path == moved)
+        {
+            self.cursor = pos;
+        }
+    }
+
+    /// Deletes the confirmed target entries.
+    fn do_delete(&mut self, targets: Vec<usize>) {
+        match self.service.delete_many(&targets) {
             Ok(()) => {
+                self.clear_selection();
                 let len = self.ordered_view().len();
                 self.clamp_cursor(len);
-                self.set_status(
-                    "deleted entry (u-less; edit config to restore)",
-                );
+                let count = targets.len();
+                self.set_status(if count == 1 {
+                    "deleted entry".to_string()
+                } else {
+                    format!("deleted {count} entries")
+                });
             }
             Err(error) => self.set_status(format!("delete failed: {error}")),
         }
@@ -994,12 +1135,16 @@ impl App {
         // Rows still in flight show an animated spinner in the status column.
         let spinner =
             self.spinner_frame().map(|glyph| (&self.refreshing, glyph));
+        // Which visible rows are part of the multi-selection.
+        let selected: Vec<bool> =
+            view.iter().map(|i| self.selected.contains(i)).collect();
         let table_view = table::TableView {
             tab: self.tab,
             config: &self.config,
             icons: &self.icons,
             example_mode: self.config.example_mode,
             spinner,
+            selected: &selected,
         };
         table::render_table(frame, area, &visible, cursor, &table_view);
     }
@@ -1059,25 +1204,35 @@ fn empty_hint(tab: Tab) -> &'static str {
     }
 }
 
-/// The footer key hints for `tab`.
-fn hints(_tab: Tab) -> Vec<(&'static str, &'static str)> {
-    vec![
+/// The footer key hints for `tab` (only the keys relevant to that tab).
+fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
+    let mut hints: Vec<(&str, &str)> = vec![
         ("Enter", "open"),
         ("o", "cd"),
+        ("Space", "select"),
         ("f", "filter"),
         ("s", "sort"),
         ("a", "add"),
         ("e", "edit"),
         ("d", "del"),
         ("z", "fav"),
-        ("A", "archive"),
-        ("S", "slug"),
-        ("y", "copy path"),
-        ("p", "fix path"),
-        ("!", "errors"),
-        ("?", "help"),
-        ("q", "quit"),
-    ]
+    ];
+    // Archive tab restores; the others archive.
+    hints.push(match tab {
+        Tab::Archive => ("A", "restore"),
+        _ => ("A", "archive"),
+    });
+    hints.push(("S", "slug"));
+    hints.push(("y", "copy path"));
+    hints.push(("p", "fix path"));
+    // Git status refresh only makes sense where entries are git repositories.
+    if tab == Tab::GitRepos {
+        hints.push(("x/r", "refresh"));
+    }
+    hints.push(("!", "errors"));
+    hints.push(("?", "help"));
+    hints.push(("q", "quit"));
+    hints
 }
 
 /// A single dim hint line pointing at the help overlay.

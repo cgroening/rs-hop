@@ -13,6 +13,8 @@ pub enum SortMode {
     LastUsed,
     /// Case-insensitive by display name only.
     Name,
+    /// Manual order (the stored `[[repos]]` order), favourites still on top.
+    Custom,
 }
 
 impl SortMode {
@@ -21,7 +23,8 @@ impl SortMode {
         match self {
             SortMode::FavThenName => SortMode::LastUsed,
             SortMode::LastUsed => SortMode::Name,
-            SortMode::Name => SortMode::FavThenName,
+            SortMode::Name => SortMode::Custom,
+            SortMode::Custom => SortMode::FavThenName,
         }
     }
 
@@ -31,6 +34,7 @@ impl SortMode {
             SortMode::FavThenName => "favourites",
             SortMode::LastUsed => "recent",
             SortMode::Name => "name",
+            SortMode::Custom => "custom",
         }
     }
 }
@@ -50,6 +54,8 @@ pub fn sort_repos(repos: &mut [Repo], mode: SortMode) {
                 .cmp(&recency_key(a))
                 .then_with(|| name_cmp(a, b))
         }),
+        // Keep the given order, only floating favourites to the top (stable).
+        SortMode::Custom => repos.sort_by(|a, b| b.fav.cmp(&a.fav)),
     }
 }
 
@@ -66,6 +72,8 @@ pub fn sort_indices(repos: &[Repo], indices: &mut [usize], mode: SortMode) {
             SortMode::LastUsed => recency_key(rb)
                 .cmp(&recency_key(ra))
                 .then_with(|| name_cmp(ra, rb)),
+            // Stable on the index order, only favourites floated to the top.
+            SortMode::Custom => rb.fav.cmp(&ra.fav),
         }
     };
     indices.sort_by(compare);
@@ -132,11 +140,32 @@ mod tests {
     }
 
     #[test]
-    fn mode_cycles_through_all_three() {
+    fn mode_cycles_through_all_modes() {
         let mode = SortMode::default();
         assert_eq!(mode, SortMode::FavThenName);
         assert_eq!(mode.next(), SortMode::LastUsed);
         assert_eq!(mode.next().next(), SortMode::Name);
-        assert_eq!(mode.next().next().next(), SortMode::FavThenName);
+        assert_eq!(mode.next().next().next(), SortMode::Custom);
+        assert_eq!(mode.next().next().next().next(), SortMode::FavThenName);
+    }
+
+    #[test]
+    fn custom_keeps_input_order_with_favourites_on_top() {
+        let mut repos = vec![
+            repo("zebra", false, None),
+            repo("alpha", true, None),
+            repo("mid", false, None),
+            repo("beta", true, None),
+        ];
+        let mut indices: Vec<usize> = (0..repos.len()).collect();
+        sort_indices(&repos, &mut indices, SortMode::Custom);
+        let names: Vec<_> =
+            indices.iter().map(|&i| repos[i].display_name()).collect();
+        // Favourites first in their input order, then the rest in input order.
+        assert_eq!(names, vec!["alpha", "beta", "zebra", "mid"]);
+        // Same via the in-place variant.
+        sort_repos(&mut repos, SortMode::Custom);
+        let names: Vec<_> = repos.iter().map(Repo::display_name).collect();
+        assert_eq!(names, vec!["alpha", "beta", "zebra", "mid"]);
     }
 }

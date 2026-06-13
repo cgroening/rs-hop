@@ -160,6 +160,82 @@ impl RepoService {
         })
     }
 
+    /// Deletes every entry in `indices` as one undo-able action.
+    ///
+    /// # Errors
+    /// Returns [`Error::NotFound`] for a bad index, or a write error.
+    pub fn delete_many(&mut self, indices: &[usize]) -> Result<()> {
+        for &index in indices {
+            self.ensure_index(index)?;
+        }
+        let mut sorted = indices.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        self.mutate("delete entries", |repos| {
+            // Remove from the back so earlier indices stay valid.
+            for &index in sorted.iter().rev() {
+                repos.remove(index);
+            }
+            Ok(())
+        })
+    }
+
+    /// Sets the archived flag for every entry in `indices` as one action.
+    ///
+    /// # Errors
+    /// Returns [`Error::NotFound`] for a bad index, or a write error.
+    pub fn set_archived_many(
+        &mut self,
+        indices: &[usize],
+        archived: bool,
+    ) -> Result<()> {
+        for &index in indices {
+            self.ensure_index(index)?;
+        }
+        let label = if archived {
+            "archive entries"
+        } else {
+            "restore entries"
+        };
+        let indices = indices.to_vec();
+        self.mutate(label, |repos| {
+            for &index in &indices {
+                repos[index].archived = archived;
+            }
+            Ok(())
+        })
+    }
+
+    /// Sets the favourite flag for every entry in `indices` as one action.
+    ///
+    /// # Errors
+    /// Returns [`Error::NotFound`] for a bad index, or a write error.
+    pub fn set_fav_many(&mut self, indices: &[usize], fav: bool) -> Result<()> {
+        for &index in indices {
+            self.ensure_index(index)?;
+        }
+        let indices = indices.to_vec();
+        self.mutate("set favourite", |repos| {
+            for &index in &indices {
+                repos[index].fav = fav;
+            }
+            Ok(())
+        })
+    }
+
+    /// Swaps two entries' positions (the stored custom order), as one action.
+    ///
+    /// # Errors
+    /// Returns [`Error::NotFound`] for a bad index, or a write error.
+    pub fn swap_entries(&mut self, a: usize, b: usize) -> Result<()> {
+        self.ensure_index(a)?;
+        self.ensure_index(b)?;
+        self.mutate("reorder entry", |repos| {
+            repos.swap(a, b);
+            Ok(())
+        })
+    }
+
     /// Repoints the entry at `index` to `path` (used by the path-repair picker).
     ///
     /// # Errors
@@ -324,6 +400,38 @@ mod tests {
         b.slug = Some("x".to_string());
         assert!(matches!(svc.add(b), Err(Error::Slug(_))));
         assert_eq!(svc.repos().len(), 1);
+    }
+
+    #[test]
+    fn delete_many_removes_all_and_undoes_as_one() {
+        let mut svc = service(vec![repo("a"), repo("b"), repo("c")]);
+        svc.delete_many(&[0, 2]).unwrap();
+        let names: Vec<_> =
+            svc.repos().iter().map(Repo::display_name).collect();
+        assert_eq!(names, vec!["b"]);
+        svc.undo().unwrap();
+        assert_eq!(svc.repos().len(), 3);
+    }
+
+    #[test]
+    fn set_archived_and_fav_many() {
+        let mut svc = service(vec![repo("a"), repo("b"), repo("c")]);
+        svc.set_archived_many(&[0, 1], true).unwrap();
+        assert!(svc.get(0).unwrap().archived);
+        assert!(svc.get(1).unwrap().archived);
+        assert!(!svc.get(2).unwrap().archived);
+        svc.set_fav_many(&[1, 2], true).unwrap();
+        assert!(svc.get(1).unwrap().fav);
+        assert!(svc.get(2).unwrap().fav);
+    }
+
+    #[test]
+    fn swap_entries_reorders() {
+        let mut svc = service(vec![repo("a"), repo("b"), repo("c")]);
+        svc.swap_entries(0, 2).unwrap();
+        let names: Vec<_> =
+            svc.repos().iter().map(Repo::display_name).collect();
+        assert_eq!(names, vec!["c", "b", "a"]);
     }
 
     #[test]

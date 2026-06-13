@@ -17,8 +17,8 @@ use crate::config::{ColumnWidth, Config};
 use crate::domain::filter::Tab;
 use crate::domain::repo::{GitInfo, Repo, RepoKind};
 use crate::tui::colors::{
-    ACCENT, CHANGES, DANGER, DIM, FAVOURITE, POSITIVE, header_style,
-    selection_style,
+    ACCENT, CHANGES, DANGER, DIM, FAVOURITE, MULTI_SELECT_BG, POSITIVE,
+    header_style, selection_style,
 };
 use crate::tui::presentation::{
     IconSet, render_scrollbar, status_text, truncate,
@@ -39,6 +39,8 @@ pub struct TableView<'a> {
     /// frame glyph. Rows whose path is in the set show the spinner. `None` when
     /// no refresh is running.
     pub spinner: Option<(&'a HashSet<PathBuf>, &'a str)>,
+    /// Per visible row: whether it is part of the multi-selection.
+    pub selected: &'a [bool],
 }
 
 /// The git info to display for `repo`: example info in example mode, otherwise
@@ -72,7 +74,18 @@ pub fn render_table(
         area
     };
 
-    let rows: Vec<Row> = repos.iter().map(|repo| row_for(repo, view)).collect();
+    let rows: Vec<Row> = repos
+        .iter()
+        .enumerate()
+        .map(|(row, repo)| {
+            let built = row_for(repo, view);
+            if view.selected.get(row).copied().unwrap_or(false) {
+                built.style(Style::default().bg(MULTI_SELECT_BG))
+            } else {
+                built
+            }
+        })
+        .collect();
     let table = Table::new(rows, widths(view.tab, view.config))
         .header(header_row(view.tab))
         .column_spacing(1)
