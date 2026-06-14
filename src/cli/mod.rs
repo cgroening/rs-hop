@@ -6,6 +6,7 @@
 //! TOML repository into the [`RepoService`] and the subprocess git client, then
 //! dispatches.
 
+mod demo;
 mod output;
 
 use std::collections::HashSet;
@@ -21,6 +22,8 @@ use crate::domain::doctor;
 use crate::domain::repo::{self, PathClass, Repo, RepoKind, is_dir_target};
 use crate::service::repo_service::RepoService;
 use crate::storage::git_client::GitClient;
+use crate::storage::in_memory_repository::InMemoryRepoRepository;
+use crate::storage::repository::RepoRepository;
 use crate::storage::subprocess_git_client::SubprocessGitClient;
 use crate::storage::toml_repo_repository::TomlRepoRepository;
 use crate::tui::{self, App, RunOutcome, StartupStatus, Tui};
@@ -50,6 +53,9 @@ pub struct Cli {
     /// Use cached status only; do not run git.
     #[arg(long, global = true)]
     cached: bool,
+    /// Launch with built-in demo data for screenshots (no real git/config).
+    #[arg(long, global = true)]
+    demo: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -129,6 +135,9 @@ fn run_with_service(cli: Cli, config_path: PathBuf) -> ExitCode {
         Ok(config) => config,
         Err(error) => return output::report_error(&error),
     };
+    if cli.command.is_none() && cli.demo {
+        return run_demo(config);
+    }
     let service = match build_service(&config_path) {
         Ok(service) => service,
         Err(error) => return output::report_error(&error),
@@ -232,6 +241,40 @@ fn run_tui(
         paths::ui_state_file(),
         startup,
     );
+    run_app(&config, app)
+}
+
+/// Launches the TUI from the built-in demo dataset for screenshots: example
+/// mode is forced on (no git, no refresh) and all persisted state is routed to
+/// a throwaway temp directory, so a demo run never reads or writes real files.
+fn run_demo(mut config: Config) -> ExitCode {
+    config.example_mode = true;
+    let dir = std::env::temp_dir().join("hop-demo");
+    let repository = InMemoryRepoRepository::new(demo::repos());
+    let _ = repository.save_sections(&demo::sections());
+    let service = match RepoService::new(
+        Box::new(repository),
+        dir.join("usage.toml"),
+        dir.join("selected-repo.txt"),
+    ) {
+        Ok(service) => service,
+        Err(error) => return output::report_error(&error),
+    };
+    let git_client =
+        Arc::new(SubprocessGitClient::new(config.github_username.clone()));
+    let app = App::new(
+        config.clone(),
+        service,
+        git_client,
+        dir.join("git-info-cache.toml"),
+        dir.join("ui-state.toml"),
+        StartupStatus::Cached,
+    );
+    run_app(&config, app)
+}
+
+/// Runs the prepared app in a terminal and performs the post-exit action.
+fn run_app(config: &Config, app: App) -> ExitCode {
     let mut tui = match Tui::new() {
         Ok(tui) => tui,
         Err(error) => return output::fail(&format!("terminal: {error}")),
@@ -239,7 +282,7 @@ fn run_tui(
     let outcome = tui::run(app, &mut tui);
     drop(tui);
     match outcome {
-        Ok(outcome) => perform_outcome(&config, outcome),
+        Ok(outcome) => perform_outcome(config, outcome),
         Err(error) => output::fail(&format!("terminal: {error}")),
     }
 }

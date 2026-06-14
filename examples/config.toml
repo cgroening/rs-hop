@@ -2,6 +2,9 @@
 #
 #   HOP_CONFIG=examples/config.toml cargo run
 #
+# For a zero-setup demo with built-in screenshot data (no real git or config),
+# run `hop --demo` instead.
+#
 # It mixes a favourite, an archived entry, a deliberately broken path (shown
 # with a red "!" - press p to repair it), file/folder entries and a slug.
 # A "path" entry auto-detects folder vs file on open: a folder cds, a text

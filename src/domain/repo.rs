@@ -206,6 +206,22 @@ impl Repo {
         }
         None
     }
+
+    /// The error to display in example mode, derived from `example_git_info`
+    /// only: a `None` info or a valid one means no error, an invalid one yields
+    /// its message. The real path and live git info are ignored, since example
+    /// mode shows curated demo data rather than the filesystem.
+    pub fn example_error(&self) -> Option<String> {
+        let info = self.example_git_info.as_ref()?;
+        if info.valid {
+            return None;
+        }
+        Some(
+            info.error
+                .clone()
+                .unwrap_or_else(|| "not a git repository".to_string()),
+        )
+    }
 }
 
 /// The final path component as a string, or the whole path when it has none

@@ -302,6 +302,7 @@ fn selection_cell<'a>(selected: bool) -> Cell<'a> {
 /// file/folder entry only once the on-demand existence check flagged its path.
 fn marker_cell<'a>(repo: &Repo, view: &TableView) -> Cell<'a> {
     let errored = match repo.kind {
+        RepoKind::Git if view.example_mode => repo.example_error().is_some(),
         RepoKind::Git => repo.entry_error().is_some(),
         RepoKind::Path => view.missing.contains(&repo.path),
     };

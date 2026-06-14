@@ -1817,6 +1817,14 @@ impl App {
     /// invalid repository live; a file/folder entry only reports a missing path
     /// once the on-demand existence check (`r` on the Files tab) has flagged it.
     fn path_error(&self, repo: &Repo) -> Option<String> {
+        if self.config.example_mode {
+            // Example mode shows curated demo data, so a git entry's error comes
+            // from its example info; path entries are never checked on disk.
+            return match repo.kind {
+                RepoKind::Git => repo.example_error(),
+                RepoKind::Path => None,
+            };
+        }
         match repo.kind {
             RepoKind::Git => repo.entry_error(),
             RepoKind::Path => self

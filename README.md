@@ -170,6 +170,7 @@ hop config-path     print the resolved config file path
 -C / --config PATH  use a specific config file (also via HOP_CONFIG)
 --fetch             git fetch first (TUI: on start; hop <slug>: before launching)
 --cached            TUI: show only cached status, run no git
+--demo              open the TUI with built-in demo data (for screenshots; no real git/config)
 ```
 
 ## Keyboard shortcuts
