@@ -8,6 +8,12 @@ Pick an entry and hop writes its path to a handoff file your shell reads to
 default). On top of the original it adds in-app management, three tabs, slugs
 for a one-word jump, sort modes and repair for paths that have moved.
 
+## Screenshots
+
+![hop git repos tab](https://raw.githubusercontent.com/cgroening/rs-hop/main/images/screenshot-1.png)
+
+![hop files and folders tab](https://raw.githubusercontent.com/cgroening/rs-hop/main/images/screenshot-2.png)
+
 ## Features
 
 - **Fuzzy finder** over all visible columns (name, branch, status, GitHub
