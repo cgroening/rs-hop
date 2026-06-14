@@ -49,14 +49,20 @@ for a one-word jump, sort modes and repair for paths that have moved.
 
 ## Install
 
-Install the binary globally from the project directory (puts `hop` in
-`~/.cargo/bin`, which is on your `PATH`):
+From crates.io (the crate is `rs-hop`; the installed binary is `hop`):
+
+```
+cargo install rs-hop
+```
+
+Or from the project directory (puts `hop` in `~/.cargo/bin`, which is on your
+`PATH`):
 
 ```
 cargo install --path .
 ```
 
-Re-run the same command to update after code changes; `cargo uninstall hop`
+Re-run the install command to update after code changes; `cargo uninstall rs-hop`
 removes it. (For a local build without installing, use `cargo build --release`;
 the binary is then at `target.nosync/release/hop`.)
 
@@ -120,10 +126,8 @@ Set-Alias hp hop
 ## Configuration
 
 hop reads `$XDG_CONFIG_HOME/hop/config.toml` (default
-`~/.config/hop/config.toml`). On first start, if no config exists but a
-git-repo-jumper `~/.config/hop/config.yaml` does, it is imported automatically;
-you can also run `hop import --from <path>` to convert any git-repo-jumper
-`config.yaml`. A hidden `show: false` entry becomes `archived = true`.
+`~/.config/hop/config.toml`). It is created on first use; add entries from the
+TUI (`n`) or with `hop add <path>`.
 
 ```toml
 git_program = "lazygit"        # tool launched for git repos; omit to disable
@@ -171,7 +175,6 @@ hop add [PATH]      add an entry (default: the current dir; --slug/--section/--n
 hop scan [DIR]      find git repos under DIR and import the chosen ones (--depth N / --nested / --dry-run)
 hop doctor          report problems (missing paths, bad/duplicate slugs); non-zero exit on issues
 hop list            list entries as plain text
-hop import [--from PATH]  import a git-repo-jumper config.yaml
 hop config-path     print the resolved config file path
 -C / --config PATH  use a specific config file (also via HOP_CONFIG)
 --fetch             git fetch first (TUI: on start; hop <slug>: before launching)

@@ -1,12 +1,10 @@
 //! Integration tests driving the public API: the TOML entry backend round
-//! trips on disk, the service persists through it, and the YAML import produces
-//! a config the backend can read.
+//! trips on disk and the service persists through it.
 
 use std::fs;
 use std::path::PathBuf;
 
 use hop::config::loader::load_config;
-use hop::config::migrate::yaml_to_toml;
 use hop::domain::repo::RepoKind;
 use hop::service::repo_service::RepoService;
 use hop::storage::repository::RepoRepository;
@@ -98,33 +96,6 @@ fn service_persists_changes_to_disk() {
     .unwrap();
     assert_eq!(service.index_by_slug("notes"), Some(1));
     assert!(!service.get(1).unwrap().archived);
-
-    fs::remove_dir_all(&dir).ok();
-}
-
-#[test]
-fn migrated_yaml_is_readable_by_the_backend() {
-    let dir = temp_dir("migrate");
-    let config_path = dir.join("config.toml");
-    let yaml = r#"
-git-program: lazygit
-repos:
-  - name: Visible
-    path: /code/a
-    fav: true
-  - name: Hidden
-    path: /code/b
-    show: false
-"#;
-    fs::write(&config_path, yaml_to_toml(yaml).unwrap()).unwrap();
-
-    let repos = TomlRepoRepository::new(config_path.clone())
-        .find_all()
-        .unwrap();
-    assert_eq!(repos.len(), 2);
-    assert!(repos[0].fav);
-    // `show: false` became archived.
-    assert!(repos[1].archived);
 
     fs::remove_dir_all(&dir).ok();
 }

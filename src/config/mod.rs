@@ -7,7 +7,6 @@
 //! different layers ([`loader`] here, the repository in `storage`).
 
 pub mod loader;
-pub mod migrate;
 pub mod writer;
 
 /// File extensions opened in the editor (everything else uses the default app).

@@ -87,11 +87,6 @@ pub fn config_file() -> PathBuf {
     config_dir().join("config.toml")
 }
 
-/// Legacy git-repo-jumper YAML config, imported once on first start.
-pub fn legacy_config_file() -> PathBuf {
-    config_dir().join("config.yaml")
-}
-
 /// Git-status cache file (`<state_dir>/git-info-cache.toml`).
 pub fn cache_file() -> PathBuf {
     state_dir().join("git-info-cache.toml")

@@ -1,9 +1,20 @@
 [package]
-name = "hop"
-version = "0.1.0"
+name = "rs-hop"
+version = "0.0.1"
 edition = "2024"
 description = "Fuzzy-finder TUI to jump between git repositories and folders"
 license = "MIT"
+authors = ["Corvin Gröning"]
+repository = "https://github.com/cgroening/rs-hop"
+homepage = "https://github.com/cgroening/rs-hop"
+readme = "README.md"
+keywords = ["tui", "git", "fuzzy-finder", "cli", "navigation"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = ["images/", "CLAUDE.md", "TODO.md"]
+
+[lib]
+name = "hop"
+path = "src/lib.rs"
 
 [[bin]]
 name = "hop"
@@ -23,9 +34,6 @@ toml = "0.8"
 # Comment-preserving rewrites of the user's config.toml.
 # https://crates.io/crates/toml_edit
 toml_edit = "0.22"
-# Only used to import a legacy git-repo-jumper config.yaml into TOML.
-# https://crates.io/crates/serde_yaml
-serde_yaml = "0.9"
 chrono = { version = "0.4", default-features = false, features = [
     "clock",
     "std",

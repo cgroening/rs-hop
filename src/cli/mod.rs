@@ -16,8 +16,8 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 
+use crate::config::Config;
 use crate::config::loader::load_config;
-use crate::config::{Config, migrate};
 use crate::domain::doctor;
 use crate::domain::repo::{self, PathClass, Repo, RepoKind, is_dir_target};
 use crate::service::repo_service::RepoService;
@@ -65,12 +65,6 @@ pub struct Cli {
 enum Command {
     /// List entries as plain text (for scripting).
     List,
-    /// Import a git-repo-jumper config.yaml into hop's config.toml.
-    Import {
-        /// Source YAML (default: $XDG_CONFIG_HOME/hop/config.yaml).
-        #[arg(long, value_name = "PATH")]
-        from: Option<PathBuf>,
-    },
     /// Print the resolved config file path.
     #[command(name = "config-path")]
     ConfigPath,
@@ -121,16 +115,12 @@ pub fn run(cli: Cli) -> ExitCode {
             println!("{}", config_path.display());
             ExitCode::SUCCESS
         }
-        Some(Command::Import { from }) => {
-            cmd_import(from.clone(), &config_path)
-        }
         _ => run_with_service(cli, config_path),
     }
 }
 
 /// Builds the service and dispatches the commands that need it.
 fn run_with_service(cli: Cli, config_path: PathBuf) -> ExitCode {
-    auto_migrate_if_needed(&cli, &config_path);
     let config = match load_config(&config_path) {
         Ok(config) => config,
         Err(error) => return output::report_error(&error),
@@ -163,8 +153,8 @@ fn run_with_service(cli: Cli, config_path: PathBuf) -> ExitCode {
             dry_run,
         }) => cmd_scan(service, dir.clone(), *depth, *nested, *dry_run),
         Some(Command::Doctor) => cmd_doctor(&service),
-        // ConfigPath and Import are handled before the service is built.
-        Some(Command::ConfigPath | Command::Import { .. }) => ExitCode::SUCCESS,
+        // ConfigPath is handled before the service is built.
+        Some(Command::ConfigPath) => ExitCode::SUCCESS,
     }
 }
 
@@ -203,26 +193,6 @@ fn build_service(
         paths::usage_file(),
         paths::selected_repo_file(),
     )
-}
-
-/// Imports the default legacy YAML into the default config on first start.
-fn auto_migrate_if_needed(cli: &Cli, config_path: &Path) {
-    // Only for the default path, never a `--config` override.
-    if cli.config.is_some() || config_path.exists() {
-        return;
-    }
-    let legacy = paths::legacy_config_file();
-    if !legacy.exists() {
-        return;
-    }
-    match migrate::migrate_file(&legacy, config_path) {
-        Ok(()) => eprintln!(
-            "{APP_NAME}: imported {} into {}",
-            legacy.display(),
-            config_path.display()
-        ),
-        Err(error) => eprintln!("{APP_NAME}: import skipped: {error}"),
-    }
 }
 
 /// Opens the interactive TUI and performs the chosen post-exit action.
@@ -321,7 +291,7 @@ fn launch_tool(config: &Config, dir: &Path) {
 fn cmd_list(_config: &Config, service: &RepoService, cli: &Cli) -> ExitCode {
     let repos = service.repos();
     if repos.is_empty() {
-        println!("No entries yet. Run hop to add some, or hop import.");
+        println!("No entries yet. Run hop to add some, or hop add <path>.");
         return ExitCode::SUCCESS;
     }
     for repo in repos {
@@ -607,25 +577,6 @@ fn parse_jump_args(
         }
     }
     (slug, save_only)
-}
-
-/// Handles `hop import`, converting a git-repo-jumper YAML to hop's TOML.
-fn cmd_import(from: Option<PathBuf>, config_path: &Path) -> ExitCode {
-    let from = from.unwrap_or_else(paths::legacy_config_file);
-    if !from.exists() {
-        return output::fail(&format!("no file at {}", from.display()));
-    }
-    match migrate::migrate_file(&from, config_path) {
-        Ok(()) => {
-            println!(
-                "Imported {} into {}",
-                from.display(),
-                config_path.display()
-            );
-            ExitCode::SUCCESS
-        }
-        Err(error) => output::report_error(&error),
-    }
 }
 
 #[cfg(test)]
