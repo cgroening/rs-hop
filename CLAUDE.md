@@ -158,3 +158,4 @@ These reproduce the project style guide (general + Rust). On conflict the more s
 ## Git
 
 - **Do not create commits yourself.** At the end of a change, propose a commit-message **title only**, in English imperative, Conventional-Commits style.
+- **Maintain `CHANGELOG.md`** (Keep a Changelog format, SemVer). For any user-facing change, add a bullet under the `## [Unreleased]` section in the right group (Added / Changed / Deprecated / Removed / Fixed / Security). On a release, rename `Unreleased` to the new version with the date and update the compare links. Purely internal changes (tests, refactors, docs) need no entry.
