@@ -115,7 +115,7 @@ fn render(
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             format!(
-                " Scan: {} new git repo(s) — {count} selected",
+                " Scan: {} new git repo(s) - {count} selected",
                 found.len()
             ),
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),

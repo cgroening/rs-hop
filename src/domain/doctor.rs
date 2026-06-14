@@ -14,17 +14,35 @@ use crate::domain::slug;
 #[derive(Debug, PartialEq, Eq)]
 pub enum Issue {
     /// The entry's path no longer exists.
-    MissingPath { name: String, path: String },
+    MissingPath {
+        /// Display name of the affected entry.
+        name: String,
+        /// The path that no longer exists.
+        path: String,
+    },
     /// A git entry whose path is not a git repository.
-    NotGitRepo { name: String, path: String },
+    NotGitRepo {
+        /// Display name of the affected entry.
+        name: String,
+        /// The path that is not a git repository.
+        path: String,
+    },
     /// A slug that breaks the format/reserved rules.
     InvalidSlug {
+        /// Display name of the affected entry.
         name: String,
+        /// The offending slug.
         slug: String,
+        /// Why the slug is invalid.
         reason: String,
     },
     /// A slug used by more than one entry.
-    DuplicateSlug { slug: String, names: Vec<String> },
+    DuplicateSlug {
+        /// The slug shared by several entries.
+        slug: String,
+        /// Display names of the entries sharing the slug.
+        names: Vec<String>,
+    },
 }
 
 impl fmt::Display for Issue {

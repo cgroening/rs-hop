@@ -1159,7 +1159,7 @@ impl App {
         let mut labels = Vec::new();
         for (index, repo) in repos.iter().enumerate() {
             if let Some(error) = self.path_error(repo) {
-                labels.push(format!("{} — {error}", repo.display_name()));
+                labels.push(format!("{} - {error}", repo.display_name()));
                 indices.push(index);
             }
         }
@@ -1495,7 +1495,7 @@ impl App {
         self.report(result, ok_message);
         if saved && assumed_file {
             self.set_status(
-                "no trailing / — treated as a file (end with / for a folder)",
+                "no trailing / - treated as a file (end with / for a folder)",
             );
         }
         if saved

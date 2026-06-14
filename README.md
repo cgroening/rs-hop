@@ -25,7 +25,7 @@ for a one-word jump, sort modes and repair for paths that have moved.
   reorderable section headers; `s` jumps to a section and `M` manages them.
 - **In-app management**: add, edit, delete, favourite, archive/restore, set a
   slug - the config is written back preserving its comments.
-- **Content-aware open**: a file/folder entry auto-detects its target — a
+- **Content-aware open**: a file/folder entry auto-detects its target – a
   folder `cd`s, a text file (by extension; configurable via `editor_extensions`)
   opens in the editor, and any other file (image, PDF, …) opens with the
   system's default app.
