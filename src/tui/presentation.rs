@@ -246,9 +246,6 @@ pub fn github_url(name: &str, username: Option<&str>) -> Option<String> {
     Some(format!("https://github.com/{owner}/{name}"))
 }
 
-/// Maximum footer rows, so a long hint never crowds out the list.
-pub const FOOTER_MAX_ROWS: usize = 3;
-
 /// The separator placed between footer tokens (never at a line end).
 const FOOTER_SEPARATOR: &str = " · ";
 
@@ -288,7 +285,6 @@ pub fn footer_lines(items: &[(&str, &str)], width: u16) -> Vec<Line<'static>> {
     if !current.is_empty() {
         lines.push(finish_footer_line(current));
     }
-    lines.truncate(FOOTER_MAX_ROWS);
     lines
 }
 

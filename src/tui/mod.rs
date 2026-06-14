@@ -1568,7 +1568,7 @@ impl App {
             .constraints([
                 Constraint::Length(4), // header box: 2 lines + rounded border
                 Constraint::Min(1),
-                Constraint::Length(2),
+                Constraint::Length(self.footer_height(area.width)),
             ])
             .split(area);
         self.render_header(frame, rows[0]);
@@ -1911,6 +1911,16 @@ impl App {
         sections_view::render(frame, area, cursor, &view);
     }
 
+    /// The footer height in rows: the filter and status states stay at two
+    /// lines, the key hints take however many rows they wrap into at `width`.
+    fn footer_height(&self, width: u16) -> u16 {
+        if self.filtering || self.status_msg.is_some() {
+            return 2;
+        }
+        let rows = footer_lines(&hints(self.tab), width).len();
+        rows.max(1) as u16
+    }
+
     /// Renders the footer: the filter line, a status message, or key hints.
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
         if self.filtering {
@@ -2169,6 +2179,28 @@ mod tests {
             press(&mut app, KeyCode::Char(tab));
             terminal.draw(|frame| app.render(frame)).unwrap();
         }
+    }
+
+    #[test]
+    fn footer_grows_to_fit_all_hints() {
+        // At a narrow width the hints wrap past two rows; the footer area must
+        // size to hold them all rather than clipping at a fixed height.
+        let app = sample_app();
+        let width = 60;
+        let expected = footer_lines(&hints(app.tab), width).len() as u16;
+        assert!(expected > 2, "test width should force wrapping");
+        assert_eq!(app.footer_height(width), expected);
+
+        let mut terminal = Terminal::new(TestBackend::new(width, 40)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let rendered = terminal.backend().buffer().clone();
+        let text: String = rendered
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
+        // The last hint must be present, i.e. nothing was clipped away.
+        assert!(text.contains("quit"), "last footer hint was clipped");
     }
 
     #[test]
