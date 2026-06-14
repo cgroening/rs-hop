@@ -15,6 +15,7 @@ use ratatui::widgets::{
 
 use crate::tui::colors::{ACCENT, DANGER, DIM, selection_style};
 use crate::tui::navigation::cycle;
+use crate::tui::presentation::render_scrollbar;
 use crate::tui::text_input::TextInput;
 
 /// Outcome of feeding a key to a confirm dialog.
@@ -203,6 +204,21 @@ impl SelectModal {
         let mut state = ListState::default();
         state.select(Some(self.cursor));
         frame.render_stateful_widget(list, rect, &mut state);
+        // The area inside the border, where the rows are drawn.
+        let inner = Rect {
+            x: rect.x + 1,
+            y: rect.y + 1,
+            width: rect.width.saturating_sub(2),
+            height: rect.height.saturating_sub(2),
+        };
+        // Rendering settled the scroll offset; show a scrollbar if it overflows.
+        render_scrollbar(
+            frame,
+            inner,
+            self.items.len(),
+            state.offset(),
+            inner.height as usize,
+        );
     }
 }
 
@@ -249,4 +265,46 @@ fn render_modal(
         .border_style(Style::default().fg(border));
     let paragraph = Paragraph::new(body).block(block);
     frame.render_widget(paragraph, rect);
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use super::*;
+
+    /// Collects the whole rendered buffer into one string.
+    fn rendered(modal: &SelectModal, width: u16, height: u16) -> String {
+        let mut terminal =
+            Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| modal.render(frame, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        buffer.content().iter().map(|cell| cell.symbol()).collect()
+    }
+
+    fn many(count: usize) -> SelectModal {
+        let items = (0..count).map(|i| format!("item {i}")).collect();
+        SelectModal::new("Errors", items, count - 1)
+    }
+
+    #[test]
+    fn shows_scrollbar_when_items_overflow() {
+        let modal = many(40);
+        assert!(
+            rendered(&modal, 60, 20).contains('█'),
+            "an overflowing list should show a scrollbar thumb"
+        );
+    }
+
+    #[test]
+    fn hides_scrollbar_when_items_fit() {
+        let modal = SelectModal::new("Errors", vec!["only".to_string()], 0);
+        assert!(
+            !rendered(&modal, 60, 20).contains('█'),
+            "a list that fits should not show a scrollbar"
+        );
+    }
 }
