@@ -6,7 +6,7 @@ Planned, not yet implemented (roughly in priority order):
 
 - [ ] **Shell completion for slugs.** `hop completions {zsh,bash,fish,powershell}` that prints a completion script so `hop <Tab>` completes known slugs. Slugs come from `RepoService`/the repository; clap can generate the static scaffold (`clap_complete`) with a dynamic slug list.
 
-- [ ] **`hop doctor` (CLI).** Reports problems without the TUI: missing paths, duplicate or invalid slugs, and entries marked `git` that are not repositories. Reuse `Repo::entry_error` and the existence-check logic; print a grouped, scriptable summary and exit non-zero when issues are found.
+- [x] **`hop doctor` (CLI).** Reports problems without the TUI: missing paths, duplicate or invalid slugs, and entries marked `git` that are not repositories. Reuse `Repo::entry_error` and the existence-check logic; print a grouped, scriptable summary and exit non-zero when issues are found.
 
 - [ ] **Per-entry open override.** Two optional per-entry fields that override the
   global open heuristic (`domain::repo::classify_path`), applied before it when
