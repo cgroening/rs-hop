@@ -62,9 +62,15 @@ Or from the project directory (puts `hop` in `~/.cargo/bin`, which is on your
 cargo install --path .
 ```
 
-Re-run the install command to update after code changes; `cargo uninstall rs-hop`
-removes it. (For a local build without installing, use `cargo build --release`;
-the binary is then at `target.nosync/release/hop`.)
+To update after code changes, re-run the install with `--force` (plain
+`cargo install` refuses to overwrite an existing binary):
+
+```
+cargo install --path . --force
+```
+
+`cargo uninstall rs-hop` removes it. (For a local build without installing, use
+`cargo build --release`; the binary is then at `target.nosync/release/hop`.)
 
 ## Shell integration (zsh)
 
@@ -192,6 +198,7 @@ hop config-path     print the resolved config file path
 | `g` / `G` · `PgUp`/`PgDn` · `Ctrl+u`/`Ctrl+d` | top / bottom · page · half page |
 | `Space` | toggle selection · `Shift+↑/↓`: extend range · `Esc`: clear |
 | `Enter` | open: git → tool · folder → cd · text file → editor · other file → default app |
+| `l` | git repo: open the git tool (lazygit) as an overlay, then return to the list |
 | `o` | jump only: write path and exit (folder → cd, file → its parent) |
 | `O` | force open with the default app (regardless of kind) |
 | `b` | open the selected repo on GitHub in the browser |

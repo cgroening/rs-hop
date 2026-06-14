@@ -66,6 +66,7 @@ use crate::tui::widgets::{
     ConfirmModal, ConfirmResult, PromptResult, SelectModal, SelectResult,
     TextPrompt,
 };
+use crate::util::opener::launch_git_tool;
 
 /// How long a transient status message stays visible.
 const STATUS_TTL: Duration = Duration::from_secs(4);
@@ -79,6 +80,9 @@ pub enum RunOutcome {
     Jumped,
     /// Path written; launch the git tool in this directory, then exit.
     LaunchGitTool(PathBuf),
+    /// Launch the git tool in this directory as an overlay (the loop suspends
+    /// the terminal, runs the tool, then returns to the list).
+    LaunchGitToolInline(PathBuf),
     /// Open this file in the editor, then exit.
     OpenFile(PathBuf),
     /// Open this file with the platform's default application, then exit.
@@ -576,7 +580,12 @@ pub fn run(mut app: App, tui: &mut Tui) -> io::Result<RunOutcome> {
             && key.kind == KeyEventKind::Press
             && let Some(outcome) = app.handle_key(key)
         {
-            return Ok(outcome);
+            match outcome {
+                RunOutcome::LaunchGitToolInline(path) => {
+                    app.run_git_inline(tui, &path)?;
+                }
+                other => return Ok(other),
+            }
         }
         app.tick();
     }
@@ -738,6 +747,7 @@ impl App {
             KeyCode::Char(' ') => self.toggle_select(),
             KeyCode::Esc => self.clear_selection(),
             KeyCode::Enter => return self.open_selected(true),
+            KeyCode::Char('l') => return self.open_git_inline(),
             KeyCode::Char('o') => return self.open_selected(false),
             KeyCode::Char('O') => return self.force_open_with(),
             KeyCode::Char('q') => return Some(RunOutcome::Quit),
@@ -993,6 +1003,40 @@ impl App {
             }
             RepoKind::Path => self.open_path_entry(repo, launch_tool),
         }
+    }
+
+    /// Opens the selected Git entry's tool as an overlay: the run loop suspends
+    /// the terminal, runs the tool to completion, then returns to the list and
+    /// refreshes that entry. Non-Git entries are ignored.
+    fn open_git_inline(&mut self) -> Option<RunOutcome> {
+        let index = self.selected_index()?;
+        let repo = self.service.get(index)?.clone();
+        if repo.kind != RepoKind::Git {
+            self.set_status("not a git repo");
+            return None;
+        }
+        if let Err(error) = self.service.mark_used(index) {
+            self.set_status(format!("could not record usage: {error}"));
+        }
+        Some(RunOutcome::LaunchGitToolInline(repo.path))
+    }
+
+    /// Runs the git tool for `dir` with the terminal suspended, then refreshes
+    /// only that entry's status in the background (no fetch, no progress bar).
+    fn run_git_inline(&mut self, tui: &mut Tui, dir: &Path) -> io::Result<()> {
+        let Some(program) = self.config.git_program.clone() else {
+            self.set_status("no git_program configured");
+            return Ok(());
+        };
+        tui.suspended(|| {
+            if let Err(error) = launch_git_tool(&program, dir) {
+                log::error!("could not launch {program}: {error}");
+            }
+        })?;
+        if !self.config.example_mode {
+            self.refresh_paths(vec![dir.to_path_buf()], false, false);
+        }
+        Ok(())
     }
 
     /// Opens a file/folder entry: a folder `cd`s; on `o` (no launch) a file
@@ -1982,14 +2026,18 @@ fn empty_hint(tab: Tab) -> &'static str {
 
 /// The footer key hints for `tab` (only the keys relevant to that tab).
 fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
-    let mut hints: Vec<(&str, &str)> = vec![
-        ("Enter", "open"),
+    let mut hints: Vec<(&str, &str)> = vec![("Enter", "open")];
+    // The git tool overlay only applies to git repositories.
+    if tab == Tab::GitRepos {
+        hints.push(("l", "lazygit"));
+    }
+    hints.extend([
         ("o", "cd"),
         ("O", "open in app"),
         ("Space", "select"),
         ("f", "filter"),
         ("F", "changes"),
-    ];
+    ]);
     // The Files tab groups into sections: s jumps, M manages them.
     if tab == Tab::FilesAndFolders {
         hints.push(("s", "section"));
@@ -2222,6 +2270,15 @@ mod tests {
         let outcome =
             app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(matches!(outcome, Some(RunOutcome::LaunchGitTool(_))));
+    }
+
+    #[test]
+    fn pressing_l_on_a_git_repo_opens_the_tool_inline() {
+        let mut app = sample_app();
+        // The first git-tab entry is the git repo "hop".
+        let outcome = app
+            .handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+        assert!(matches!(outcome, Some(RunOutcome::LaunchGitToolInline(_))));
     }
 
     #[test]

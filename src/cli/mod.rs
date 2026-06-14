@@ -265,6 +265,8 @@ fn perform_outcome(config: &Config, outcome: RunOutcome) -> ExitCode {
             launch_tool(config, &path);
             ExitCode::SUCCESS
         }
+        // The run loop handles the inline overlay and never returns it here.
+        RunOutcome::LaunchGitToolInline(_) => ExitCode::SUCCESS,
         RunOutcome::OpenFile(path) => {
             let editor = resolve_editor(config.editor.as_deref());
             let _ = open_in_editor(&editor, &path);

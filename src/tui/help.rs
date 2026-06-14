@@ -28,6 +28,10 @@ const SHORTCUTS: &[(&str, &str)] = &[
         "open: git -> tool · folder -> cd · text file -> editor · else app",
     ),
     (
+        "l",
+        "git: open the tool (lazygit) as an overlay, then return here",
+    ),
+    (
         "o",
         "jump only: write path and exit (folder cd, file -> parent)",
     ),
