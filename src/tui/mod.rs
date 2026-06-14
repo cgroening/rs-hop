@@ -1555,11 +1555,12 @@ impl App {
     fn do_picked(&mut self, intent: PickerIntent, path: PathBuf) {
         match intent {
             PickerIntent::Repair(index) => {
+                let repaired = path.clone();
                 match self.service.set_path(index, path) {
                     Ok(()) => {
                         self.set_status("path repaired");
                         if !self.config.example_mode {
-                            self.start_refresh(false);
+                            self.clear_repaired_error(repaired);
                         }
                     }
                     Err(error) => {
@@ -1878,10 +1879,18 @@ impl App {
         }
     }
 
-    /// Checks on disk which file/folder entries are missing, recording them so
-    /// the marker and the error count reflect the result. Triggered by `r` on
-    /// the Files tab; never on start. Reports a transient summary.
-    fn check_files_existence(&mut self) {
+    /// Clears the error state of a just-repaired entry, whichever tab it lives
+    /// on. The error list spans every tab, so a tab-wide refresh would miss an
+    /// entry repaired from another tab: re-stat the file/folder entries (clears
+    /// the missing marker) and refresh just the repaired path's git status.
+    fn clear_repaired_error(&mut self, path: PathBuf) {
+        self.recheck_files();
+        self.refresh_paths(vec![path], false, false);
+    }
+
+    /// Re-stats every file/folder entry, recording the ones whose path is
+    /// missing so the marker and error count reflect the current filesystem.
+    fn recheck_files(&mut self) {
         self.files_missing = self
             .service
             .repos()
@@ -1889,6 +1898,13 @@ impl App {
             .filter(|repo| repo.kind == RepoKind::Path && !repo.path.exists())
             .map(|repo| repo.path.clone())
             .collect();
+    }
+
+    /// Checks on disk which file/folder entries are missing, recording them so
+    /// the marker and the error count reflect the result. Triggered by `r` on
+    /// the Files tab; never on start. Reports a transient summary.
+    fn check_files_existence(&mut self) {
+        self.recheck_files();
         let missing = self.files_missing.len();
         self.set_status(if missing == 0 {
             "checked paths: all exist".to_string()

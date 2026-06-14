@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Inline git tool overlay**: `l` opens the configured git tool (lazygit) for the selected git repo as an overlay — the TUI suspends the terminal, runs the tool, then returns to the list and refreshes only that repo's status. `Enter` is unchanged (launches the tool and exits).
 
+### Fixed
+
+- **Repairing a path now clears its error immediately**, even when the entry lives on a different tab than the one in view. The error list spans all tabs, but the post-repair refresh only covered the current tab, so a repaired entry could keep showing the `✗` marker until a manual refresh. Repair now re-checks file/folder existence and refreshes the repaired entry's git status directly.
+
 ## [0.1.0] - 2026-06-14
 
 First public release. A fuzzy-finder TUI to jump between git repositories and folders, a Rust port of the Python `git-repo-jumper` with in-app management on top.
