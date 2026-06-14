@@ -14,7 +14,7 @@ for a one-word jump, sort modes and repair for paths that have moved.
   name, path).
 - **Live git status** (branch, uncommitted changes, ahead/behind, GitHub repo
   name), gathered in the background and cached so the list shows instantly.
-- **Three tabs**: Git Repos, Files and Folders, Archiv.
+- **Three tabs**: Git Repos, Files and Folders, Archive.
 - **Sections** on the Files and Folders tab: group folders/files under named,
   reorderable section headers; `s` jumps to a section and `M` manages them.
 - **In-app management**: add, edit, delete, favourite, archive/restore, set a
@@ -145,7 +145,7 @@ kind = "git"                   # git | path (path = file or folder, auto-detecte
 slug = "hop"                   # optional; enables `hop hop`
 fav = true                     # favourites sort first
 # section = "Work"             # groups path entries on the Files tab
-# archived = false             # archived entries live in the Archiv tab
+# archived = false             # archived entries live in the Archive tab
 ```
 
 See [`examples/config.toml`](examples/config.toml) for a fuller sample. Try it
@@ -177,7 +177,7 @@ hop config-path     print the resolved config file path
 
 | Key | Action |
 |-----|--------|
-| `1` / `2` / `3` | switch tab (Git Repos / Files / Archiv) |
+| `1` / `2` / `3` | switch tab (Git Repos / Files / Archive) |
 | `Tab` / `Shift+Tab` | cycle to the next / previous tab |
 | `↑` / `↓` | move cursor (wraps) |
 | `g` / `G` · `PgUp`/`PgDn` · `Ctrl+u`/`Ctrl+d` | top / bottom · page · half page |

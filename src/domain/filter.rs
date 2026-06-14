@@ -32,7 +32,7 @@ impl Tab {
         match self {
             Tab::GitRepos => "Git Repos",
             Tab::FilesAndFolders => "Files and Folders",
-            Tab::Archive => "Archiv",
+            Tab::Archive => "Archive",
         }
     }
 

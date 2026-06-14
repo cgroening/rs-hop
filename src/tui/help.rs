@@ -11,7 +11,7 @@ use crate::tui::widgets::centered_rect;
 
 /// The grouped shortcut list shown in the overlay.
 const SHORTCUTS: &[(&str, &str)] = &[
-    ("1 / 2 / 3", "switch tab (Git Repos / Files / Archiv)"),
+    ("1 / 2 / 3", "switch tab (Git Repos / Files / Archive)"),
     ("Tab / Shift+Tab", "cycle to the next / previous tab"),
     ("\u{2191} \u{2193}", "move cursor (wraps)"),
     (
