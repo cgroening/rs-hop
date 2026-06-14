@@ -136,7 +136,7 @@ These reproduce the project style guide (general + Rust). On conflict the more s
 - **Naming**: booleans as yes/no questions (`is_`/`has_`/`can_`/`should_`, never negative); methods = verbs, types = nouns, no `Manager`/`Data`/`Helper`; `snake_case` vars/functions, `UPPER_CASE` consts, `PascalCase` types; files `snake_case`. Acronyms as words (`UserId`).
 - **Errors**: fail fast; don't signal "nothing" with `null`/`None` where an empty collection / error fits; errors carry context (what/where/why). Validate at trust boundaries; fail loudly over silent-wrong.
 - **Logging** via the `log` facade, never `println!` for diagnostics (visible CLI/TUI output is not logging).
-- **Formatting**: 4-space indent, **max 80 columns** (`.rs`); operators at line start on wraps; trailing commas in multi-line; spaces only; one final newline; UTF-8/LF. Never `–` (em dash) in code. Markdown prose: one line per paragraph/item, no hard wraps. Straight quotes only.
+- **Formatting**: 4-space indent, **max 80 columns** (`.rs`); operators at line start on wraps; trailing commas in multi-line; spaces only; one final newline; UTF-8/LF. **Never use `—` (em dash) anywhere.** As the dash (Gedankenstrich): in code files use `-` (hyphen), in `.md` files use `–` (en dash). Markdown prose: one line per paragraph/item, no hard wraps. Straight quotes only.
 - **Comments** explain the **why**, moderately; everything in **English**.
 - **Types**: `bool` not int flags; enums over magic strings; structs over loose tuples; newtypes where useful; immutable where sensible; don't mutate inputs needlessly.
 - **Functions** small (SRP); **few parameters (≤3, group related into a struct)**; pass named/explicit; helpers below callers; public before private.

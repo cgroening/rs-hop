@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **Inline git tool overlay**: `l` opens the configured git tool (lazygit) for the selected git repo as an overlay — the TUI suspends the terminal, runs the tool, then returns to the list and refreshes only that repo's status. `Enter` is unchanged (launches the tool and exits).
+- **Inline git tool overlay**: `l` opens the configured git tool (lazygit) for the selected git repo as an overlay – the TUI suspends the terminal, runs the tool, then returns to the list and refreshes only that repo's status. `Enter` is unchanged (launches the tool and exits).
 
 ### Changed
 
