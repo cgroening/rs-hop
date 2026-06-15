@@ -2169,8 +2169,9 @@ fn empty_hint(tab: Tab) -> &'static str {
 /// The footer key hints for `tab` (only the keys relevant to that tab).
 fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
     let mut hints: Vec<(&str, &str)> = vec![("Enter", "open")];
-    // The git tool overlay only applies to git repositories.
-    if tab == Tab::GitRepos {
+    // The git tool overlay applies to git repositories, which live on both git
+    // tabs (Git Repos and Archive), not on the Files tab.
+    if tab != Tab::FilesAndFolders {
         hints.push(("l", "lazygit"));
     }
     hints.extend([
@@ -2201,17 +2202,16 @@ fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
     hints.push(("y", "copy path"));
     hints.push(("b", "github"));
     hints.push(("p", "fix path"));
-    // Git status refresh only makes sense where entries are git repositories;
-    // the Files tab uses `r`/`R` to check that paths still exist.
+    // Git status refresh applies on both git tabs (Git Repos and Archive); the
+    // Files tab uses `r`/`R` to check that paths still exist instead.
     match tab {
-        Tab::GitRepos => {
+        Tab::GitRepos | Tab::Archive => {
             // r/R reload every entry (R also fetches); x/X refresh only the
             // selection or cursor (X also fetches).
             hints.push(("r/R", "reload"));
             hints.push(("x/X", "refresh one"));
         }
         Tab::FilesAndFolders => hints.push(("r/R", "check paths")),
-        Tab::Archive => {}
     }
     hints.push(("!", "errors"));
     hints.push(("?", "help"));
