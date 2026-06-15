@@ -2076,10 +2076,15 @@ fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
     hints.push(("b", "github"));
     hints.push(("p", "fix path"));
     // Git status refresh only makes sense where entries are git repositories;
-    // the Files tab uses `r` to check that paths still exist.
+    // the Files tab uses `r`/`R` to check that paths still exist.
     match tab {
-        Tab::GitRepos => hints.push(("x/r", "refresh")),
-        Tab::FilesAndFolders => hints.push(("r", "check paths")),
+        Tab::GitRepos => {
+            // r/R reload every entry (R also fetches); x/X refresh only the
+            // selection or cursor (X also fetches).
+            hints.push(("r/R", "reload"));
+            hints.push(("x/X", "refresh one"));
+        }
+        Tab::FilesAndFolders => hints.push(("r/R", "check paths")),
         Tab::Archive => {}
     }
     hints.push(("!", "errors"));
