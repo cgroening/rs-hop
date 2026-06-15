@@ -233,7 +233,7 @@ fn status_display(repo: &Repo, view: &TableView) -> String {
     let info = effective_info(repo, view.example_mode);
     match info {
         None => "\u{2026}".to_string(),
-        Some(info) if !info.valid && !repo.path_exists() => "-".to_string(),
+        Some(info) if info.is_path_missing() => "-".to_string(),
         Some(info) => status_text(info, view.icons),
     }
 }
@@ -298,8 +298,9 @@ fn selection_cell<'a>(selected: bool) -> Cell<'a> {
 }
 
 /// The marker cell: a red warning glyph when the entry has a path error, else
-/// blank. A git entry is flagged live (missing or invalid repository); a
-/// file/folder entry only once the on-demand existence check flagged its path.
+/// blank. A git entry is flagged from its gathered git info (missing or invalid
+/// repository); a file/folder entry only once the on-demand existence check
+/// flagged its path.
 fn marker_cell<'a>(repo: &Repo, view: &TableView) -> Cell<'a> {
     let errored = match repo.kind {
         RepoKind::Git if view.example_mode => repo.example_error().is_some(),
@@ -348,7 +349,7 @@ fn status_cell<'a>(
     let Some(info) = info else {
         return Cell::from(Span::styled("…", Style::default().fg(DIM)));
     };
-    if !info.valid && !repo.path_exists() {
+    if info.is_path_missing() {
         return Cell::from(Span::styled("-", Style::default().fg(DIM)));
     }
     // The status column is sized to its content, so no truncation is needed.

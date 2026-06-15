@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **Cursor movement no longer lags on tabs with slow-to-reach paths** (e.g. archived repos on disconnected, network or cloud drives). A git entry's missing/invalid marker and status column were recomputed with a live `path.exists()` stat on every frame and every visible row, so scrolling blocked on those stats. The marker now derives from the gathered git info (populated by the background refresh) instead, doing no filesystem I/O during rendering.
 - **Repairing a path now clears its error immediately**, even when the entry lives on a different tab than the one in view. The error list spans all tabs, but the post-repair refresh only covered the current tab, so a repaired entry could keep showing the `✗` marker until a manual refresh. Repair now re-checks file/folder existence and refreshes the repaired entry's git status directly.
 
 ## [0.1.0] - 2026-06-14

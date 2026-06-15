@@ -1983,8 +1983,10 @@ impl App {
     }
 
     /// The path error for `repo`, if any. A git entry reports a missing or
-    /// invalid repository live; a file/folder entry only reports a missing path
-    /// once the on-demand existence check (`r` on the Files tab) has flagged it.
+    /// invalid repository from its gathered git info (set by the background
+    /// refresh, so no filesystem stat happens here); a file/folder entry only
+    /// reports a missing path once the on-demand existence check (`r` on the
+    /// Files tab) has flagged it.
     fn path_error(&self, repo: &Repo) -> Option<String> {
         if self.config.example_mode {
             // Example mode shows curated demo data, so a git entry's error comes
@@ -1999,7 +2001,7 @@ impl App {
             RepoKind::Path => self
                 .files_missing
                 .contains(&repo.path)
-                .then(|| "path not found".to_string()),
+                .then(|| repo::PATH_NOT_FOUND.to_string()),
         }
     }
 

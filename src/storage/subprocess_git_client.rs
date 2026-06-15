@@ -6,7 +6,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::domain::repo::GitInfo;
+use crate::domain::repo::{GitInfo, PATH_NOT_FOUND};
 use crate::storage::git_client::{
     GitClient, git_info_from_counts, parse_github_name,
 };
@@ -28,7 +28,7 @@ impl GitClient for SubprocessGitClient {
         if !path.exists() {
             return GitInfo {
                 valid: false,
-                error: Some("path not found".to_string()),
+                error: Some(PATH_NOT_FOUND.to_string()),
                 ..GitInfo::default()
             };
         }

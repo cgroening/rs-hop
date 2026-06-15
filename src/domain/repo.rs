@@ -86,6 +86,11 @@ pub fn is_text_file(path: &Path, editor_extensions: &[String]) -> bool {
     }
 }
 
+/// The error recorded in [`GitInfo`] when an entry's path does not exist. Set
+/// by the status refresh and matched on to distinguish a missing path from a
+/// path that merely is not a git repository, without re-statting on each frame.
+pub const PATH_NOT_FOUND: &str = "path not found";
+
 /// Git status gathered for a repository.
 ///
 /// `raw_status` carries a verbatim status string (used by example mode and the
@@ -119,6 +124,11 @@ impl GitInfo {
             && self.changes.unwrap_or(0) == 0
             && self.ahead.unwrap_or(0) == 0
             && self.behind.unwrap_or(0) == 0
+    }
+
+    /// Whether the gathered info reports the entry's path as missing on disk.
+    pub fn is_path_missing(&self) -> bool {
+        !self.valid && self.error.as_deref() == Some(PATH_NOT_FOUND)
     }
 }
 
@@ -182,29 +192,25 @@ impl Repo {
         basename(&self.path)
     }
 
-    /// Whether the path currently exists on disk.
-    pub fn path_exists(&self) -> bool {
-        self.path.exists()
-    }
-
-    /// A short error describing why the entry is unusable, or `None` when it is
-    /// fine: the path is missing, or it is a git entry whose gathered info is
-    /// invalid (e.g. not a git repository).
+    /// A short error describing why a git entry is unusable, or `None` when it
+    /// is fine. Derived purely from the gathered [`GitInfo`] (populated by the
+    /// background status refresh), so it does no filesystem I/O and is cheap to
+    /// call once per row each frame: an invalid info yields its message (a
+    /// missing path or a path that is not a git repository); a missing or valid
+    /// info, or a non-git entry, yields `None`.
     pub fn entry_error(&self) -> Option<String> {
-        if !self.path_exists() {
-            return Some("path not found".to_string());
+        if self.kind != RepoKind::Git {
+            return None;
         }
-        if self.kind == RepoKind::Git
-            && let Some(info) = &self.git_info
-            && !info.valid
-        {
-            return Some(
-                info.error
-                    .clone()
-                    .unwrap_or_else(|| "not a git repository".to_string()),
-            );
+        let info = self.git_info.as_ref()?;
+        if info.valid {
+            return None;
         }
-        None
+        Some(
+            info.error
+                .clone()
+                .unwrap_or_else(|| "not a git repository".to_string()),
+        )
     }
 
     /// The error to display in example mode, derived from `example_git_info`
@@ -264,11 +270,22 @@ mod tests {
 
     #[test]
     fn entry_error_flags_missing_and_invalid() {
-        // A path that does not exist is always an error.
-        let missing = Repo::new(PathBuf::from("/nope/does-not-exist-xyz"));
-        assert_eq!(missing.entry_error().as_deref(), Some("path not found"));
+        // A git entry without gathered info yet is not flagged (the background
+        // refresh drives the error, so there is no per-frame filesystem stat).
+        let pending = Repo::new(PathBuf::from("/nope/does-not-exist-xyz"));
+        assert!(pending.entry_error().is_none());
 
-        // An existing git path with invalid info reports its error.
+        // A git entry whose refresh found the path missing reports it.
+        let mut missing = Repo::new(PathBuf::from("/nope"));
+        missing.git_info = Some(GitInfo {
+            valid: false,
+            error: Some(PATH_NOT_FOUND.to_string()),
+            ..GitInfo::default()
+        });
+        assert_eq!(missing.entry_error().as_deref(), Some(PATH_NOT_FOUND));
+        assert!(missing.git_info.as_ref().unwrap().is_path_missing());
+
+        // A git path with invalid info reports its error.
         let mut invalid = Repo::new(PathBuf::from("/"));
         invalid.git_info = Some(GitInfo {
             valid: false,
@@ -279,8 +296,9 @@ mod tests {
             invalid.entry_error().as_deref(),
             Some("not a git repository")
         );
+        assert!(!invalid.git_info.as_ref().unwrap().is_path_missing());
 
-        // An existing path entry (non-git) has no error.
+        // A non-git (path) entry has no git error.
         let mut folder = Repo::new(PathBuf::from("/"));
         folder.kind = RepoKind::Path;
         assert!(folder.entry_error().is_none());
