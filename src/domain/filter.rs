@@ -5,6 +5,8 @@
 //! uses `nucleo-matcher`, but every input here is plain data so it stays
 //! testable.
 
+use std::cmp::Reverse;
+
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
@@ -113,7 +115,7 @@ pub fn fuzzy_indices(repos: &[Repo], query: &str) -> Vec<usize> {
         }
     }
     // Highest score first; ties keep the earlier (already sorted) entry.
-    scored.sort_by(|a, b| b.1.cmp(&a.1));
+    scored.sort_by_key(|&(_, score)| Reverse(score));
     scored.into_iter().map(|(index, _)| index).collect()
 }
 

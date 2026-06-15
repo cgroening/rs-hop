@@ -268,7 +268,7 @@ fn read_children(dir: &Path, allow_files: bool) -> Vec<Entry> {
             });
         }
     }
-    dirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-    files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    dirs.sort_by_key(|entry| entry.name.to_lowercase());
+    files.sort_by_key(|entry| entry.name.to_lowercase());
     dirs.into_iter().chain(files).collect()
 }
