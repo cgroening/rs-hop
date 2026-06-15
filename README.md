@@ -119,11 +119,14 @@ The handoff file is shell-agnostic; on Windows it lives under
 ```powershell
 function hop {
     & hop.exe @args
-    $f = Join-Path $env:LOCALAPPDATA 'hop\selected-repo.txt'
-    if (Test-Path $f) {
-        $d = Get-Content $f
-        Clear-Content $f   # clear so a stale path can't cd on the next non-jump run
-        if ($d -and (Test-Path $d)) { Set-Location $d }
+    $stateHome = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { $env:XDG_STATE_HOME }
+    $f = Join-Path $stateHome 'hop\selected-repo.txt'
+    if (Test-Path -LiteralPath $f -PathType Leaf) {
+        $d = (Get-Content -LiteralPath $f -Raw).Trim()
+        Clear-Content -LiteralPath $f   # clear so a stale path can't cd on the next non-jump run
+        if ($d -and (Test-Path -LiteralPath $d -PathType Container)) {
+            Set-Location -LiteralPath $d
+        }
     }
 }
 Set-Alias hp hop
