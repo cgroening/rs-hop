@@ -65,6 +65,8 @@ pub struct PreviewContext<'a> {
     pub example_mode: bool,
     /// The cached `git log --oneline` lines for the entry (may be empty).
     pub log: &'a [String],
+    /// Whether the entry's log is still being fetched in the background.
+    pub log_loading: bool,
 }
 
 /// Renders the preview panel into `area`.
@@ -125,13 +127,31 @@ fn entry_lines(
     }
     push_usage_line(&mut lines, repo);
 
-    if !ctx.log.is_empty() {
-        lines.push(dim_line("─ log ─".to_string()));
-        for entry in ctx.log {
-            lines.push(dim_line(truncate(entry, width)));
-        }
-    }
+    push_log_lines(&mut lines, ctx, width);
     lines
+}
+
+/// The placeholder shown while the preview log is still loading.
+const LOG_LOADING: &str = "loading…";
+
+/// Appends the `git log` excerpt, or a loading placeholder while it is still
+/// being fetched in the background.
+fn push_log_lines(
+    lines: &mut Vec<Line<'static>>,
+    ctx: &PreviewContext,
+    width: usize,
+) {
+    if ctx.log.is_empty() && !ctx.log_loading {
+        return;
+    }
+    lines.push(dim_line("─ log ─".to_string()));
+    if ctx.log.is_empty() {
+        lines.push(dim_line(LOG_LOADING.to_string()));
+        return;
+    }
+    for entry in ctx.log {
+        lines.push(dim_line(truncate(entry, width)));
+    }
 }
 
 /// Appends the branch/status line for a git entry.

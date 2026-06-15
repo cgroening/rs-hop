@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - **The error list (`!`) and other select modals now show a scrollbar** when their contents overflow the modal height.
+- **The preview `git log` now loads in the background** instead of blocking on each cursor move, so navigating with the preview open (`v`) stays smooth. The log for an entry is fetched only after the cursor rests on it briefly (debounced), cached, and shown with a `loading…` placeholder until it arrives. A full reload (`r`) reloads the current tab's logs and a per-entry refresh (`x`) reloads that entry's log – both only while the preview is visible.
 
 ### Fixed
 

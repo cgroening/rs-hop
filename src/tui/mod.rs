@@ -26,7 +26,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local};
@@ -47,6 +47,7 @@ use crate::domain::path_repair::nearest_existing_on_disk;
 use crate::domain::repo::{self, Repo, RepoKind};
 use crate::domain::sections;
 use crate::domain::sort::{SortMode, sort_indices};
+use crate::service::preview_service::{self, PreviewLog};
 use crate::service::repo_service::RepoService;
 use crate::service::status_service::spawn_refresh;
 use crate::storage::cache;
@@ -70,6 +71,13 @@ use crate::util::opener::launch_git_tool;
 
 /// How long a transient status message stays visible.
 const STATUS_TTL: Duration = Duration::from_secs(4);
+
+/// How long the cursor must rest on an entry before its preview `git log` is
+/// fetched, so quick scrolling does not spawn a fetch per row.
+const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(120);
+
+/// How many `git log` lines the preview shows.
+const PREVIEW_LOG_LINES: usize = 5;
 
 /// What the user chose to do, acted on by the composition root after the
 /// terminal is restored.
@@ -180,6 +188,17 @@ pub struct App {
     preview: PreviewMode,
     /// Cached `git log` excerpts for the preview, keyed by entry path.
     preview_log: HashMap<PathBuf, Vec<String>>,
+    /// Sender handed to the background log workers; kept alive so `preview_rx`
+    /// never disconnects.
+    preview_tx: Sender<PreviewLog>,
+    /// Receives background preview-log results, drained each loop.
+    preview_rx: Receiver<PreviewLog>,
+    /// Paths whose preview log is being fetched in the background (dedupe).
+    preview_pending: HashSet<PathBuf>,
+    /// The cursor path the preview is debouncing, with when it became current.
+    preview_target: Option<PathBuf>,
+    /// When `preview_target` last changed, for the debounce window.
+    preview_target_at: Instant,
 }
 
 /// How the status is sourced on start.
@@ -209,6 +228,7 @@ impl App {
         let ui = ui_state::load(&ui_state_path);
         let mut service = service;
         service.apply_git_infos(&cached.infos);
+        let (preview_tx, preview_rx) = mpsc::channel();
         let mut app = App {
             config,
             service,
@@ -242,6 +262,11 @@ impl App {
             list_height: std::cell::Cell::new(1),
             preview: PreviewMode::from_key(&ui.preview),
             preview_log: HashMap::new(),
+            preview_tx,
+            preview_rx,
+            preview_pending: HashSet::new(),
+            preview_target: None,
+            preview_target_at: Instant::now(),
         };
         if let StartupStatus::Refresh { fetch } = startup
             && !app.config.example_mode
@@ -570,11 +595,19 @@ impl App {
 /// Returns an I/O error if drawing or reading from the terminal fails.
 pub fn run(mut app: App, tui: &mut Tui) -> io::Result<RunOutcome> {
     loop {
-        app.ensure_preview_log();
-        tui.terminal.draw(|frame| app.render(frame))?;
         app.drain_status();
-        // Poll faster while refreshing so the spinner animates smoothly.
-        let timeout = if app.is_refreshing() { 80 } else { 150 };
+        app.drain_preview();
+        app.request_preview_log();
+        tui.terminal.draw(|frame| app.render(frame))?;
+        // Poll faster while refreshing (spinner) or while a preview log is
+        // being debounced/fetched, so updates land promptly.
+        let timeout = if app.is_refreshing() {
+            80
+        } else if app.preview_busy() {
+            60
+        } else {
+            150
+        };
         if event::poll(Duration::from_millis(timeout))?
             && let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
@@ -1351,7 +1384,8 @@ impl App {
         self.clamp_cursor(len);
     }
 
-    /// Restarts the full background refresh, optionally fetching first.
+    /// Restarts the full background refresh, optionally fetching first. When the
+    /// preview is visible, the current tab's git logs are reloaded too.
     fn reload_status(&mut self, fetch: bool) {
         if self.config.example_mode {
             self.set_status("example mode: live status is off");
@@ -1363,6 +1397,21 @@ impl App {
             "reloading status…"
         });
         self.start_refresh(fetch);
+        if self.preview != PreviewMode::Off {
+            let paths = self.tab_git_paths();
+            self.invalidate_logs(&paths);
+            self.fetch_logs(paths);
+        }
+    }
+
+    /// The current tab's git entry paths (for reloading preview logs).
+    fn tab_git_paths(&self) -> Vec<PathBuf> {
+        self.tab_indices()
+            .iter()
+            .filter_map(|&i| self.service.get(i))
+            .filter(|repo| repo.kind == RepoKind::Git)
+            .map(|repo| repo.path.clone())
+            .collect()
     }
 
     /// Refreshes the target entries in the background, optionally fetching
@@ -1391,6 +1440,16 @@ impl App {
         };
         self.set_status(message);
         self.refresh_paths(paths, fetch, false);
+        if self.preview != PreviewMode::Off {
+            let git_paths: Vec<PathBuf> = targets
+                .iter()
+                .filter_map(|&i| self.service.get(i))
+                .filter(|repo| repo.kind == RepoKind::Git)
+                .map(|repo| repo.path.clone())
+                .collect();
+            self.invalidate_logs(&git_paths);
+            self.fetch_logs(git_paths);
+        }
         self.clear_selection();
     }
 
@@ -1657,28 +1716,89 @@ impl App {
         }
     }
 
-    /// Caches the `git log` for the cursor entry when the preview is visible
-    /// (once per path; skipped in example mode). Runs in the event loop, never
-    /// during rendering.
-    fn ensure_preview_log(&mut self) {
+    /// The cursor entry's path when it is a git repo whose log the preview
+    /// would show (preview visible, not example mode); otherwise `None`.
+    fn preview_log_path(&self) -> Option<PathBuf> {
         if self.preview == PreviewMode::Off || self.config.example_mode {
-            return;
+            return None;
         }
-        let Some(index) = self.selected_index() else {
-            return;
-        };
-        let Some(repo) = self.service.get(index) else {
-            return;
-        };
+        let repo = self.selected_index().and_then(|i| self.service.get(i))?;
         if repo.kind != RepoKind::Git {
+            return None;
+        }
+        Some(repo.path.clone())
+    }
+
+    /// Requests the cursor entry's preview `git log` once the cursor has rested
+    /// on it for [`PREVIEW_DEBOUNCE`], so quick scrolling never blocks. The
+    /// fetch itself runs on a background worker (see [`fetch_logs`]).
+    fn request_preview_log(&mut self) {
+        let Some(path) = self.preview_log_path() else {
+            self.preview_target = None;
+            return;
+        };
+        if self.preview_log.contains_key(&path)
+            || self.preview_pending.contains(&path)
+        {
             return;
         }
-        let path = repo.path.clone();
-        if self.preview_log.contains_key(&path) {
+        if self.preview_target.as_deref() != Some(&path) {
+            self.preview_target = Some(path);
+            self.preview_target_at = Instant::now();
             return;
         }
-        let log = self.git_client.log(&path, 5);
-        self.preview_log.insert(path, log);
+        if self.preview_target_at.elapsed() < PREVIEW_DEBOUNCE {
+            return;
+        }
+        self.fetch_logs(vec![path]);
+    }
+
+    /// Spawns a background worker to fetch the preview logs for `paths`,
+    /// skipping any already cached and marking the rest as pending.
+    fn fetch_logs(&mut self, paths: Vec<PathBuf>) {
+        let wanted: Vec<PathBuf> = paths
+            .into_iter()
+            .filter(|path| !self.preview_log.contains_key(path))
+            .collect();
+        if wanted.is_empty() {
+            return;
+        }
+        for path in &wanted {
+            self.preview_pending.insert(path.clone());
+        }
+        preview_service::spawn_logs(
+            Arc::clone(&self.git_client),
+            wanted,
+            PREVIEW_LOG_LINES,
+            self.preview_tx.clone(),
+        );
+    }
+
+    /// Applies any background preview-log results without blocking.
+    fn drain_preview(&mut self) {
+        while let Ok(log) = self.preview_rx.try_recv() {
+            self.preview_pending.remove(&log.path);
+            self.preview_log.insert(log.path, log.lines);
+        }
+    }
+
+    /// Whether the preview is waiting on a log (debouncing or fetching), so the
+    /// loop should poll faster to pick the result up promptly.
+    fn preview_busy(&self) -> bool {
+        if !self.preview_pending.is_empty() {
+            return true;
+        }
+        self.preview_log_path()
+            .is_some_and(|path| !self.preview_log.contains_key(&path))
+    }
+
+    /// Drops the cached and pending preview logs for `paths`, so they are
+    /// re-fetched on demand. Does nothing for paths not in the cache.
+    fn invalidate_logs(&mut self, paths: &[PathBuf]) {
+        for path in paths {
+            self.preview_log.remove(path);
+            self.preview_pending.remove(path);
+        }
     }
 
     /// Renders the detail/preview panel for the cursor entry.
@@ -1687,6 +1807,9 @@ impl App {
         let log = repo
             .map(|r| self.preview_log.get(&r.path).map(Vec::as_slice))
             .unwrap_or(None);
+        let log_loading = self
+            .preview_log_path()
+            .is_some_and(|path| !self.preview_log.contains_key(&path));
         preview::render(
             frame,
             area,
@@ -1695,6 +1818,7 @@ impl App {
                 icons: &self.icons,
                 example_mode: self.config.example_mode,
                 log: log.unwrap_or(&[]),
+                log_loading,
             },
         );
     }
