@@ -50,7 +50,7 @@ rls
 *.o
 
 # Cargo lock (keep for binaries, ignore for libraries - adjust per project)
-Cargo.lock
+# Cargo.lock
 
 # Cargo config
 .cargo/config.toml
