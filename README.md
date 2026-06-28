@@ -200,7 +200,8 @@ hop config-path     print the resolved config file path
 | `↑` / `↓` | move cursor (wraps) |
 | `g` / `G` · `PgUp`/`PgDn` · `Ctrl+u`/`Ctrl+d` | top / bottom · page · half page |
 | `Space` | toggle selection · `Shift+↑/↓`: extend range · `Esc`: clear |
-| `Enter` | open: git → tool · folder → cd · text file → editor · other file → default app |
+| `Enter` | jump only: write path and exit (folder → cd, file → its parent) |
+| `L` | open: git → tool · folder → cd · text file → editor · other file → default app |
 | `l` | git repo: open the git tool (lazygit) as an overlay, then return to the list |
 | `o` | jump only: write path and exit (folder → cd, file → its parent) |
 | `O` | force open with the default app (regardless of kind) |

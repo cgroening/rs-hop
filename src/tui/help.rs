@@ -25,6 +25,10 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Esc", "clear the selection"),
     (
         "Enter",
+        "jump only: write path and exit (folder cd, file -> parent)",
+    ),
+    (
+        "L",
         "open: git -> tool · folder -> cd · text file -> editor · else app",
     ),
     (

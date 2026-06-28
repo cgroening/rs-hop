@@ -779,7 +779,8 @@ impl App {
             KeyCode::Char('u') => self.undo(),
             KeyCode::Char(' ') => self.toggle_select(),
             KeyCode::Esc => self.clear_selection(),
-            KeyCode::Enter => return self.open_selected(true),
+            KeyCode::Enter => return self.open_selected(false),
+            KeyCode::Char('L') => return self.open_selected(true),
             KeyCode::Char('l') => return self.open_git_inline(),
             KeyCode::Char('o') => return self.open_selected(false),
             KeyCode::Char('O') => return self.force_open_with(),
@@ -847,7 +848,7 @@ impl App {
             }
             KeyCode::Up => self.move_cursor(-1),
             KeyCode::Down => self.move_cursor(1),
-            KeyCode::Enter => return self.open_selected(true),
+            KeyCode::Enter => return self.open_selected(false),
             _ => {
                 if self.filter.handle_key(key) {
                     self.cursor = 0;
@@ -2168,7 +2169,7 @@ fn empty_hint(tab: Tab) -> &'static str {
 
 /// The footer key hints for `tab` (only the keys relevant to that tab).
 fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
-    let mut hints: Vec<(&str, &str)> = vec![("Enter", "open")];
+    let mut hints: Vec<(&str, &str)> = vec![("Enter", "cd"), ("L", "open")];
     // The git tool overlay applies to git repositories, which live on both git
     // tabs (Git Repos and Archive), not on the Files tab.
     if tab != Tab::FilesAndFolders {
@@ -2411,12 +2412,21 @@ mod tests {
     }
 
     #[test]
-    fn opening_a_git_repo_returns_launch_outcome() {
+    fn pressing_shift_l_on_a_git_repo_returns_launch_outcome() {
+        let mut app = sample_app();
+        // The first git-tab entry is the git repo "hop".
+        let outcome = app
+            .handle_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::NONE));
+        assert!(matches!(outcome, Some(RunOutcome::LaunchGitTool(_))));
+    }
+
+    #[test]
+    fn pressing_enter_on_a_git_repo_only_jumps() {
         let mut app = sample_app();
         // The first git-tab entry is the git repo "hop".
         let outcome =
             app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(matches!(outcome, Some(RunOutcome::LaunchGitTool(_))));
+        assert!(matches!(outcome, Some(RunOutcome::Jumped)));
     }
 
     #[test]
