@@ -191,15 +191,15 @@ HOP_CONFIG=examples/config.toml cargo run
 
 ```
 hop                 open the TUI
-hop <slug>          jump to a slug: write the path + launch the git tool
-hop <slug> -s       jump only: write the path, no tool (cd)
+hop <slug>          jump to a slug: write the path (cd only; no tool/editor)
+hop <slug> -s       deprecated no-op (jumping only cd's anyway)
 hop add [PATH]      add an entry (default: the current dir; --slug/--section/--name/--kind)
 hop scan [DIR]      find git repos under DIR and import the chosen ones (--depth N / --nested / --dry-run)
 hop doctor          report problems (missing paths, bad/duplicate slugs); non-zero exit on issues
 hop list            list entries as plain text
 hop config-path     print the resolved config file path
 -C / --config PATH  use a specific config file (also via HOP_CONFIG)
---fetch             git fetch first (TUI: on start; hop <slug>: before launching)
+--fetch             git fetch first (TUI: on start; hop <slug>: before the jump)
 --cached            TUI: show only cached status, run no git
 --demo              open the TUI with built-in demo data (for screenshots; no real git/config)
 ```

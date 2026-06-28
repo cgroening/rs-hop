@@ -19,7 +19,7 @@ use clap::{Parser, Subcommand};
 use crate::config::Config;
 use crate::config::loader::load_config;
 use crate::domain::doctor;
-use crate::domain::repo::{self, PathClass, Repo, RepoKind, is_dir_target};
+use crate::domain::repo::{Repo, RepoKind, is_dir_target};
 use crate::service::repo_service::RepoService;
 use crate::storage::git_client::GitClient;
 use crate::storage::in_memory_repository::InMemoryRepoRepository;
@@ -44,7 +44,7 @@ pub struct Cli {
     /// Use a specific config file (default: $XDG_CONFIG_HOME/hop/config.toml).
     #[arg(short = 'C', long, global = true, value_name = "PATH")]
     config: Option<PathBuf>,
-    /// Jump only: write the path without launching the git tool.
+    /// Deprecated/no-op: `hop <slug>` only writes the path (`cd`) anyway.
     #[arg(short = 's', long, global = true)]
     save_only: bool,
     /// Run `git fetch` before gathering status.
@@ -484,15 +484,18 @@ fn canon_key(path: &Path) -> String {
         .into_owned()
 }
 
-/// Handles `hop <slug>`: records the open, writes the handoff path and launches
-/// the git tool (unless `--save-only`).
+/// Handles `hop <slug>`: records the open and writes the handoff path. It only
+/// `cd`s (it does not launch the git tool or open files), mirroring the TUI's
+/// Enter.
 fn cmd_jump(
     config: &Config,
     mut service: RepoService,
     args: &[String],
     cli: &Cli,
 ) -> ExitCode {
-    let (slug, save_only) = parse_jump_args(args, cli.save_only);
+    // `--save-only`/`-s` is now redundant (jumping only `cd`s anyway); it is
+    // still accepted and stripped so an old `hop <slug> -s` keeps working.
+    let (slug, _save_only) = parse_jump_args(args, cli.save_only);
     let Some(slug) = slug else {
         return output::fail("no slug given");
     };
@@ -507,49 +510,21 @@ fn cmd_jump(
     if let Err(error) = service.mark_used(index) {
         return output::report_error(&error);
     }
-    // `--fetch`: update the repo's remote refs before launching the tool.
+    // `--fetch`: update the repo's remote refs so the next status is fresh.
     if cli.fetch && repo.kind == RepoKind::Git {
         SubprocessGitClient::new(config.github_username.clone())
             .fetch(&repo.path);
     }
-    perform_jump(config, &service, &repo, save_only)
+    perform_jump(&service, &repo)
 }
 
-/// Writes the handoff path and launches the tool/editor for a jump target.
-fn perform_jump(
-    config: &Config,
-    service: &RepoService,
-    repo: &Repo,
-    save_only: bool,
-) -> ExitCode {
+/// Writes the handoff `cd` path for a jump target (no tool/editor launch).
+fn perform_jump(service: &RepoService, repo: &Repo) -> ExitCode {
     let target = jump_target(repo);
     if let Err(error) = service.write_selected(&target) {
         return output::report_error(&error);
     }
-    if save_only {
-        return ExitCode::SUCCESS;
-    }
-    match repo.kind {
-        RepoKind::Git => launch_tool(config, &repo.path),
-        RepoKind::Path => open_path_target(config, repo),
-    }
     ExitCode::SUCCESS
-}
-
-/// Opens a file/folder jump target: a folder needs nothing further (the path is
-/// already written), a text file opens in the editor, any other file in the
-/// default application.
-fn open_path_target(config: &Config, repo: &Repo) {
-    match repo::classify_path(&repo.path, &config.editor_extensions) {
-        PathClass::Folder => {}
-        PathClass::TextFile => {
-            let editor = resolve_editor(config.editor.as_deref());
-            let _ = open_in_editor(&editor, &repo.path);
-        }
-        PathClass::OtherFile => {
-            let _ = open_default_app(&repo.path);
-        }
-    }
 }
 
 /// The `cd` target for a jump: a file's parent, otherwise the entry path.
