@@ -24,6 +24,8 @@ pub struct ZipJob {
     pub src: PathBuf,
     /// The destination `.zip` path.
     pub dest: PathBuf,
+    /// The entry's display name, shown in the progress bar while it is zipped.
+    pub name: String,
 }
 
 /// Progress of the background ZIP run, streamed file by file.
@@ -40,11 +42,13 @@ pub struct ZipUpdate {
     pub unchanged: usize,
     /// Archives that failed to write (only meaningful when `finished`).
     pub errors: usize,
+    /// The name of the entry currently being processed, if any.
+    pub label: Option<String>,
 }
 
 impl ZipUpdate {
-    /// A progress message at `done`/`total`.
-    fn progress(done: usize, total: usize) -> Self {
+    /// A progress message at `done`/`total`, naming the current entry.
+    fn progress(done: usize, total: usize, label: Option<String>) -> Self {
         ZipUpdate {
             done,
             total,
@@ -52,6 +56,7 @@ impl ZipUpdate {
             archives: 0,
             unchanged: 0,
             errors: 0,
+            label,
         }
     }
 
@@ -69,6 +74,7 @@ impl ZipUpdate {
             archives,
             unchanged,
             errors,
+            label: None,
         }
     }
 }
@@ -94,7 +100,7 @@ pub fn spawn_zip(
             })
             .collect();
         let total: usize = planned.iter().map(|(_, files)| files.len()).sum();
-        if sender.send(ZipUpdate::progress(0, total)).is_err() {
+        if sender.send(ZipUpdate::progress(0, total, None)).is_err() {
             return;
         }
 
@@ -105,10 +111,15 @@ pub fn spawn_zip(
         let mut errors = 0;
         for (job, files) in &planned {
             let base = done;
+            let name = job.name.clone();
             // Fingerprint the working tree (this reads every file once),
             // advancing the bar as we go.
             let source = archive::source_manifest(&job.src, files, |in_job| {
-                let _ = sender.send(ZipUpdate::progress(base + in_job, total));
+                let _ = sender.send(ZipUpdate::progress(
+                    base + in_job,
+                    total,
+                    Some(name.clone()),
+                ));
             });
             done = base + files.len();
 
@@ -122,7 +133,7 @@ pub fn spawn_zip(
                         .map_or_else(|| errors += 1, |()| archives += 1);
                 }
             }
-            let _ = sender.send(ZipUpdate::progress(done, total));
+            let _ = sender.send(ZipUpdate::progress(done, total, Some(name)));
         }
         let _ = zip_cache::save(&cache_path, &cache);
         let _ = sender
@@ -248,6 +259,7 @@ mod tests {
         let jobs = vec![ZipJob {
             src: src.to_path_buf(),
             dest: dest.to_path_buf(),
+            name: "repo".to_string(),
         }];
         let rx = spawn_zip(jobs, Vec::new(), cache.to_path_buf());
         let mut last = None;

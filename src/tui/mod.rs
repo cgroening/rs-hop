@@ -165,6 +165,8 @@ pub struct App {
     /// The progress-bar label for the current `loading` operation (a refresh or
     /// a ZIP backup).
     loading_label: &'static str,
+    /// The entry currently being zipped, appended to the progress-bar label.
+    loading_detail: Option<String>,
     /// Receives background ZIP-backup progress, drained each loop.
     zip_rx: Option<Receiver<ZipUpdate>>,
     /// Last ZIP-backup time per repo path, shown in the "ZIP Backup" column.
@@ -270,6 +272,7 @@ impl App {
             status_msg: None,
             loading: None,
             loading_label: REFRESH_LABEL,
+            loading_detail: None,
             zip_rx: None,
             zip_backups: HashMap::new(),
             cache_generated_at: cached.generated_at,
@@ -1438,6 +1441,7 @@ impl App {
             .map(|repo| ZipJob {
                 src: repo.path.clone(),
                 dest: backup_dest(&folder, repo, repos),
+                name: repo.display_name(),
             })
             .collect();
         if jobs.is_empty() {
@@ -1452,6 +1456,7 @@ impl App {
         });
         self.loading = Some((0, 0));
         self.loading_label = ZIP_LABEL;
+        self.loading_detail = None;
         self.zip_rx = Some(spawn_zip(
             jobs,
             self.config.zip_exclude_dirs.clone(),
@@ -1470,6 +1475,9 @@ impl App {
             match rx.try_recv() {
                 Ok(update) => {
                     self.loading = Some((update.done, update.total));
+                    if update.label.is_some() {
+                        self.loading_detail = update.label;
+                    }
                     if update.finished {
                         summary = Some((
                             update.archives,
@@ -1488,6 +1496,7 @@ impl App {
         if disconnected || summary.is_some() {
             self.loading = None;
             self.loading_label = REFRESH_LABEL;
+            self.loading_detail = None;
             self.reload_zip_backups();
             if let Some((archives, unchanged, errors)) = summary {
                 self.report_zip_done(archives, unchanged, errors);
@@ -2081,7 +2090,11 @@ impl App {
     /// while a refresh is running.
     fn render_info(&self, frame: &mut Frame, area: Rect) {
         if let Some((done, total)) = self.loading {
-            render_progress(frame, area, self.loading_label, done, total);
+            let label = match &self.loading_detail {
+                Some(name) => format!("{} {name}", self.loading_label),
+                None => self.loading_label.to_string(),
+            };
+            render_progress(frame, area, &label, done, total);
             return;
         }
         let icons = self.icons;

@@ -2,6 +2,8 @@
 
 Planned, not yet implemented (roughly in priority order):
 
+- [ ] Show the name of the repository currently being refreshed (after r/R was pressed or an program startup). Also show percentage during the creation of ZIP archives (z/Z). Text of the progress bar: `XX % - <Repository Name>` for refresh; `XX % (<file>/<number_of_files>) - <Name of Repo/Folder/File>` for zipping. Center the text as much as possible but find a smart place for it so the horizontal position / column number of `XX %` stays the same while the progress bar is running.
+
 - [x] **Repo scan / discovery.** A `hop scan <dir>` command that walks `<dir>` recursively, finds git work trees (a `.git` entry) and offers a bulk import into `config.toml` (skipping entries that already exist). The biggest time-saver for building the list initially. Reuse `RepoService::add` and the comment-preserving `config::writer`; keep the walk bounded and skip `node_modules`/hidden dirs.
 
 - [x] **`hop doctor` (CLI).** Reports problems without the TUI: missing paths, duplicate or invalid slugs, and entries marked `git` that are not repositories. Reuse `Repo::entry_error` and the existence-check logic; print a grouped, scriptable summary and exit non-zero when issues are found.
