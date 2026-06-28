@@ -119,7 +119,7 @@ pub fn render_table(
             }
         })
         .collect();
-    let table = Table::new(rows, widths(repos, view))
+    let table = Table::new(rows, widths(repos, view, table_area.width))
         .header(header_row(view))
         .column_spacing(1)
         .row_highlight_style(selection_style());
@@ -144,8 +144,13 @@ pub fn render_table(
 /// wider than it needs to be. Each text column is as wide as its longest cell
 /// (and header), floored at the configured minimum and capped at the configured
 /// maximum; remaining width is left unused. The Files tab keeps the path column
-/// flexible to use the leftover space.
-fn widths(repos: &[&Repo], view: &TableView) -> Vec<Constraint> {
+/// flexible to use the leftover space. On the git tabs the GitHub column yields
+/// width to the Name column when `available` is tight (Name has priority).
+fn widths(
+    repos: &[&Repo],
+    view: &TableView,
+    available: u16,
+) -> Vec<Constraint> {
     let cols = &view.config.column_widths;
     let name = sized(
         content_width(repos, |r| {
@@ -187,7 +192,7 @@ fn widths(repos: &[&Repo], view: &TableView) -> Vec<Constraint> {
                 6,
                 cols.status,
             );
-            let github = sized(
+            let github_desired = sized(
                 content_width(repos, |r| {
                     github_text(effective_info(r, view.example_mode))
                 }),
@@ -199,6 +204,14 @@ fn widths(repos: &[&Repo], view: &TableView) -> Vec<Constraint> {
                 "ZIP Backup".len(),
                 cols.zip_backup,
             );
+            // GitHub is the column that yields: it keeps its content width when
+            // there is room, but shrinks so the rigid columns (above all Name)
+            // are never squeezed.
+            let lead_cells: u16 = if view.has_selection { 3 } else { 2 };
+            let lead_width: u16 = if view.has_selection { 4 } else { 2 };
+            let spacing = (lead_cells + 5).saturating_sub(1); // column_spacing 1
+            let fixed = lead_width + name + branch + status + zip + spacing;
+            let github = github_width(github_desired, fixed, available);
             [
                 lead,
                 &[
@@ -235,6 +248,13 @@ fn sized(content: usize, header: usize, width: ColumnWidth) -> u16 {
         chosen = chosen.min(max.max(floor));
     }
     chosen as u16
+}
+
+/// The GitHub column width: its `desired` content width, but capped at the space
+/// left after the rigid columns (`fixed`) so Name and friends are never
+/// squeezed. Shrinks toward 0 when tight; never overflows the row.
+fn github_width(desired: u16, fixed: u16, available: u16) -> u16 {
+    desired.min(available.saturating_sub(fixed))
 }
 
 /// The status text used both to render and to size the status column.
@@ -413,5 +433,29 @@ fn type_label(repo: &Repo) -> &'static str {
         "folder"
     } else {
         "file"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::github_width;
+
+    #[test]
+    fn github_keeps_content_width_when_there_is_room() {
+        // Plenty of space: GitHub shows its full content width.
+        assert_eq!(github_width(20, 60, 200), 20);
+    }
+
+    #[test]
+    fn github_yields_width_when_tight() {
+        // 90 wide, 64 taken by the rigid columns: GitHub shrinks from 39 to 26
+        // so Name (inside `fixed`) keeps its width.
+        assert_eq!(github_width(39, 64, 90), 26);
+    }
+
+    #[test]
+    fn github_collapses_rather_than_overflowing() {
+        // No room left: GitHub goes to 0 instead of pushing the row over.
+        assert_eq!(github_width(39, 95, 90), 0);
     }
 }
