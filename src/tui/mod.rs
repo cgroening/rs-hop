@@ -831,7 +831,7 @@ impl App {
             }
             KeyCode::Char('*') => self.toggle_fav(),
             KeyCode::Char('z') => self.zip_targets(),
-            KeyCode::Char('Z') => self.zip_all_git(),
+            KeyCode::Char('Z') => self.zip_all(),
             KeyCode::Char('y') => self.copy_path(),
             KeyCode::Char('b') => self.open_on_github(),
             KeyCode::Char('v') => self.cycle_preview(),
@@ -1381,33 +1381,32 @@ impl App {
     /// Zips the target git entries (selection or cursor) into the backup folder.
     /// Non-git entries are ignored; a lone non-git cursor reports a hint.
     fn zip_targets(&mut self) {
-        let git: Vec<usize> = self
-            .targets()
-            .into_iter()
-            .filter(|&i| {
-                self.service.get(i).is_some_and(|r| r.kind == RepoKind::Git)
-            })
-            .collect();
-        if git.is_empty() {
-            self.set_status("not a git repo");
+        // An explicit single/selection backup ignores the include flag: the
+        // user is targeting these entries on purpose. Git repos and folders
+        // both qualify; missing/non-folder paths are dropped in `start_zip`.
+        let targets = self.targets();
+        if targets.is_empty() {
+            self.set_status("nothing to zip");
             return;
         }
-        self.start_zip(&git);
+        self.start_zip(&targets);
         self.clear_selection();
     }
 
-    /// Zips every git repository (across all tabs) into the backup folder.
-    fn zip_all_git(&mut self) {
+    /// Zips every entry (across all tabs) that opts into the "backup all" run
+    /// into the backup folder: all git repos plus the file/folder entries whose
+    /// backup toggle is on.
+    fn zip_all(&mut self) {
         let indices: Vec<usize> = self
             .service
             .repos()
             .iter()
             .enumerate()
-            .filter(|(_, repo)| repo.kind == RepoKind::Git)
+            .filter(|(_, repo)| repo.include_in_backup)
             .map(|(index, _)| index)
             .collect();
         if indices.is_empty() {
-            self.set_status("no git repos to zip");
+            self.set_status("nothing to zip");
             return;
         }
         self.start_zip(&indices);
@@ -1540,7 +1539,8 @@ impl App {
         };
         let folder = expand_tilde(folder);
         let repos = self.service.repos();
-        for repo in repos.iter().filter(|repo| repo.kind == RepoKind::Git) {
+        // Both git repos and file/folder entries can have a backup archive.
+        for repo in repos.iter() {
             let dest = backup_dest(&folder, repo, repos);
             if let Ok(meta) = std::fs::metadata(&dest)
                 && let Ok(modified) = meta.modified()
@@ -1863,6 +1863,7 @@ fn apply_draft(repo: &mut Repo, draft: RepoDraft, path: PathBuf) {
     repo.section = draft.section;
     repo.kind = draft.kind;
     repo.fav = draft.fav;
+    repo.include_in_backup = draft.include_in_backup;
 }
 
 /// Whether `key` is the global quit chord (`Ctrl+Q`).
@@ -2301,6 +2302,7 @@ impl App {
             has_selection: !self.selected.is_empty(),
             missing: &self.files_missing,
             show_slugs: self.show_slugs,
+            zip_backups: &self.zip_backups,
             offset: &self.list_offset,
         };
         sections_view::render(frame, area, cursor, &view);
@@ -2407,10 +2409,9 @@ fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
     hints.extend([("n", "add"), ("e", "edit"), ("d/Del", "del")]);
     hints.push(("u", "undo"));
     hints.push(("*", "fav"));
-    // Git repos can be backed up as ZIP archives (z: target, Z: all repos).
-    if tab != Tab::FilesAndFolders {
-        hints.push(("z/Z", "zip"));
-    }
+    // Git repos and folders can be backed up as ZIP archives (z: target, Z:
+    // every entry opted into the backup).
+    hints.push(("z/Z", "zip"));
     // Archive tab restores; the others archive.
     hints.push(match tab {
         Tab::Archive => ("A", "restore"),

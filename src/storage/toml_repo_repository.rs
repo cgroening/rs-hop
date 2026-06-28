@@ -44,6 +44,9 @@ struct RawRepo {
     #[serde(default)]
     archived: bool,
     section: Option<String>,
+    /// `None` (field absent) resolves to a kind-dependent default in
+    /// [`RawRepo::into_repo`]; an explicit value overrides it.
+    include_in_backup: Option<bool>,
     kind: Option<String>,
     example_git_info: Option<RawGitInfo>,
 }
@@ -68,6 +71,8 @@ impl RawRepo {
         repo.kind = self
             .kind
             .map_or(RepoKind::Git, |k| RepoKind::from_config_value(&k));
+        repo.include_in_backup =
+            self.include_in_backup.unwrap_or(repo.kind == RepoKind::Git);
         repo.example_git_info =
             self.example_git_info.map(RawGitInfo::into_info);
         repo
@@ -156,8 +161,32 @@ example_git_info = { current_branch_name = "main", status = "✓" }
         assert_eq!(repos[0].kind, RepoKind::Git);
         assert_eq!(repos[1].kind, RepoKind::Path);
         assert!(repos[1].archived);
+        // Absent backup flag defaults per kind: git included, path excluded.
+        assert!(repos[0].include_in_backup);
+        assert!(!repos[1].include_in_backup);
         let info = repos[1].example_git_info.as_ref().unwrap();
         assert_eq!(info.raw_status.as_deref(), Some("✓"));
+    }
+
+    #[test]
+    fn reads_explicit_include_in_backup_overriding_kind_default() {
+        let raw: RawFile = toml::from_str(
+            r#"
+[[repos]]
+path = "/code/hop"
+include_in_backup = false
+
+[[repos]]
+path = "/notes"
+kind = "folder"
+include_in_backup = true
+"#,
+        )
+        .unwrap();
+        let repos: Vec<Repo> =
+            raw.repos.into_iter().map(RawRepo::into_repo).collect();
+        assert!(!repos[0].include_in_backup);
+        assert!(repos[1].include_in_backup);
     }
 
     #[test]

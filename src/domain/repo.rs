@@ -151,6 +151,10 @@ pub struct Repo {
     /// The user section this entry belongs to (Files tab grouping); `None`
     /// means the implicit "Ungrouped" section.
     pub section: Option<String>,
+    /// Whether the "backup all" (`Z`) run includes this entry. Defaults to
+    /// `true` for git repos and `false` for file/folder entries; a single-entry
+    /// `z` backup ignores it.
+    pub include_in_backup: bool,
     /// What the entry points at.
     pub kind: RepoKind,
     /// Demo git info shown when `example_mode` is on.
@@ -173,6 +177,7 @@ impl Repo {
             fav: false,
             archived: false,
             section: None,
+            include_in_backup: true,
             kind: RepoKind::Git,
             example_git_info: None,
             git_info: None,

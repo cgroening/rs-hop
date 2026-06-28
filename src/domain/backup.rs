@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use crate::domain::repo::{Repo, RepoKind};
+use crate::domain::repo::Repo;
 use crate::domain::slug;
 
 /// Fallback base name when a repo's display name slugifies to nothing.
@@ -36,13 +36,13 @@ pub(crate) fn base_name(repo: &Repo) -> String {
     base
 }
 
-/// Whether another git repo in `repos` produces the same `base` name (so `repo`
+/// Whether another entry in `repos` produces the same `base` name (so `repo`
 /// needs a disambiguating suffix). `repo` is matched by path, not skipped by
-/// position, so duplicate-path configs still count as a collision.
+/// position, so duplicate-path configs still count as a collision. Both git
+/// repos and file/folder entries are considered, since both produce archives.
 fn shares_base_name(repo: &Repo, repos: &[Repo], base: &str) -> bool {
     repos
         .iter()
-        .filter(|other| other.kind == RepoKind::Git)
         .filter(|other| other.path != repo.path)
         .any(|other| base_name(other) == base)
 }
@@ -61,13 +61,13 @@ fn short_hash(path: &Path) -> String {
     format!("{:08x}", hash & 0xffff_ffff)
 }
 
-/// Git repos that share a base backup name (before disambiguation), as
+/// Entries that share a base backup name (before disambiguation), as
 /// `(base, display names)` pairs sorted by base name. Backs the `hop doctor`
-/// duplicate-backup-name check.
+/// duplicate-backup-name check; both git repos and file/folder entries count.
 pub fn duplicate_base_names(repos: &[Repo]) -> Vec<(String, Vec<String>)> {
     use std::collections::BTreeMap;
     let mut by_base: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for repo in repos.iter().filter(|r| r.kind == RepoKind::Git) {
+    for repo in repos.iter() {
         by_base
             .entry(base_name(repo))
             .or_default()
@@ -88,7 +88,6 @@ mod tests {
     fn git(name: &str, path: &str) -> Repo {
         let mut repo = Repo::new(PathBuf::from(path));
         repo.name = Some(name.to_string());
-        repo.kind = RepoKind::Git;
         repo
     }
 
@@ -113,6 +112,17 @@ mod tests {
         assert_ne!(a, b);
         assert!(a.starts_with("mdtask-") && a.ends_with(".zip"));
         assert!(b.starts_with("mdtask-") && b.ends_with(".zip"));
+    }
+
+    #[test]
+    fn git_and_folder_sharing_a_base_name_both_get_suffixes() {
+        let mut folder = git("mdtask", "/notes/mdtask");
+        folder.kind = crate::domain::repo::RepoKind::Path;
+        let repos = vec![git("mdtask", "/code/rust/mdtask"), folder];
+        let a = backup_filename(&repos[0], &repos);
+        let b = backup_filename(&repos[1], &repos);
+        assert_ne!(a, b);
+        assert!(a.starts_with("mdtask-") && b.starts_with("mdtask-"));
     }
 
     #[test]

@@ -7,9 +7,10 @@
 //! cursor itself is an entry display position (headers are purely visual).
 
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use chrono::{DateTime, Local};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -31,6 +32,8 @@ const NAME_MIN: usize = 4;
 const NAME_MAX: usize = 30;
 /// Fixed width of the type column (git / folder / file).
 const TYPE_WIDTH: usize = 6;
+/// Fixed width of the ZIP Backup column (fits a `YYYY-MM-DD` date).
+const ZIP_WIDTH: usize = 10;
 
 /// The styling context for a sectioned render, bundled to keep the parameter
 /// count low.
@@ -49,6 +52,8 @@ pub struct SectionedView<'a> {
     pub missing: &'a HashSet<PathBuf>,
     /// Whether to show each entry's slug (dim, italic) after its name.
     pub show_slugs: bool,
+    /// Last ZIP-backup time per entry path, for the "ZIP Backup" column.
+    pub zip_backups: &'a HashMap<PathBuf, DateTime<Local>>,
     /// The scroll offset carried across frames.
     pub offset: &'a Cell<usize>,
 }
@@ -195,10 +200,11 @@ fn entry_item<'a>(
     );
     let kind = pad(type_label(repo), TYPE_WIDTH);
     // Cells before the path: lead(2) + marker(1) + fav(1) + space(1) + name
-    //  + gap(2) + type + gap(2).
-    let used = 2 + 1 + 1 + 1 + name_width + 2 + TYPE_WIDTH + 2;
-    let path =
-        truncate(&repo.path.to_string_lossy(), width.saturating_sub(used));
+    //  + gap(2) + type + gap(2); the path then fills up to the trailing
+    // gap(2) + ZIP-backup column at the right edge.
+    let used = 2 + 1 + 1 + 1 + name_width + 2 + TYPE_WIDTH + 2 + 2 + ZIP_WIDTH;
+    let path = pad(&repo.path.to_string_lossy(), width.saturating_sub(used));
+    let zip = format!("{:>ZIP_WIDTH$}", zip_cell_text(repo, view));
 
     let mut spans = vec![
         lead,
@@ -212,6 +218,8 @@ fn entry_item<'a>(
         Span::raw(kind),
         Span::raw("  "),
         Span::styled(path, Style::default().fg(DIM)),
+        Span::raw("  "),
+        Span::styled(zip, Style::default().fg(DIM)),
     ]);
     let item = ListItem::new(Line::from(spans));
     if selected {
@@ -301,6 +309,18 @@ fn pad(text: &str, width: usize) -> String {
     } else {
         format!("{text}{}", " ".repeat(width - len))
     }
+}
+
+/// The ZIP Backup cell text for `repo`: the excluded marker when the entry opts
+/// out of the "backup all" run, else the last-backup date (`YYYY-MM-DD`) or a
+/// dash when never backed up.
+fn zip_cell_text(repo: &Repo, view: &SectionedView) -> String {
+    if !repo.include_in_backup {
+        return view.icons.excluded.to_string();
+    }
+    view.zip_backups
+        .get(&repo.path)
+        .map_or_else(|| "-".to_string(), |dt| dt.format("%Y-%m-%d").to_string())
 }
 
 /// The detected type label for an entry on the Files tab.

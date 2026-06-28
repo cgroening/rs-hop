@@ -32,6 +32,7 @@ enum Field {
     Slug,
     Kind,
     Fav,
+    Backup,
 }
 
 /// The values captured by the form on save.
@@ -48,6 +49,8 @@ pub struct RepoDraft {
     pub kind: RepoKind,
     /// Whether the entry is a favourite.
     pub fav: bool,
+    /// Whether the "backup all" (`Z`) run includes this entry.
+    pub include_in_backup: bool,
 }
 
 /// Outcome of feeding a key to the form.
@@ -70,6 +73,7 @@ pub struct RepoForm {
     slug: TextInput,
     kind: RepoKind,
     fav: bool,
+    include_in_backup: bool,
     /// The section options offered by the dropdown: `None` (Ungrouped) first,
     /// then each known section.
     section_options: Vec<Option<String>>,
@@ -82,9 +86,20 @@ pub struct RepoForm {
 }
 
 impl RepoForm {
-    /// A blank add form, seeded with a `path` and guessed `kind`.
+    /// A blank add form, seeded with a `path` and guessed `kind`. The backup
+    /// toggle defaults per kind: on for git repos, off for file/folder entries.
     pub fn for_add(path: &str, kind: RepoKind, sections: &[String]) -> Self {
-        Self::build("Add entry", "", path, "", kind, false, None, sections)
+        Self::build(
+            "Add entry",
+            "",
+            path,
+            "",
+            kind,
+            false,
+            kind == RepoKind::Git,
+            None,
+            sections,
+        )
     }
 
     /// An edit form seeded from an existing entry's fields.
@@ -96,6 +111,7 @@ impl RepoForm {
             repo.slug.as_deref().unwrap_or(""),
             repo.kind,
             repo.fav,
+            repo.include_in_backup,
             repo.section.clone(),
             sections,
         )
@@ -110,6 +126,7 @@ impl RepoForm {
         slug: &str,
         kind: RepoKind,
         fav: bool,
+        include_in_backup: bool,
         section: Option<String>,
         sections: &[String],
     ) -> Self {
@@ -123,6 +140,7 @@ impl RepoForm {
             slug: TextInput::new(slug),
             kind,
             fav,
+            include_in_backup,
             section_options,
             section_choice,
             seed_section: section,
@@ -144,7 +162,8 @@ impl RepoForm {
                 fields.push(Field::Slug);
             }
         }
-        // Kind sits at the very bottom in every layout.
+        // The backup toggle shows for both kinds; Kind sits at the very bottom.
+        fields.push(Field::Backup);
         fields.push(Field::Kind);
         fields
     }
@@ -198,6 +217,11 @@ impl RepoForm {
             Field::Fav => {
                 if key.code == KeyCode::Char(' ') {
                     self.fav = !self.fav;
+                }
+            }
+            Field::Backup => {
+                if key.code == KeyCode::Char(' ') {
+                    self.include_in_backup = !self.include_in_backup;
                 }
             }
         }
@@ -288,6 +312,7 @@ impl RepoForm {
             section,
             kind: self.kind,
             fav: self.fav,
+            include_in_backup: self.include_in_backup,
         }
     }
 
@@ -332,6 +357,7 @@ impl RepoForm {
                 self.choice_line("Kind", kind_label(self.kind), index)
             }
             Field::Fav => self.fav_line(index),
+            Field::Backup => self.backup_line(index),
         }
     }
 
@@ -367,6 +393,16 @@ impl RepoForm {
         let mark = if self.fav { "[x]" } else { "[ ]" };
         let spans =
             vec![self.label_span("Fav", index), Span::raw(mark.to_string())];
+        self.styled(spans, index)
+    }
+
+    /// The "include in backup all (`Z`)" toggle line.
+    fn backup_line(&self, index: usize) -> Line<'static> {
+        let mark = if self.include_in_backup { "[x]" } else { "[ ]" };
+        let spans = vec![
+            self.label_span("Backup", index),
+            Span::raw(mark.to_string()),
+        ];
         self.styled(spans, index)
     }
 
@@ -495,5 +531,18 @@ mod tests {
         let folder = RepoForm::for_add("/p", RepoKind::Path, &[]);
         assert!(folder.fields().contains(&Field::Section));
         assert!(!folder.fields().contains(&Field::Fav));
+
+        // The backup toggle shows for both kinds.
+        assert!(git.fields().contains(&Field::Backup));
+        assert!(folder.fields().contains(&Field::Backup));
+    }
+
+    #[test]
+    fn for_add_seeds_backup_toggle_per_kind() {
+        // Git repos default to included, file/folder entries to excluded.
+        let git = RepoForm::for_add("/p", RepoKind::Git, &[]);
+        assert!(git.draft().include_in_backup);
+        let folder = RepoForm::for_add("/p", RepoKind::Path, &[]);
+        assert!(!folder.draft().include_in_backup);
     }
 }

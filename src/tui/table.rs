@@ -419,9 +419,13 @@ fn github_text(info: Option<&GitInfo>) -> String {
         .unwrap_or_else(|| "-".to_string())
 }
 
-/// The last-ZIP-backup date for `repo` (`YYYY-MM-DD`), or a dash when never
-/// backed up. Read from the precomputed map (no filesystem I/O here).
+/// The ZIP Backup cell text for `repo`: the excluded marker when the entry opts
+/// out of the "backup all" run, else the last-backup date (`YYYY-MM-DD`) or a
+/// dash when never backed up. Read from the precomputed map (no filesystem I/O).
 fn zip_date_text(repo: &Repo, view: &TableView) -> String {
+    if !repo.include_in_backup {
+        return view.icons.excluded.to_string();
+    }
     view.zip_backups
         .get(&repo.path)
         .map_or_else(|| "-".to_string(), |dt| dt.format("%Y-%m-%d").to_string())

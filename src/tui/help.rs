@@ -74,8 +74,14 @@ const SHORTCUTS: &[(&str, &str)] = &[
         "undo the last change (delete / archive / favourite / edit)",
     ),
     ("*", "toggle favourite (selection or cursor)"),
-    ("z", "zip the selected/cursor git repo to the backup folder"),
-    ("Z", "zip all git repos to the backup folder"),
+    (
+        "z",
+        "zip the selected/cursor repo or folder to the backup folder",
+    ),
+    (
+        "Z",
+        "zip every entry opted into backup (form 'Backup' toggle)",
+    ),
     ("A", "archive / restore (selection or cursor)"),
     ("S", "set or change the slug"),
     ("i", "toggle showing slugs (dim, italic) after the name"),

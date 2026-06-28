@@ -37,17 +37,20 @@ for a one-word jump, sort modes and repair for paths that have moved.
 - **Sort modes**: by name, most recently used, frecency (frequency weighted by
   recency), or a custom drag order; favourites are pinned to the top (except in
   the recent view).
-- **ZIP backups**: `z` zips the selected/cursor git repo and `Z` zips all git
-  repos into `zip_backup_folder`, excluding build artefacts (`zip_exclude_dirs`,
-  matched as a name prefix so `target` also covers `target.nosync`) but keeping
-  `.git`. The archive is named after
-  the entry (the slugified name, e.g. `(rs) mdtask` → `rs-mdtask.zip`); two repos
-  with the same name each get a short path-hash suffix so neither is overwritten
-  (`hop doctor` reports such name clashes). A repo is only (re)written when its
-  content changed since the last backup (name + size + CRC32 comparison), so
-  unchanged archives are left untouched and not re-uploaded by cloud sync.
-  Progress shows in the header bar; the Git Repos and Archive tabs gain a
-  `ZIP Backup` column with each repo's last-backup date.
+- **ZIP backups**: `z` zips the selected/cursor entry (git repo or folder) and
+  `Z` zips every entry opted into the backup into `zip_backup_folder`, excluding
+  build artefacts (`zip_exclude_dirs`, matched as a name prefix so `target` also
+  covers `target.nosync`) but keeping `.git`. The backup membership is the
+  `Backup` toggle in the add/edit form: git repos are included by default,
+  file/folder entries excluded by default; `z` ignores it (an explicit target is
+  always backed up). Excluded entries show a `⊘` marker in the `ZIP Backup`
+  column. The archive is named after the entry (the slugified name, e.g.
+  `(rs) mdtask` → `rs-mdtask.zip`); two entries with the same name each get a
+  short path-hash suffix so neither is overwritten (`hop doctor` reports such
+  name clashes). A repo is only (re)written when its content changed since the
+  last backup (name + size + CRC32 comparison), so unchanged archives are left
+  untouched and not re-uploaded by cloud sync. Progress shows in the header bar;
+  all three tabs show a `ZIP Backup` column with each entry's last-backup date.
 - **Detail panel** (`v`): an optional pane (right or bottom) with the entry's
   details and a recent `git log`.
 - **Missing-path marker** (a red `!`) with a picker that opens at the closest
@@ -156,7 +159,7 @@ example_mode = false           # show example_git_info instead of real status
 fetch_on_start = false         # git fetch in the background when hop starts
 # editor = "nvim"              # for opening text files; else $VISUAL / $EDITOR
 # editor_extensions = ["rs", "md", "txt"]  # override the built-in text list
-# zip_backup_folder = "~/Backups/repos"    # where z / Z write repo ZIP backups
+# zip_backup_folder = "~/Backups/repos"    # where z / Z write ZIP backups
 # zip_exclude_dirs = ["target", "node_modules"]  # omit for the built-in list
 
 [icons]
@@ -231,8 +234,8 @@ hop config-path     print the resolved config file path
 | `d` / `Del` / `Backspace` | delete (acts on the selection, else the cursor; confirm) |
 | `u` | undo the last change |
 | `*` | toggle favourite (selection or cursor) |
-| `z` | zip the selected/cursor git repo to the backup folder |
-| `Z` | zip all git repos to the backup folder |
+| `z` | zip the selected/cursor entry (repo or folder) to the backup folder |
+| `Z` | zip every entry opted into backup (the form's `Backup` toggle) |
 | `A` | archive / restore (selection or cursor) |
 | `S` | set or change the slug |
 | `i` | toggle showing slugs (dim, italic) after the name |

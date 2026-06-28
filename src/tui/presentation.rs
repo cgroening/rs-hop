@@ -45,6 +45,8 @@ pub struct IconSet {
     pub clock: &'static str,
     /// Remote (last fetched) marker in the info line.
     pub remote: &'static str,
+    /// Marker shown when an entry is excluded from the "backup all" (`Z`) run.
+    pub excluded: &'static str,
     /// Animation frames for the "refreshing" spinner (single-cell each).
     pub spinner: &'static [&'static str],
 }
@@ -73,6 +75,7 @@ impl IconSet {
                 sort: "\u{2195}",      // ↕
                 clock: "\u{21bb}",     // ↻
                 remote: "\u{21a7}",    // ↧
+                excluded: "\u{2298}",  // ⊘
                 spinner: UNICODE_SPINNER,
             },
             IconVariant::Ascii => IconSet {
@@ -86,6 +89,7 @@ impl IconSet {
                 sort: "~",
                 clock: "@",
                 remote: "v",
+                excluded: "x",
                 spinner: ASCII_SPINNER,
             },
         }

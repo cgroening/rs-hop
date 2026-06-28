@@ -12,7 +12,7 @@ use std::path::Path;
 use toml_edit::{ArrayOfTables, DocumentMut, InlineTable, Item, Table, Value};
 
 use crate::domain::error::{Error, Result};
-use crate::domain::repo::{GitInfo, Repo};
+use crate::domain::repo::{GitInfo, Repo, RepoKind};
 
 /// Writes `repos` into the `config.toml` at `path`, preserving the settings
 /// block and creating the file (and parent directory) when absent.
@@ -116,6 +116,11 @@ fn repo_table(repo: &Repo) -> Table {
     if let Some(section) = &repo.section {
         table["section"] = toml_edit::value(section.clone());
     }
+    // Only persisted when it deviates from the kind default (git: included,
+    // path: excluded), so the common case adds no noise to the config.
+    if repo.include_in_backup != (repo.kind == RepoKind::Git) {
+        table["include_in_backup"] = toml_edit::value(repo.include_in_backup);
+    }
     if let Some(info) = &repo.example_git_info {
         table["example_git_info"] =
             Item::Value(Value::InlineTable(example_info_inline(info)));
@@ -190,6 +195,27 @@ path = "/old"
         let parsed: toml::Value = toml::from_str(&out).unwrap();
         let repos = parsed.get("repos").and_then(|r| r.as_array()).unwrap();
         assert_eq!(repos.len(), 2);
+    }
+
+    #[test]
+    fn writes_include_in_backup_only_when_off_kind_default() {
+        // Git default (included) and path default (excluded): nothing written.
+        let git = repo("hop", "/code/hop");
+        let mut folder = repo("notes", "/notes");
+        folder.kind = RepoKind::Path;
+        folder.include_in_backup = false;
+        let out = repos_to_toml("", &[git, folder]).unwrap();
+        assert!(!out.contains("include_in_backup"));
+
+        // Git excluded and path included: both deviate, both written.
+        let mut git_off = repo("hop", "/code/hop");
+        git_off.include_in_backup = false;
+        let mut folder_on = repo("notes", "/notes");
+        folder_on.kind = RepoKind::Path;
+        folder_on.include_in_backup = true;
+        let out = repos_to_toml("", &[git_off, folder_on]).unwrap();
+        assert_eq!(out.matches("include_in_backup = false").count(), 1);
+        assert_eq!(out.matches("include_in_backup = true").count(), 1);
     }
 
     #[test]

@@ -38,6 +38,7 @@ fav = true
 path = "/notes"
 kind = "folder"
 archived = true
+include_in_backup = true
 "#;
 
 #[test]
@@ -52,6 +53,9 @@ fn toml_backend_round_trips_and_preserves_settings() {
     assert_eq!(repos[0].slug.as_deref(), Some("hop"));
     assert_eq!(repos[1].kind, RepoKind::Path);
     assert!(repos[1].archived);
+    // Git default is included; the folder opts in explicitly.
+    assert!(repos[0].include_in_backup);
+    assert!(repos[1].include_in_backup);
 
     // Mutate and persist, then reload through a fresh backend.
     repos[0].fav = false;
@@ -60,6 +64,8 @@ fn toml_backend_round_trips_and_preserves_settings() {
         .find_all()
         .unwrap();
     assert!(!reloaded[0].fav);
+    // The folder's opt-in survives the rewrite (deviates from path default).
+    assert!(reloaded[1].include_in_backup);
 
     // Settings (and the comment) survive the rewrite.
     let config = load_config(&config_path).unwrap();
