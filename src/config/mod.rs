@@ -22,8 +22,8 @@ pub const DEFAULT_EDITOR_EXTENSIONS: &[&str] = &[
 ];
 
 /// Directory names excluded from a repo ZIP backup (`z`/`Z`): build artefacts
-/// and caches that are regenerated and would only bloat the archive. Matched by
-/// directory name at any depth; a `<name>.nosync` sibling is excluded too.
+/// and caches that are regenerated and would only bloat the archive. Matched as
+/// a name prefix at any depth (so `target` also covers `target.nosync`).
 /// Overridable via the `zip_exclude_dirs` config key.
 pub const DEFAULT_ZIP_EXCLUDE_DIRS: &[&str] = &[
     "target",

@@ -22,8 +22,9 @@ example_mode = false
 # this folder. The file is named after the entry (slugified, e.g. rs-mdtask.zip);
 # same-named repos get a short path-hash suffix. A leading ~ is expanded.
 # zip_backup_folder = "~/Backups/repos"
-# Directory names excluded from a backup (a <name>.nosync sibling too). Omit to
-# use the built-in default list (target, node_modules, dist, build, …).
+# Directory names excluded from a backup (matched as a name prefix, so "target"
+# also covers "target.nosync"). Omit to use the built-in default list
+# (target, node_modules, dist, build, …).
 # zip_exclude_dirs = ["target", "node_modules", "dist", "build"]
 
 # Section order for the Files and Folders tab.

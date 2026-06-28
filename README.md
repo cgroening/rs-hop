@@ -39,7 +39,8 @@ for a one-word jump, sort modes and repair for paths that have moved.
   the recent view).
 - **ZIP backups**: `z` zips the selected/cursor git repo and `Z` zips all git
   repos into `zip_backup_folder`, excluding build artefacts (`zip_exclude_dirs`,
-  plus their `.nosync` siblings) but keeping `.git`. The archive is named after
+  matched as a name prefix so `target` also covers `target.nosync`) but keeping
+  `.git`. The archive is named after
   the entry (the slugified name, e.g. `(rs) mdtask` → `rs-mdtask.zip`); two repos
   with the same name each get a short path-hash suffix so neither is overwritten
   (`hop doctor` reports such name clashes). Progress shows in the header bar; the

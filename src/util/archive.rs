@@ -1,9 +1,10 @@
 //! Builds a ZIP archive of a repository for the `z`/`Z` backup.
 //!
 //! [`collect_files`] does a hand-rolled `std::fs` walk (no extra walk
-//! dependency), pruning whole subtrees whose directory name is an excluded
-//! build artefact (and its `.nosync` sibling), but keeping hidden directories
-//! such as `.git` so the archive stays a restorable repository. [`write_zip`]
+//! dependency), pruning whole subtrees whose directory name starts with an
+//! excluded build-artefact prefix (so `target` also covers `target.nosync`),
+//! but keeping hidden directories such as `.git` so the archive stays a
+//! restorable repository. [`write_zip`]
 //! deflates the gathered files into the destination, preserving the top-level
 //! folder name and reporting per-file progress.
 
@@ -48,11 +49,14 @@ fn walk(dir: &Path, exclude_dirs: &[String], files: &mut Vec<PathBuf>) {
     }
 }
 
-/// Whether a directory `name` is excluded: it is listed directly, or it is a
-/// `<listed>.nosync` sibling (this project itself builds into `target.nosync`).
+/// Whether a directory `name` is excluded: its name starts with any entry in
+/// `exclude_dirs` (so e.g. `target` also prunes `target.nosync` and
+/// `target-old`). Empty entries are ignored so a stray `""` cannot prune
+/// everything.
 fn is_excluded(name: &str, exclude_dirs: &[String]) -> bool {
-    let stem = name.strip_suffix(".nosync").unwrap_or(name);
-    exclude_dirs.iter().any(|dir| dir == name || dir == stem)
+    exclude_dirs
+        .iter()
+        .any(|dir| !dir.is_empty() && name.starts_with(dir.as_str()))
 }
 
 /// Writes `files` (gathered from `root`) as a deflated ZIP at `dest`,
@@ -165,16 +169,21 @@ mod tests {
     }
 
     #[test]
-    fn collect_prunes_nested_and_nosync_variants() {
+    fn collect_prunes_nested_and_prefix_variants() {
         let tree = TempTree::new("nested");
         tree.write("a/keep.txt", "k");
         tree.write("a/b/target/junk", "j");
+        // Any directory starting with an excluded name is pruned (not just an
+        // exact match or a `.nosync` sibling).
         tree.write("target.nosync/debug/app", "b");
+        tree.write("target-old/stale", "o");
         tree.write("a/node_modules.nosync/dep/x.js", "n");
+        // A directory that does not start with an excluded name is kept.
+        tree.write("docs/notes.md", "d");
 
         let files = collect_files(&tree.root, &excludes());
         let names = relative_names(&tree.root, &files);
-        assert_eq!(names, vec!["a/keep.txt"]);
+        assert_eq!(names, vec!["a/keep.txt", "docs/notes.md"]);
     }
 
     #[test]
