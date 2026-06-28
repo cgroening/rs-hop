@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
+use crate::domain::backup;
 use crate::domain::repo::{Repo, RepoKind};
 use crate::domain::slug;
 
@@ -43,6 +44,14 @@ pub enum Issue {
         /// Display names of the entries sharing the slug.
         names: Vec<String>,
     },
+    /// Several git entries map to the same ZIP-backup base name (each gets a
+    /// path-hash suffix so no archive is lost, but the names are worth fixing).
+    DuplicateBackupName {
+        /// The backup base name shared by several entries.
+        name: String,
+        /// Display names of the entries sharing the backup name.
+        names: Vec<String>,
+    },
 }
 
 impl fmt::Display for Issue {
@@ -59,6 +68,13 @@ impl fmt::Display for Issue {
             }
             Issue::DuplicateSlug { slug, names } => {
                 write!(f, "duplicate slug '{slug}': {}", names.join(", "))
+            }
+            Issue::DuplicateBackupName { name, names } => {
+                write!(
+                    f,
+                    "duplicate ZIP-backup name '{name}': {}",
+                    names.join(", ")
+                )
             }
         }
     }
@@ -97,7 +113,17 @@ pub fn diagnose(
         }
     }
     issues.extend(duplicate_slugs(repos));
+    issues.extend(duplicate_backup_names(repos));
     issues
+}
+
+/// The git entries that share a ZIP-backup base name, as `DuplicateBackupName`
+/// issues. Reuses the pure naming from [`backup::duplicate_base_names`].
+fn duplicate_backup_names(repos: &[Repo]) -> Vec<Issue> {
+    backup::duplicate_base_names(repos)
+        .into_iter()
+        .map(|(name, names)| Issue::DuplicateBackupName { name, names })
+        .collect()
 }
 
 /// The slugs shared by more than one entry, as `DuplicateSlug` issues.

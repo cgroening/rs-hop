@@ -38,10 +38,13 @@ for a one-word jump, sort modes and repair for paths that have moved.
   recency), or a custom drag order; favourites are pinned to the top (except in
   the recent view).
 - **ZIP backups**: `z` zips the selected/cursor git repo and `Z` zips all git
-  repos into `zip_backup_folder` as `<repo-folder>.zip` (overwriting), excluding
-  build artefacts (`zip_exclude_dirs`, plus their `.nosync` siblings) but keeping
-  `.git`. Progress shows in the header bar; the Git Repos and Archive tabs gain a
-  `ZIP Backup` column with each repo's last-backup date.
+  repos into `zip_backup_folder`, excluding build artefacts (`zip_exclude_dirs`,
+  plus their `.nosync` siblings) but keeping `.git`. The archive is named after
+  the entry (the slugified name, e.g. `(rs) mdtask` → `rs-mdtask.zip`); two repos
+  with the same name each get a short path-hash suffix so neither is overwritten
+  (`hop doctor` reports such name clashes). Progress shows in the header bar; the
+  Git Repos and Archive tabs gain a `ZIP Backup` column with each repo's
+  last-backup date.
 - **Detail panel** (`v`): an optional pane (right or bottom) with the entry's
   details and a recent `git log`.
 - **Missing-path marker** (a red `!`) with a picker that opens at the closest

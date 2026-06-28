@@ -19,7 +19,8 @@ example_mode = false
 # editor_extensions = ["rs", "md", "txt"]   # override the built-in text list
 
 # ZIP backups: z zips the selected/cursor git repo, Z zips all git repos, into
-# this folder as <repo-folder>.zip (overwriting). A leading ~ is expanded.
+# this folder. The file is named after the entry (slugified, e.g. rs-mdtask.zip);
+# same-named repos get a short path-hash suffix. A leading ~ is expanded.
 # zip_backup_folder = "~/Backups/repos"
 # Directory names excluded from a backup (a <name>.nosync sibling too). Omit to
 # use the built-in default list (target, node_modules, dist, build, …).

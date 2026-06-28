@@ -42,6 +42,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 pub use terminal::Tui;
 
 use crate::config::Config;
+use crate::domain::backup;
 use crate::domain::filter::{Tab, belongs_to_tab, fuzzy_indices};
 use crate::domain::path_repair::nearest_existing_on_disk;
 use crate::domain::repo::{self, Repo, RepoKind};
@@ -1420,13 +1421,17 @@ impl App {
             self.set_status(format!("could not create backup folder: {error}"));
             return;
         }
+        let repos = self.service.repos();
         let jobs: Vec<ZipJob> = indices
             .iter()
-            .filter_map(|&i| self.service.get(i))
+            .filter_map(|&i| repos.get(i))
             // Skip entries whose directory is gone (broken or offline drives),
             // so no empty archive is written for them.
             .filter(|repo| repo.path.is_dir())
-            .filter_map(|repo| zip_job(&repo.path, &folder))
+            .map(|repo| ZipJob {
+                src: repo.path.clone(),
+                dest: backup_dest(&folder, repo, repos),
+            })
             .collect();
         if jobs.is_empty() {
             self.set_status("nothing to zip (paths missing?)");
@@ -1506,16 +1511,10 @@ impl App {
             return;
         };
         let folder = expand_tilde(folder);
-        for repo in self
-            .service
-            .repos()
-            .iter()
-            .filter(|repo| repo.kind == RepoKind::Git)
-        {
-            let Some(job) = zip_job(&repo.path, &folder) else {
-                continue;
-            };
-            if let Ok(meta) = std::fs::metadata(&job.dest)
+        let repos = self.service.repos();
+        for repo in repos.iter().filter(|repo| repo.kind == RepoKind::Git) {
+            let dest = backup_dest(&folder, repo, repos);
+            if let Ok(meta) = std::fs::metadata(&dest)
                 && let Ok(modified) = meta.modified()
             {
                 self.zip_backups.insert(
@@ -2348,15 +2347,10 @@ fn empty_hint(tab: Tab) -> &'static str {
     }
 }
 
-/// The backup job for `path` into `folder`: `<basename>.zip`, or `None` when
-/// the path has no file name.
-fn zip_job(path: &Path, folder: &Path) -> Option<ZipJob> {
-    let name = path.file_name()?;
-    let dest = folder.join(format!("{}.zip", name.to_string_lossy()));
-    Some(ZipJob {
-        src: path.to_path_buf(),
-        dest,
-    })
+/// The destination archive path for `repo` in `folder`: a unique, slugified
+/// file name (see [`crate::domain::backup::backup_filename`]).
+fn backup_dest(folder: &Path, repo: &Repo, repos: &[Repo]) -> PathBuf {
+    folder.join(backup::backup_filename(repo, repos))
 }
 
 /// The footer key hints for `tab` (only the keys relevant to that tab).

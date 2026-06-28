@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **ZIP backups**: `z` zips the selected/cursor git repo and `Z` zips all git repos into the configured `zip_backup_folder` as `<repo-folder>.zip` (overwriting), excluding build artefacts (the new `zip_exclude_dirs` setting, plus their `.nosync` siblings) but keeping `.git`. Progress shows in the header bar (same place as the status refresh). The Git Repos and Archive tabs gain a `ZIP Backup` column showing each repo's last-backup date.
+- **ZIP backups**: `z` zips the selected/cursor git repo and `Z` zips all git repos into the configured `zip_backup_folder`, excluding build artefacts (the new `zip_exclude_dirs` setting, plus their `.nosync` siblings) but keeping `.git`. The archive is named after the entry (the slugified name, e.g. `(rs) mdtask` → `rs-mdtask.zip`); two repos that would share a name each get a short, stable path-hash suffix so no backup is overwritten, and `hop doctor` reports the name clash. Progress shows in the header bar (same place as the status refresh). The Git Repos and Archive tabs gain a `ZIP Backup` column showing each repo's last-backup date.
 - **Inline git tool overlay**: `l` opens the configured git tool (lazygit) for the selected git repo as an overlay – the TUI suspends the terminal, runs the tool, then returns to the list and refreshes only that repo's status. `L` launches the tool and exits.
 
 ### Changed
