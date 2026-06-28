@@ -680,6 +680,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "crc32fast",
  "crossterm",
  "log",
  "nucleo-matcher",

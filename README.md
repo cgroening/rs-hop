@@ -43,9 +43,11 @@ for a one-word jump, sort modes and repair for paths that have moved.
   `.git`. The archive is named after
   the entry (the slugified name, e.g. `(rs) mdtask` → `rs-mdtask.zip`); two repos
   with the same name each get a short path-hash suffix so neither is overwritten
-  (`hop doctor` reports such name clashes). Progress shows in the header bar; the
-  Git Repos and Archive tabs gain a `ZIP Backup` column with each repo's
-  last-backup date.
+  (`hop doctor` reports such name clashes). A repo is only (re)written when its
+  content changed since the last backup (name + size + CRC32 comparison), so
+  unchanged archives are left untouched and not re-uploaded by cloud sync.
+  Progress shows in the header bar; the Git Repos and Archive tabs gain a
+  `ZIP Backup` column with each repo's last-backup date.
 - **Detail panel** (`v`): an optional pane (right or bottom) with the entry's
   details and a recent `git log`.
 - **Missing-path marker** (a red `!`) with a picker that opens at the closest

@@ -46,6 +46,10 @@ unicode-width = "0.2"
 # ZIP archive writing for the repo backup (`z`/`Z`); deflate only.
 # https://crates.io/crates/zip
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# CRC32 of source files, to skip rewriting a backup whose content is unchanged
+# (matches the CRC32 the zip stores). Already in the tree via zip/flate2.
+# https://crates.io/crates/crc32fast
+crc32fast = "1"
 
 [profile.release]
 opt-level = 3

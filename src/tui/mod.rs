@@ -1461,7 +1461,11 @@ impl App {
                 Ok(update) => {
                     self.loading = Some((update.done, update.total));
                     if update.finished {
-                        summary = Some((update.archives, update.errors));
+                        summary = Some((
+                            update.archives,
+                            update.unchanged,
+                            update.errors,
+                        ));
                     }
                 }
                 Err(TryRecvError::Empty) => break,
@@ -1475,8 +1479,8 @@ impl App {
             self.loading = None;
             self.loading_label = REFRESH_LABEL;
             self.reload_zip_backups();
-            if let Some((archives, errors)) = summary {
-                self.report_zip_done(archives, errors);
+            if let Some((archives, unchanged, errors)) = summary {
+                self.report_zip_done(archives, unchanged, errors);
             }
         } else {
             self.zip_rx = Some(rx);
@@ -1484,14 +1488,27 @@ impl App {
     }
 
     /// Reports the outcome of a finished ZIP-backup run.
-    fn report_zip_done(&mut self, archives: usize, errors: usize) {
+    fn report_zip_done(
+        &mut self,
+        archives: usize,
+        unchanged: usize,
+        errors: usize,
+    ) {
+        // Nothing written and nothing failed: every target was already current.
+        if archives == 0 && errors == 0 && unchanged > 0 {
+            self.set_status("backup up to date (no changes)");
+            return;
+        }
         let folder =
             self.config.zip_backup_folder.as_deref().unwrap_or_default();
         let mut message = if archives == 1 {
-            format!("wrote 1 archive to {folder}")
+            format!("backed up 1 archive to {folder}")
         } else {
-            format!("wrote {archives} archives to {folder}")
+            format!("backed up {archives} archives to {folder}")
         };
+        if unchanged > 0 {
+            message.push_str(&format!(" ({unchanged} unchanged)"));
+        }
         if errors > 0 {
             message.push_str(&format!(" ({errors} failed)"));
         }

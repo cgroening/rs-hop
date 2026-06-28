@@ -6,14 +6,24 @@
 //! but keeping hidden directories such as `.git` so the archive stays a
 //! restorable repository. [`write_zip`]
 //! deflates the gathered files into the destination, preserving the top-level
-//! folder name and reporting per-file progress.
+//! folder name and reporting per-file progress. [`source_manifest`] and
+//! [`zip_manifest`] produce a content fingerprint (name + size + CRC32) so a
+//! backup is only rewritten when the content actually changed.
 
+use std::collections::BTreeMap;
 use std::fs::File;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use zip::CompressionMethod;
 use zip::write::SimpleFileOptions;
+
+/// A content fingerprint of an archive: entry name → (uncompressed size, CRC32).
+/// Equal manifests mean equal content, regardless of file timestamps or order.
+pub type Manifest = BTreeMap<String, (u64, u32)>;
+
+/// Read-buffer size for streaming a file through the CRC32 hasher.
+const CRC_CHUNK: usize = 64 * 1024;
 
 /// The files to archive under `root`, with any excluded directory subtree
 /// pruned. Hidden directories are kept (so `.git` is included); symlinks are
@@ -99,6 +109,69 @@ fn archive_name(path: &Path, base: &Path) -> String {
         .map(|c| c.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+/// The content manifest of `files` under `root` (the same naming and CRC32 that
+/// [`write_zip`] would store), calling `on_progress` with the running count
+/// after each file. Lets a caller decide whether an existing archive is stale
+/// without building it.
+///
+/// # Errors
+/// Returns an I/O error if a source file cannot be read.
+pub fn source_manifest(
+    root: &Path,
+    files: &[PathBuf],
+    mut on_progress: impl FnMut(usize),
+) -> io::Result<Manifest> {
+    let base = root.parent().unwrap_or(root);
+    let mut manifest = Manifest::new();
+    for (index, path) in files.iter().enumerate() {
+        let (size, crc) = hash_file(path)?;
+        manifest.insert(archive_name(path, base), (size, crc));
+        on_progress(index + 1);
+    }
+    Ok(manifest)
+}
+
+/// The (size, CRC32) of `path`, streamed in chunks so large files are not held
+/// in memory. The CRC32 is the IEEE variant the ZIP format stores.
+fn hash_file(path: &Path) -> io::Result<(u64, u32)> {
+    let mut file = File::open(path)?;
+    let mut hasher = crc32fast::Hasher::new();
+    let mut buffer = vec![0u8; CRC_CHUNK];
+    let mut size: u64 = 0;
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        size += read as u64;
+    }
+    Ok((size, hasher.finalize()))
+}
+
+/// The content manifest of an existing ZIP at `path`, read from its central
+/// directory (no decompression). Directory entries are skipped.
+///
+/// # Errors
+/// Returns an I/O error if the file cannot be read or is not a valid ZIP.
+pub fn zip_manifest(path: &Path) -> io::Result<Manifest> {
+    let file = File::open(path)?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let mut manifest = Manifest::new();
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index(index)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        if entry.is_dir() {
+            continue;
+        }
+        manifest
+            .insert(entry.name().to_string(), (entry.size(), entry.crc32()));
+    }
+    Ok(manifest)
 }
 
 #[cfg(test)]
@@ -214,5 +287,34 @@ mod tests {
             names,
             vec![format!("{top}/README.md"), format!("{top}/src/main.rs")]
         );
+    }
+
+    #[test]
+    fn source_manifest_matches_built_zip() {
+        let tree = TempTree::new("manifest");
+        tree.write("src/main.rs", "fn main() {}");
+        tree.write("README.md", "# hop");
+        let files = collect_files(&tree.root, &excludes());
+
+        let dest = tree.root.join("out.zip");
+        write_zip(&tree.root, &files, &dest, |_| {}).unwrap();
+
+        // The pre-build source fingerprint equals what the written zip stores,
+        // so the change-detection precheck is exact.
+        let source = source_manifest(&tree.root, &files, |_| {}).unwrap();
+        let stored = zip_manifest(&dest).unwrap();
+        assert_eq!(source, stored);
+    }
+
+    #[test]
+    fn source_manifest_changes_with_content() {
+        let tree = TempTree::new("manifest-change");
+        tree.write("README.md", "# hop");
+        let files = collect_files(&tree.root, &excludes());
+        let before = source_manifest(&tree.root, &files, |_| {}).unwrap();
+
+        tree.write("README.md", "# hop, edited");
+        let after = source_manifest(&tree.root, &files, |_| {}).unwrap();
+        assert_ne!(before, after);
     }
 }
