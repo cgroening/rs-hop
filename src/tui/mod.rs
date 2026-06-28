@@ -151,6 +151,8 @@ pub struct App {
     icons: IconSet,
     git_client: Arc<dyn GitClient>,
     cache_path: PathBuf,
+    /// Path of the ZIP-backup fingerprint cache (in the state directory).
+    zip_cache_path: PathBuf,
     ui_state_path: PathBuf,
     tab: Tab,
     cursor: usize,
@@ -243,6 +245,11 @@ impl App {
         let icons = IconSet::new(config.icons);
         let cached = cache::load(&cache_path);
         let ui = ui_state::load(&ui_state_path);
+        // The ZIP cache lives next to the git-info cache in the state directory.
+        let zip_cache_path = cache_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("zip-manifests.toml");
         let mut service = service;
         service.apply_git_infos(&cached.infos);
         let (preview_tx, preview_rx) = mpsc::channel();
@@ -252,6 +259,7 @@ impl App {
             icons,
             git_client,
             cache_path,
+            zip_cache_path,
             ui_state_path,
             tab: ui.tab,
             cursor: 0,
@@ -1445,8 +1453,11 @@ impl App {
         });
         self.loading = Some((0, 0));
         self.loading_label = ZIP_LABEL;
-        self.zip_rx =
-            Some(spawn_zip(jobs, self.config.zip_exclude_dirs.clone()));
+        self.zip_rx = Some(spawn_zip(
+            jobs,
+            self.config.zip_exclude_dirs.clone(),
+            self.zip_cache_path.clone(),
+        ));
     }
 
     /// Applies any pending background ZIP-backup progress without blocking.
