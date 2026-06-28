@@ -37,6 +37,11 @@ for a one-word jump, sort modes and repair for paths that have moved.
 - **Sort modes**: by name, most recently used, frecency (frequency weighted by
   recency), or a custom drag order; favourites are pinned to the top (except in
   the recent view).
+- **ZIP backups**: `z` zips the selected/cursor git repo and `Z` zips all git
+  repos into `zip_backup_folder` as `<repo-folder>.zip` (overwriting), excluding
+  build artefacts (`zip_exclude_dirs`, plus their `.nosync` siblings) but keeping
+  `.git`. Progress shows in the header bar; the Git Repos and Archive tabs gain a
+  `ZIP Backup` column with each repo's last-backup date.
 - **Detail panel** (`v`): an optional pane (right or bottom) with the entry's
   details and a recent `git log`.
 - **Missing-path marker** (a red `!`) with a picker that opens at the closest
@@ -145,6 +150,8 @@ example_mode = false           # show example_git_info instead of real status
 fetch_on_start = false         # git fetch in the background when hop starts
 # editor = "nvim"              # for opening text files; else $VISUAL / $EDITOR
 # editor_extensions = ["rs", "md", "txt"]  # override the built-in text list
+# zip_backup_folder = "~/Backups/repos"    # where z / Z write repo ZIP backups
+# zip_exclude_dirs = ["target", "node_modules"]  # omit for the built-in list
 
 [icons]
 variant = "unicode"            # unicode | ascii
@@ -217,7 +224,9 @@ hop config-path     print the resolved config file path
 | `e` | edit the selected entry |
 | `d` / `Del` / `Backspace` | delete (acts on the selection, else the cursor; confirm) |
 | `u` | undo the last change |
-| `z` | toggle favourite (selection or cursor) |
+| `*` | toggle favourite (selection or cursor) |
+| `z` | zip the selected/cursor git repo to the backup folder |
+| `Z` | zip all git repos to the backup folder |
 | `A` | archive / restore (selection or cursor) |
 | `S` | set or change the slug |
 | `i` | toggle showing slugs (dim, italic) after the name |

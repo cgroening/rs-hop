@@ -50,6 +50,7 @@ use crate::domain::sort::{SortMode, sort_indices};
 use crate::service::preview_service::{self, PreviewLog};
 use crate::service::repo_service::RepoService;
 use crate::service::status_service::spawn_refresh;
+use crate::service::zip_service::{ZipJob, ZipUpdate, spawn_zip};
 use crate::storage::cache;
 use crate::storage::git_client::GitClient;
 use crate::storage::ui_state;
@@ -68,9 +69,16 @@ use crate::tui::widgets::{
     TextPrompt,
 };
 use crate::util::opener::launch_git_tool;
+use crate::util::paths::expand_tilde;
 
 /// How long a transient status message stays visible.
 const STATUS_TTL: Duration = Duration::from_secs(4);
+
+/// Progress-bar label while a background status refresh runs.
+const REFRESH_LABEL: &str = "refreshing";
+
+/// Progress-bar label while a background ZIP backup runs.
+const ZIP_LABEL: &str = "zipping";
 
 /// How long the cursor must rest on an entry before its preview `git log` is
 /// fetched, so quick scrolling does not spawn a fetch per row.
@@ -151,6 +159,14 @@ pub struct App {
     overlay: Overlay,
     status_msg: Option<(String, Instant)>,
     loading: Option<(usize, usize)>,
+    /// The progress-bar label for the current `loading` operation (a refresh or
+    /// a ZIP backup).
+    loading_label: &'static str,
+    /// Receives background ZIP-backup progress, drained each loop.
+    zip_rx: Option<Receiver<ZipUpdate>>,
+    /// Last ZIP-backup time per repo path, shown in the "ZIP Backup" column.
+    /// Loaded once at start and after each backup (no per-frame filesystem I/O).
+    zip_backups: HashMap<PathBuf, DateTime<Local>>,
     cache_generated_at: Option<DateTime<Local>>,
     last_fetched: Option<DateTime<Local>>,
     refresh_fetched: bool,
@@ -244,6 +260,9 @@ impl App {
             overlay: Overlay::None,
             status_msg: None,
             loading: None,
+            loading_label: REFRESH_LABEL,
+            zip_rx: None,
+            zip_backups: HashMap::new(),
             cache_generated_at: cached.generated_at,
             last_fetched: cached.fetched_at,
             refresh_fetched: false,
@@ -268,6 +287,7 @@ impl App {
             preview_target: None,
             preview_target_at: Instant::now(),
         };
+        app.reload_zip_backups();
         if let StartupStatus::Refresh { fetch } = startup
             && !app.config.example_mode
         {
@@ -596,12 +616,13 @@ impl App {
 pub fn run(mut app: App, tui: &mut Tui) -> io::Result<RunOutcome> {
     loop {
         app.drain_status();
+        app.drain_zip();
         app.drain_preview();
         app.request_preview_log();
         tui.terminal.draw(|frame| app.render(frame))?;
-        // Poll faster while refreshing (spinner) or while a preview log is
-        // being debounced/fetched, so updates land promptly.
-        let timeout = if app.is_refreshing() {
+        // Poll faster while a refresh or backup runs (progress bar) or while a
+        // preview log is being debounced/fetched, so updates land promptly.
+        let timeout = if app.is_refreshing() || app.is_zipping() {
             80
         } else if app.preview_busy() {
             60
@@ -799,7 +820,9 @@ impl App {
             KeyCode::Char('d') | KeyCode::Delete | KeyCode::Backspace => {
                 self.open_delete_confirm()
             }
-            KeyCode::Char('z') => self.toggle_fav(),
+            KeyCode::Char('*') => self.toggle_fav(),
+            KeyCode::Char('z') => self.zip_targets(),
+            KeyCode::Char('Z') => self.zip_all_git(),
             KeyCode::Char('y') => self.copy_path(),
             KeyCode::Char('b') => self.open_on_github(),
             KeyCode::Char('v') => self.cycle_preview(),
@@ -1346,6 +1369,163 @@ impl App {
         self.refocus(focus);
     }
 
+    /// Zips the target git entries (selection or cursor) into the backup folder.
+    /// Non-git entries are ignored; a lone non-git cursor reports a hint.
+    fn zip_targets(&mut self) {
+        let git: Vec<usize> = self
+            .targets()
+            .into_iter()
+            .filter(|&i| {
+                self.service.get(i).is_some_and(|r| r.kind == RepoKind::Git)
+            })
+            .collect();
+        if git.is_empty() {
+            self.set_status("not a git repo");
+            return;
+        }
+        self.start_zip(&git);
+        self.clear_selection();
+    }
+
+    /// Zips every git repository (across all tabs) into the backup folder.
+    fn zip_all_git(&mut self) {
+        let indices: Vec<usize> = self
+            .service
+            .repos()
+            .iter()
+            .enumerate()
+            .filter(|(_, repo)| repo.kind == RepoKind::Git)
+            .map(|(index, _)| index)
+            .collect();
+        if indices.is_empty() {
+            self.set_status("no git repos to zip");
+            return;
+        }
+        self.start_zip(&indices);
+    }
+
+    /// Starts a background ZIP backup of the repos at `indices`, showing the
+    /// progress bar. Refuses to start while another refresh or backup runs.
+    fn start_zip(&mut self, indices: &[usize]) {
+        if self.loading.is_some() {
+            self.set_status("busy: a refresh or backup is running");
+            return;
+        }
+        let Some(folder) = self.config.zip_backup_folder.as_deref() else {
+            self.set_status("no zip_backup_folder configured");
+            return;
+        };
+        let folder = expand_tilde(folder);
+        if let Err(error) = std::fs::create_dir_all(&folder) {
+            self.set_status(format!("could not create backup folder: {error}"));
+            return;
+        }
+        let jobs: Vec<ZipJob> = indices
+            .iter()
+            .filter_map(|&i| self.service.get(i))
+            // Skip entries whose directory is gone (broken or offline drives),
+            // so no empty archive is written for them.
+            .filter(|repo| repo.path.is_dir())
+            .filter_map(|repo| zip_job(&repo.path, &folder))
+            .collect();
+        if jobs.is_empty() {
+            self.set_status("nothing to zip (paths missing?)");
+            return;
+        }
+        let count = jobs.len();
+        self.set_status(if count == 1 {
+            "creating backup…".to_string()
+        } else {
+            format!("creating {count} backups…")
+        });
+        self.loading = Some((0, 0));
+        self.loading_label = ZIP_LABEL;
+        self.zip_rx =
+            Some(spawn_zip(jobs, self.config.zip_exclude_dirs.clone()));
+    }
+
+    /// Applies any pending background ZIP-backup progress without blocking.
+    fn drain_zip(&mut self) {
+        let Some(rx) = self.zip_rx.take() else {
+            return;
+        };
+        let mut summary = None;
+        let mut disconnected = false;
+        loop {
+            match rx.try_recv() {
+                Ok(update) => {
+                    self.loading = Some((update.done, update.total));
+                    if update.finished {
+                        summary = Some((update.archives, update.errors));
+                    }
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    disconnected = true;
+                    break;
+                }
+            }
+        }
+        if disconnected || summary.is_some() {
+            self.loading = None;
+            self.loading_label = REFRESH_LABEL;
+            self.reload_zip_backups();
+            if let Some((archives, errors)) = summary {
+                self.report_zip_done(archives, errors);
+            }
+        } else {
+            self.zip_rx = Some(rx);
+        }
+    }
+
+    /// Reports the outcome of a finished ZIP-backup run.
+    fn report_zip_done(&mut self, archives: usize, errors: usize) {
+        let folder =
+            self.config.zip_backup_folder.as_deref().unwrap_or_default();
+        let mut message = if archives == 1 {
+            format!("wrote 1 archive to {folder}")
+        } else {
+            format!("wrote {archives} archives to {folder}")
+        };
+        if errors > 0 {
+            message.push_str(&format!(" ({errors} failed)"));
+        }
+        self.set_status(message);
+    }
+
+    /// Whether a background ZIP backup is currently running.
+    fn is_zipping(&self) -> bool {
+        self.zip_rx.is_some()
+    }
+
+    /// Rebuilds the per-repo last-backup times from the backup folder (once at
+    /// start and after each backup; never per frame).
+    fn reload_zip_backups(&mut self) {
+        self.zip_backups.clear();
+        let Some(folder) = self.config.zip_backup_folder.as_deref() else {
+            return;
+        };
+        let folder = expand_tilde(folder);
+        for repo in self
+            .service
+            .repos()
+            .iter()
+            .filter(|repo| repo.kind == RepoKind::Git)
+        {
+            let Some(job) = zip_job(&repo.path, &folder) else {
+                continue;
+            };
+            if let Ok(meta) = std::fs::metadata(&job.dest)
+                && let Ok(modified) = meta.modified()
+            {
+                self.zip_backups.insert(
+                    repo.path.clone(),
+                    DateTime::<Local>::from(modified),
+                );
+            }
+        }
+    }
+
     /// The path of the entry under the cursor, if any.
     fn cursor_path(&self) -> Option<PathBuf> {
         self.selected_index()
@@ -1873,7 +2053,7 @@ impl App {
     /// while a refresh is running.
     fn render_info(&self, frame: &mut Frame, area: Rect) {
         if let Some((done, total)) = self.loading {
-            render_progress(frame, area, done, total);
+            render_progress(frame, area, self.loading_label, done, total);
             return;
         }
         let icons = self.icons;
@@ -2077,6 +2257,7 @@ impl App {
             missing: &self.files_missing,
             show_slugs: self.show_slugs,
             query: self.filtering_active().then_some(query.as_str()),
+            zip_backups: &self.zip_backups,
         };
         table::render_table(frame, area, &visible, cursor, &table_view);
     }
@@ -2167,6 +2348,17 @@ fn empty_hint(tab: Tab) -> &'static str {
     }
 }
 
+/// The backup job for `path` into `folder`: `<basename>.zip`, or `None` when
+/// the path has no file name.
+fn zip_job(path: &Path, folder: &Path) -> Option<ZipJob> {
+    let name = path.file_name()?;
+    let dest = folder.join(format!("{}.zip", name.to_string_lossy()));
+    Some(ZipJob {
+        src: path.to_path_buf(),
+        dest,
+    })
+}
+
 /// The footer key hints for `tab` (only the keys relevant to that tab).
 fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
     let mut hints: Vec<(&str, &str)> = vec![("Enter", "cd"), ("L", "open")];
@@ -2192,7 +2384,11 @@ fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
     hints.push(("v", "preview"));
     hints.extend([("n", "add"), ("e", "edit"), ("d/Del", "del")]);
     hints.push(("u", "undo"));
-    hints.push(("z", "fav"));
+    hints.push(("*", "fav"));
+    // Git repos can be backed up as ZIP archives (z: target, Z: all repos).
+    if tab != Tab::FilesAndFolders {
+        hints.push(("z/Z", "zip"));
+    }
     // Archive tab restores; the others archive.
     hints.push(match tab {
         Tab::Archive => ("A", "restore"),
@@ -2225,11 +2421,18 @@ fn hint_line(_tab: Tab) -> Line<'static> {
     Line::from(Span::styled(" ? help · q quit", Style::default().fg(DIM)))
 }
 
-/// Renders a solid progress bar for an in-flight status refresh, filling the
+/// Renders a solid progress bar for an in-flight operation (status refresh or
+/// ZIP backup), with the given `label`, filling the
 /// whole `area` (full height and width) with a centred label. The label colour
 /// is chosen per cell from whether it sits over the filled or unfilled part, so
 /// it never ends up dark text on the dark (unfilled) background.
-fn render_progress(frame: &mut Frame, area: Rect, done: usize, total: usize) {
+fn render_progress(
+    frame: &mut Frame,
+    area: Rect,
+    label: &str,
+    done: usize,
+    total: usize,
+) {
     // Leave one blank cell of padding on each side of the bar.
     let area = Rect {
         x: area.x.saturating_add(1),
@@ -2245,8 +2448,7 @@ fn render_progress(frame: &mut Frame, area: Rect, done: usize, total: usize) {
         (done as f64 / total as f64).clamp(0.0, 1.0)
     };
     let filled = (f64::from(area.width) * ratio).round() as u16;
-    let label: Vec<char> =
-        format!("refreshing {done}/{total}").chars().collect();
+    let label: Vec<char> = format!("{label} {done}/{total}").chars().collect();
     let label_width = label.len() as u16;
     let label_start = area.x + area.width.saturating_sub(label_width) / 2;
     let label_row = area.y + area.height / 2;

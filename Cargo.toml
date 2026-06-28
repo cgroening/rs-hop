@@ -43,6 +43,9 @@ anyhow = "1"
 log = { version = "0.4", features = ["std"] }
 # Display-width measurement for aligning table columns (wide glyphs = 2).
 unicode-width = "0.2"
+# ZIP archive writing for the repo backup (`z`/`Z`); deflate only.
+# https://crates.io/crates/zip
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [profile.release]
 opt-level = 3

@@ -8,10 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **ZIP backups**: `z` zips the selected/cursor git repo and `Z` zips all git repos into the configured `zip_backup_folder` as `<repo-folder>.zip` (overwriting), excluding build artefacts (the new `zip_exclude_dirs` setting, plus their `.nosync` siblings) but keeping `.git`. Progress shows in the header bar (same place as the status refresh). The Git Repos and Archive tabs gain a `ZIP Backup` column showing each repo's last-backup date.
 - **Inline git tool overlay**: `l` opens the configured git tool (lazygit) for the selected git repo as an overlay – the TUI suspends the terminal, runs the tool, then returns to the list and refreshes only that repo's status. `L` launches the tool and exits.
 
 ### Changed
 
+- **Favourite moved from `z` to `*`** to free `z`/`Z` for the new ZIP backups.
 - **`Enter` now only jumps (like `o`)** instead of launching the git tool / opening the file: it `cd`s into a folder, writes the parent of a file, and for a git repo writes the path and exits without launching the tool. The previous `Enter` behaviour (git → tool · folder → cd · text file → editor · other file → default app) moved to `L`.
 - **The error list (`!`) and other select modals now show a scrollbar** when their contents overflow the modal height.
 - **The preview `git log` now loads in the background** instead of blocking on each cursor move, so navigating with the preview open (`v`) stays smooth. The log for an entry is fetched only after the cursor rests on it briefly (debounced), cached, and shown with a `loading…` placeholder until it arrives. A full reload (`r`) reloads the current tab's logs and a per-entry refresh (`x`) reloads that entry's log – both only while the preview is visible.

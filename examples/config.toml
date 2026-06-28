@@ -18,6 +18,13 @@ example_mode = false
 # fetch_on_start = false   # git fetch in the background when hop starts
 # editor_extensions = ["rs", "md", "txt"]   # override the built-in text list
 
+# ZIP backups: z zips the selected/cursor git repo, Z zips all git repos, into
+# this folder as <repo-folder>.zip (overwriting). A leading ~ is expanded.
+# zip_backup_folder = "~/Backups/repos"
+# Directory names excluded from a backup (a <name>.nosync sibling too). Omit to
+# use the built-in default list (target, node_modules, dist, build, …).
+# zip_exclude_dirs = ["target", "node_modules", "dist", "build"]
+
 # Section order for the Files and Folders tab.
 sections = ["Code", "Docs"]
 

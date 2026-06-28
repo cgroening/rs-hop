@@ -1,6 +1,7 @@
 //! Leaf utilities: filesystem paths, logging, external launchers, metadata.
 
 pub mod app_info;
+pub mod archive;
 pub mod clipboard;
 pub mod logging;
 pub mod opener;

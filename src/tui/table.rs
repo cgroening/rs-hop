@@ -4,9 +4,10 @@
 //! Folders tab shows name, type and path. A leading marker column flags entries
 //! whose path no longer exists, followed by the favourite star.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use chrono::{DateTime, Local};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
@@ -51,6 +52,8 @@ pub struct TableView<'a> {
     pub show_slugs: bool,
     /// The active fuzzy query, to highlight matched characters in the name.
     pub query: Option<&'a str>,
+    /// Last ZIP-backup time per repo path, for the "ZIP Backup" column.
+    pub zip_backups: &'a HashMap<PathBuf, DateTime<Local>>,
 }
 
 /// The slug to display after `repo`'s name, or `None` when slugs are hidden.
@@ -191,6 +194,11 @@ fn widths(repos: &[&Repo], view: &TableView) -> Vec<Constraint> {
                 6,
                 cols.github_repo_name,
             );
+            let zip = sized(
+                content_width(repos, |r| zip_date_text(r, view)),
+                "ZIP Backup".len(),
+                cols.zip_backup,
+            );
             [
                 lead,
                 &[
@@ -198,6 +206,7 @@ fn widths(repos: &[&Repo], view: &TableView) -> Vec<Constraint> {
                     Constraint::Length(branch),
                     Constraint::Length(status),
                     Constraint::Length(github),
+                    Constraint::Length(zip),
                 ],
             ]
             .concat()
@@ -243,7 +252,7 @@ fn status_display(repo: &Repo, view: &TableView) -> String {
 fn header_row(view: &TableView) -> Row<'static> {
     let titles: Vec<&str> = match view.tab {
         Tab::FilesAndFolders => vec!["", "", "Name", "Type", "Path"],
-        _ => vec!["", "", "Name", "Branch", "Status", "GitHub"],
+        _ => vec!["", "", "Name", "Branch", "Status", "GitHub", "ZIP Backup"],
     };
     let mut cells: Vec<Cell> = Vec::new();
     if view.has_selection {
@@ -283,6 +292,10 @@ fn row_for<'a>(repo: &Repo, view: &TableView, selected: bool) -> Row<'a> {
             cells.push(Cell::from(truncate(&branch_text(info), branch_cap)));
             cells.push(status_cell(repo, info, view));
             cells.push(Cell::from(github_text(info)));
+            cells.push(Cell::from(Span::styled(
+                zip_date_text(repo, view),
+                Style::default().fg(DIM),
+            )));
         }
     }
     Row::new(cells)
@@ -384,6 +397,14 @@ fn branch_text(info: Option<&GitInfo>) -> String {
 fn github_text(info: Option<&GitInfo>) -> String {
     info.and_then(|info| info.github_repo_name.clone())
         .unwrap_or_else(|| "-".to_string())
+}
+
+/// The last-ZIP-backup date for `repo` (`YYYY-MM-DD`), or a dash when never
+/// backed up. Read from the precomputed map (no filesystem I/O here).
+fn zip_date_text(repo: &Repo, view: &TableView) -> String {
+    view.zip_backups
+        .get(&repo.path)
+        .map_or_else(|| "-".to_string(), |dt| dt.format("%Y-%m-%d").to_string())
 }
 
 /// The detected type label for the Files and Folders tab.

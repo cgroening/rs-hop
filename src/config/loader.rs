@@ -30,6 +30,8 @@ struct RawConfig {
     editor_extensions: Option<Vec<String>>,
     icons: Option<RawIcons>,
     column_widths: Option<HashMap<String, RawColumnWidth>>,
+    zip_backup_folder: Option<String>,
+    zip_exclude_dirs: Option<Vec<String>>,
 }
 
 /// The `[icons]` table.
@@ -109,6 +111,11 @@ fn build(raw: RawConfig) -> Config {
             .map(|variant| IconVariant::from_config_value(&variant))
             .unwrap_or(defaults.icons),
         column_widths: resolve_column_widths(raw.column_widths.as_ref()),
+        zip_backup_folder: raw.zip_backup_folder.or(defaults.zip_backup_folder),
+        zip_exclude_dirs: raw
+            .zip_exclude_dirs
+            .filter(|dirs| !dirs.is_empty())
+            .unwrap_or(defaults.zip_exclude_dirs),
     }
 }
 
@@ -135,6 +142,7 @@ fn resolve_column_widths(
             "github_repo_name",
             defaults.github_repo_name,
         ),
+        zip_backup: resolve("zip_backup", defaults.zip_backup),
     }
 }
 

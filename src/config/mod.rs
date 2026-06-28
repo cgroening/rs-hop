@@ -21,6 +21,36 @@ pub const DEFAULT_EDITOR_EXTENSIONS: &[&str] = &[
     "tsv", "sql", "tex", "log", "make", "mk",
 ];
 
+/// Directory names excluded from a repo ZIP backup (`z`/`Z`): build artefacts
+/// and caches that are regenerated and would only bloat the archive. Matched by
+/// directory name at any depth; a `<name>.nosync` sibling is excluded too.
+/// Overridable via the `zip_exclude_dirs` config key.
+pub const DEFAULT_ZIP_EXCLUDE_DIRS: &[&str] = &[
+    "target",
+    "node_modules",
+    "dist",
+    "build",
+    "out",
+    "bin",
+    "obj",
+    ".next",
+    ".nuxt",
+    ".turbo",
+    ".parcel-cache",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".gradle",
+    ".build",
+    "DerivedData",
+    "Pods",
+    ".cache",
+];
+
 /// Which glyph set the TUI renders, per the user's terminal support.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IconVariant {
@@ -77,6 +107,8 @@ pub struct ColumnWidths {
     pub status: ColumnWidth,
     /// The GitHub-repo-name column.
     pub github_repo_name: ColumnWidth,
+    /// The ZIP-backup-date column.
+    pub zip_backup: ColumnWidth,
 }
 
 impl Default for ColumnWidths {
@@ -86,6 +118,7 @@ impl Default for ColumnWidths {
             current_branch_name: ColumnWidth::range(10, 14),
             status: ColumnWidth::min(6),
             github_repo_name: ColumnWidth::min(20),
+            zip_backup: ColumnWidth::min(10),
         }
     }
 }
@@ -109,6 +142,12 @@ pub struct Config {
     pub icons: IconVariant,
     /// Table column width budgets.
     pub column_widths: ColumnWidths,
+    /// Destination folder for repo ZIP backups (`z`/`Z`); `None` disables them.
+    /// A leading `~` is expanded when the folder is used.
+    pub zip_backup_folder: Option<String>,
+    /// Directory names excluded from a ZIP backup (see
+    /// [`DEFAULT_ZIP_EXCLUDE_DIRS`]).
+    pub zip_exclude_dirs: Vec<String>,
 }
 
 impl Default for Config {
@@ -125,6 +164,11 @@ impl Default for Config {
                 .collect(),
             icons: IconVariant::default(),
             column_widths: ColumnWidths::default(),
+            zip_backup_folder: None,
+            zip_exclude_dirs: DEFAULT_ZIP_EXCLUDE_DIRS
+                .iter()
+                .map(|dir| (*dir).to_string())
+                .collect(),
         }
     }
 }
