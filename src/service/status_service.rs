@@ -14,12 +14,21 @@ use std::thread;
 use crate::domain::repo::GitInfo;
 use crate::storage::git_client::GitClient;
 
-/// A gathered status for one path, streamed from the background refresh.
-pub struct StatusUpdate {
-    /// The entry path the status belongs to.
-    pub path: PathBuf,
-    /// The gathered git info.
-    pub info: GitInfo,
+/// A message from the background refresh: a path's work either started or
+/// finished. `Started` lets the progress bar name the entry while git runs.
+pub enum StatusUpdate {
+    /// The worker has begun processing this path (before fetch/collect).
+    Started {
+        /// The entry path now being refreshed.
+        path: PathBuf,
+    },
+    /// The status for this path has been gathered.
+    Done {
+        /// The entry path the status belongs to.
+        path: PathBuf,
+        /// The gathered git info.
+        info: GitInfo,
+    },
 }
 
 /// Gathers status for every path in order, optionally fetching first. Used by
@@ -52,12 +61,18 @@ pub fn spawn_refresh(
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
         for path in paths {
+            // The receiver may have been dropped (app exited); stop quietly.
+            if sender
+                .send(StatusUpdate::Started { path: path.clone() })
+                .is_err()
+            {
+                break;
+            }
             if fetch {
                 client.fetch(&path);
             }
             let info = client.collect(&path);
-            // The receiver may have been dropped (app exited); stop quietly.
-            if sender.send(StatusUpdate { path, info }).is_err() {
+            if sender.send(StatusUpdate::Done { path, info }).is_err() {
                 break;
             }
         }
@@ -105,10 +120,12 @@ mod tests {
     fn spawn_refresh_streams_every_path() {
         let paths = vec![PathBuf::from("/a"), PathBuf::from("/b")];
         let rx = spawn_refresh(Arc::new(FakeClient), paths, false);
-        let mut count = 0;
-        while rx.recv().is_ok() {
-            count += 1;
+        let mut done = 0;
+        while let Ok(update) = rx.recv() {
+            if matches!(update, StatusUpdate::Done { .. }) {
+                done += 1;
+            }
         }
-        assert_eq!(count, 2);
+        assert_eq!(done, 2);
     }
 }

@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **The header progress bar now shows a percentage and the current entry's name.** A refresh (`r`/`R`/startup) shows `XX % - <name>` and names the repo it is currently refreshing (not just the one it finished); a ZIP backup (`z`/`Z`) shows `XX % (<file>/<files>) - <name>`. The text block is sized for the widest name and pinned, so the `XX %` column stays fixed for the whole run instead of jittering as names change length.
 - **Favourite moved from `z` to `*`** to free `z`/`Z` for the new ZIP backups.
 - **`hop <slug>` now only `cd`s** (writes the handoff path) instead of launching the git tool or opening files, mirroring the TUI's `Enter`. `--save-only`/`-s` is now a deprecated no-op (the default already only `cd`s).
 - **`Enter` now only jumps (like `o`)** instead of launching the git tool / opening the file: it `cd`s into a folder, writes the parent of a file, and for a git repo writes the path and exits without launching the tool. The previous `Enter` behaviour (git → tool · folder → cd · text file → editor · other file → default app) moved to `L`.

@@ -38,6 +38,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use unicode_width::UnicodeWidthStr;
 
 pub use terminal::Tui;
 
@@ -50,7 +51,7 @@ use crate::domain::sections;
 use crate::domain::sort::{SortMode, sort_indices};
 use crate::service::preview_service::{self, PreviewLog};
 use crate::service::repo_service::RepoService;
-use crate::service::status_service::spawn_refresh;
+use crate::service::status_service::{StatusUpdate, spawn_refresh};
 use crate::service::zip_service::{ZipJob, ZipUpdate, spawn_zip};
 use crate::storage::cache;
 use crate::storage::git_client::GitClient;
@@ -80,6 +81,13 @@ const REFRESH_LABEL: &str = "refreshing";
 
 /// Progress-bar label while a background ZIP backup runs.
 const ZIP_LABEL: &str = "zipping";
+
+/// Padding width of the percentage in the progress text, so `XX %` keeps a
+/// constant width from `0` through `100`.
+const PERCENT_WIDTH: usize = 3;
+
+/// Separator between the percentage/counts prefix and the entry name.
+const PROGRESS_SEPARATOR: &str = " - ";
 
 /// How long the cursor must rest on an entry before its preview `git log` is
 /// fetched, so quick scrolling does not spawn a fetch per row.
@@ -165,8 +173,11 @@ pub struct App {
     /// The progress-bar label for the current `loading` operation (a refresh or
     /// a ZIP backup).
     loading_label: &'static str,
-    /// The entry currently being zipped, appended to the progress-bar label.
+    /// The entry currently being processed, shown in the progress-bar text.
     loading_detail: Option<String>,
+    /// Display width of the longest entry name in the current `loading` run, so
+    /// the progress text can reserve a stable block and pin the `XX %` column.
+    loading_name_width: usize,
     /// Receives background ZIP-backup progress, drained each loop.
     zip_rx: Option<Receiver<ZipUpdate>>,
     /// Last ZIP-backup time per repo path, shown in the "ZIP Backup" column.
@@ -273,6 +284,7 @@ impl App {
             loading: None,
             loading_label: REFRESH_LABEL,
             loading_detail: None,
+            loading_name_width: 0,
             zip_rx: None,
             zip_backups: HashMap::new(),
             cache_generated_at: cached.generated_at,
@@ -545,6 +557,8 @@ impl App {
         }
         self.refreshing = paths.iter().cloned().collect();
         self.refresh_started = Instant::now();
+        self.loading_detail = None;
+        self.loading_name_width = self.max_name_width(&paths);
         self.loading = if show_bar {
             Some((0, paths.len()))
         } else {
@@ -564,9 +578,12 @@ impl App {
         let mut finished = false;
         loop {
             match rx.try_recv() {
-                Ok(update) => {
-                    self.service.set_git_info(&update.path, update.info);
-                    self.refreshing.remove(&update.path);
+                Ok(StatusUpdate::Started { path }) => {
+                    self.loading_detail = Some(self.name_for_path(&path));
+                }
+                Ok(StatusUpdate::Done { path, info }) => {
+                    self.service.set_git_info(&path, info);
+                    self.refreshing.remove(&path);
                     if let Some((done, _)) = &mut self.loading {
                         *done += 1;
                     }
@@ -596,6 +613,7 @@ impl App {
                 .collect();
             let _ = cache::save(&self.cache_path, &infos, self.last_fetched);
             self.loading = None;
+            self.loading_detail = None;
             self.refreshing.clear();
             // A tab switched to mid-refresh deferred its first-visit refresh;
             // run it now that the channel is free.
@@ -608,6 +626,27 @@ impl App {
     /// Whether a background status refresh is currently running.
     fn is_refreshing(&self) -> bool {
         self.status_rx.is_some()
+    }
+
+    /// The display name of the entry at `path`, or its basename as a fallback.
+    fn name_for_path(&self, path: &Path) -> String {
+        self.service
+            .repos()
+            .iter()
+            .find(|repo| repo.path == path)
+            .map_or_else(|| repo::basename(path), Repo::display_name)
+    }
+
+    /// The widest display name among `paths`, used to reserve a stable block in
+    /// the progress text so the `XX %` column does not move as names change.
+    fn max_name_width(&self, paths: &[PathBuf]) -> usize {
+        paths
+            .iter()
+            .map(|path| {
+                UnicodeWidthStr::width(self.name_for_path(path).as_str())
+            })
+            .max()
+            .unwrap_or(0)
     }
 
     /// The current spinner frame glyph, if a refresh is running.
@@ -1454,6 +1493,11 @@ impl App {
         } else {
             format!("creating {count} backups…")
         });
+        self.loading_name_width = jobs
+            .iter()
+            .map(|job| UnicodeWidthStr::width(job.name.as_str()))
+            .max()
+            .unwrap_or(0);
         self.loading = Some((0, 0));
         self.loading_label = ZIP_LABEL;
         self.loading_detail = None;
@@ -2085,16 +2129,37 @@ impl App {
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 
+    /// The fixed-width leading part of the progress text: the percentage, plus
+    /// the file counts while zipping. Widths are padded so the part keeps a
+    /// constant width, pinning the `XX %` column for the whole run.
+    fn progress_prefix(&self, ratio: f64, done: usize, total: usize) -> String {
+        let pct = (ratio * 100.0).round() as u16;
+        let pw = PERCENT_WIDTH;
+        if self.loading_label == ZIP_LABEL {
+            let cw = digit_count(total);
+            format!("{pct:>pw$} % ({done:>cw$}/{total})")
+        } else {
+            format!("{pct:>pw$} %")
+        }
+    }
+
     /// Renders the single info line - error count, entry count, sort, local
     /// status and remote fetch time, each behind its icon - or the progress bar
     /// while a refresh is running.
     fn render_info(&self, frame: &mut Frame, area: Rect) {
         if let Some((done, total)) = self.loading {
-            let label = match &self.loading_detail {
-                Some(name) => format!("{} {name}", self.loading_label),
-                None => self.loading_label.to_string(),
-            };
-            render_progress(frame, area, &label, done, total);
+            let ratio = progress_ratio(done, total);
+            let prefix = self.progress_prefix(ratio, done, total);
+            render_progress(
+                frame,
+                area,
+                ProgressText {
+                    prefix: &prefix,
+                    name: self.loading_detail.as_deref().unwrap_or(""),
+                    ratio,
+                    name_width: self.loading_name_width,
+                },
+            );
             return;
         }
         let icons = self.icons;
@@ -2457,18 +2522,40 @@ fn hint_line(_tab: Tab) -> Line<'static> {
     Line::from(Span::styled(" ? help · q quit", Style::default().fg(DIM)))
 }
 
+/// The composed text and fill ratio for one frame of the progress bar.
+struct ProgressText<'a> {
+    /// The fixed-width leading part (percentage, plus file counts when zipping).
+    prefix: &'a str,
+    /// The entry name shown after the prefix; empty when none is known yet.
+    name: &'a str,
+    /// Fill ratio in `0.0..=1.0`.
+    ratio: f64,
+    /// Display width reserved for the name, so the prefix column stays put as
+    /// names of different lengths come and go.
+    name_width: usize,
+}
+
+/// The fill ratio for `done` of `total`, clamped to `0.0..=1.0` (0 when empty).
+fn progress_ratio(done: usize, total: usize) -> f64 {
+    if total == 0 {
+        return 0.0;
+    }
+    (done as f64 / total as f64).clamp(0.0, 1.0)
+}
+
+/// The number of decimal digits in `n` (at least 1), for padding counts.
+fn digit_count(n: usize) -> usize {
+    n.to_string().len()
+}
+
 /// Renders a solid progress bar for an in-flight operation (status refresh or
-/// ZIP backup), with the given `label`, filling the
-/// whole `area` (full height and width) with a centred label. The label colour
-/// is chosen per cell from whether it sits over the filled or unfilled part, so
-/// it never ends up dark text on the dark (unfilled) background.
-fn render_progress(
-    frame: &mut Frame,
-    area: Rect,
-    label: &str,
-    done: usize,
-    total: usize,
-) {
+/// ZIP backup), filling the whole `area`. The text is `prefix - name`, drawn
+/// over a fixed-width block (prefix + separator + the widest name) that is
+/// centred and pinned, so the percentage never shifts column as the name
+/// changes. The text colour is chosen per cell from whether it sits over the
+/// filled or unfilled part, so it never ends up dark text on the dark
+/// (unfilled) background.
+fn render_progress(frame: &mut Frame, area: Rect, text: ProgressText) {
     // Leave one blank cell of padding on each side of the bar.
     let area = Rect {
         x: area.x.saturating_add(1),
@@ -2478,15 +2565,21 @@ fn render_progress(
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let ratio = if total == 0 {
-        0.0
+    let filled = (f64::from(area.width) * text.ratio).round() as u16;
+    let line: Vec<char> = if text.name.is_empty() {
+        text.prefix.chars().collect()
     } else {
-        (done as f64 / total as f64).clamp(0.0, 1.0)
+        format!("{}{PROGRESS_SEPARATOR}{}", text.prefix, text.name)
+            .chars()
+            .collect()
     };
-    let filled = (f64::from(area.width) * ratio).round() as u16;
-    let label: Vec<char> = format!("{label} {done}/{total}").chars().collect();
-    let label_width = label.len() as u16;
-    let label_start = area.x + area.width.saturating_sub(label_width) / 2;
+    let label_width = line.len() as u16;
+    // Reserve room for the widest possible line and centre that block, so the
+    // left edge - and thus the `XX %` column - is fixed for the whole run.
+    let block_width = (UnicodeWidthStr::width(text.prefix)
+        + UnicodeWidthStr::width(PROGRESS_SEPARATOR)
+        + text.name_width) as u16;
+    let start = area.x + area.width.saturating_sub(block_width) / 2;
     let label_row = area.y + area.height / 2;
 
     let buf = frame.buffer_mut();
@@ -2494,11 +2587,10 @@ fn render_progress(
         for x in area.x..area.right() {
             let over_filled = (x - area.x) < filled;
             let bg = if over_filled { ACCENT } else { SELECTION_BG };
-            let is_label = y == label_row
-                && x >= label_start
-                && x < label_start + label_width;
+            let is_label =
+                y == label_row && x >= start && x < start + label_width;
             let (symbol, fg) = if is_label {
-                let ch = label[(x - label_start) as usize];
+                let ch = line[(x - start) as usize];
                 // Dark text on the light filled bar, light text on the rest.
                 let fg = if over_filled { Color::Black } else { ACCENT };
                 (ch.to_string(), fg)
