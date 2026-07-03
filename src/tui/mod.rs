@@ -197,8 +197,11 @@ pub struct App {
     /// Anchor display row for `Shift`-range selection.
     anchor: Option<usize>,
     /// Scroll offset of the sectioned Files list, kept across frames so the
-    /// cursor pages within the viewport (the git tabs scroll statelessly).
+    /// cursor pages within the viewport.
     list_offset: std::cell::Cell<usize>,
+    /// Scroll offset of the table view (git tabs, Archive, filtered Files),
+    /// kept across frames so the cursor only scrolls once it reaches an edge.
+    table_offset: std::cell::Cell<usize>,
     /// Whether the startup mode permits background refreshes (drives the
     /// first-visit refresh of the Git Repos / Archive tabs).
     auto_refresh: bool,
@@ -296,6 +299,7 @@ impl App {
             selected: HashSet::new(),
             anchor: None,
             list_offset: std::cell::Cell::new(0),
+            table_offset: std::cell::Cell::new(0),
             auto_refresh: false,
             refreshed_tabs: HashSet::new(),
             files_missing: HashSet::new(),
@@ -941,6 +945,9 @@ impl App {
         self.remember_focus();
         self.tab = tab;
         self.clear_selection();
+        // Each tab is a distinct list; drop the previous tab's scroll offset.
+        self.list_offset.set(0);
+        self.table_offset.set(0);
         self.restore_focus();
         self.save_ui_state();
         self.refresh_tab_on_first_visit();
@@ -2364,6 +2371,7 @@ impl App {
             show_slugs: self.show_slugs,
             query: self.filtering_active().then_some(query.as_str()),
             zip_backups: &self.zip_backups,
+            offset: &self.table_offset,
         };
         table::render_table(frame, area, &visible, cursor, &table_view);
     }

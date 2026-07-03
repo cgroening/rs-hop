@@ -54,6 +54,26 @@ pub struct TableView<'a> {
     pub query: Option<&'a str>,
     /// Last ZIP-backup time per repo path, for the "ZIP Backup" column.
     pub zip_backups: &'a HashMap<PathBuf, DateTime<Local>>,
+    /// The scroll offset carried across frames, so moving the cursor up while it
+    /// is still visible does not scroll the list.
+    pub offset: &'a std::cell::Cell<usize>,
+}
+
+/// Predicts the scroll offset: keep the saved one unless the cursor fell off an
+/// edge of the viewport, then clamp it back just far enough to reveal it.
+fn settled_offset(
+    saved: usize,
+    cursor: usize,
+    row_count: usize,
+    viewport: usize,
+) -> usize {
+    let mut offset = saved.min(row_count.saturating_sub(1));
+    if cursor < offset {
+        offset = cursor;
+    } else if viewport > 0 && cursor >= offset + viewport {
+        offset = cursor + 1 - viewport;
+    }
+    offset
 }
 
 /// The slug to display after `repo`'s name, or `None` when slugs are hidden.
@@ -123,13 +143,19 @@ pub fn render_table(
         .header(header_row(view))
         .column_spacing(1)
         .row_highlight_style(selection_style());
-    let mut state = TableState::default().with_selected(Some(cursor));
+    // Carry the offset across frames so the cursor moves within the viewport
+    // without scrolling until it reaches an edge.
+    let offset =
+        settled_offset(view.offset.get(), cursor, repos.len(), viewport);
+    view.offset.set(offset);
+    let mut state = TableState::default()
+        .with_offset(offset)
+        .with_selected(Some(cursor));
     frame.render_stateful_widget(table, table_area, &mut state);
 
     if overflow {
-        // Align the bar with the rows (below the header); its position follows
-        // the same bottom-anchored offset the table scrolls to.
-        let offset = cursor.saturating_sub(viewport.saturating_sub(1));
+        // Align the bar with the rows (below the header); it follows the same
+        // offset the table scrolled to.
         let bar_area = Rect {
             x: area.x,
             y: area.y + 1,
@@ -442,7 +468,27 @@ fn type_label(repo: &Repo) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::github_width;
+    use super::{github_width, settled_offset};
+
+    #[test]
+    fn settled_offset_stays_put_when_cursor_moves_up_but_is_visible() {
+        // Viewport of 5 showing rows 4..9; the cursor moves up from 8 to 5. It
+        // stays visible, so the offset must not move (the eager-scroll bug).
+        assert_eq!(settled_offset(4, 5, 20, 5), 4);
+        assert_eq!(settled_offset(4, 4, 20, 5), 4);
+    }
+
+    #[test]
+    fn settled_offset_scrolls_up_only_at_the_top_edge() {
+        // Only once the cursor crosses above the top visible row does it scroll.
+        assert_eq!(settled_offset(4, 3, 20, 5), 3);
+    }
+
+    #[test]
+    fn settled_offset_pages_down_at_the_bottom_edge() {
+        // Cursor past the bottom row scrolls down just enough to reveal it.
+        assert_eq!(settled_offset(4, 9, 20, 5), 5);
+    }
 
     #[test]
     fn github_keeps_content_width_when_there_is_room() {
