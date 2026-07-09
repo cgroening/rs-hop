@@ -33,6 +33,7 @@ struct RawConfig {
     github_username: Option<String>,
     example_mode: Option<bool>,
     fetch_on_start: Option<bool>,
+    confirm_quit: Option<bool>,
     editor: Option<String>,
     editor_extensions: Option<Vec<String>>,
     appearance: Option<RawAppearance>,
@@ -137,6 +138,7 @@ fn build(raw: RawConfig) -> Config {
         github_username: raw.github_username.or(defaults.github_username),
         example_mode: raw.example_mode.unwrap_or(defaults.example_mode),
         fetch_on_start: raw.fetch_on_start.unwrap_or(defaults.fetch_on_start),
+        confirm_quit: raw.confirm_quit.unwrap_or(defaults.confirm_quit),
         editor: raw.editor.or(defaults.editor),
         editor_extensions: raw
             .editor_extensions

@@ -8,9 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **`F1` shows and hides the shortcut-hint footer**, in the app and in every dialog. The chord comes from `ratada` (`shortcut_hints::consume_toggle`), so it behaves the same in every app built on the toolkit. Hiding the hints reclaims their rows *and* the blank spacer above them; the choice is remembered across runs.
+- **An optional confirmation before quitting.** `confirm_quit = true` in the config makes `q` ask first. `Ctrl+Q` never asks – it stays the unconditional escape hatch from any state.
 - **The path picker (`p` repair, `^O` in the add/edit form) can show hidden files.** `Ctrl+h` toggles dot-prefixed entries, which are hidden by default. The box also shows an `xx/yy` position indicator in its bottom-right border and a scrollbar when the list overflows, matching the toolkit's picker look.
 
 ### Changed
+
+- **The footer's `App` group is now `Global`** and lists the app-wide chords in one place: `?` help, `q` quit, then the toolkit's `f1 toggle hints` and `ctrl+q force quit`. The help overlay grows the same trailing section, from the same tokens.
+- The help overlay is restyled to match `ratada::help` – uppercase section headers, an aligned key column and a hint footer – while staying non-blocking, so a background refresh keeps running behind it.
+- hop no longer defines its own `Ctrl+Q` chord; the `ratada::Tui` guard already surfaces it as a quit event in every state.
 
 - **`y` (copy path) and `b` (GitHub) now act on the whole selection.** With multiple rows selected, `y` copies every selected entry's path to the clipboard, one per line, and `b` opens a browser tab for each selected git repo (non-git entries and repos without a remote are skipped). With no selection both act on the cursor entry as before.
 - **The footer shortcut hints are now grouped by function** (clibase-style) instead of one flat list: a `Navigation` group followed by `Open` / `Manage` / `Backup` / `View` / `Git` (or `Sections` + `Paths` on the Files tab) / `App`, each with an aligned label column. The hint keys are sourced from the keymap, so a `[keys]` override is reflected in the footer.

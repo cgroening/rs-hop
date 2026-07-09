@@ -42,6 +42,9 @@ use unicode_width::UnicodeWidthStr;
 
 pub use terminal::{Tui, TuiEvent};
 
+use ratada::quit::{self, QuitConfirm, QuitKind};
+use ratada::shortcut_hints;
+
 use crate::config::Config;
 use crate::domain::backup;
 use crate::domain::filter::{Tab, belongs_to_tab, fuzzy_indices};
@@ -49,6 +52,7 @@ use crate::domain::path_repair::nearest_existing_on_disk;
 use crate::domain::repo::{self, Repo, RepoKind};
 use crate::domain::sections;
 use crate::domain::sort::{SortMode, sort_indices};
+use crate::keymap::{Action, Keymap};
 use crate::service::preview_service::{self, PreviewLog};
 use crate::service::repo_service::RepoService;
 use crate::service::status_service::{StatusUpdate, spawn_refresh};
@@ -167,6 +171,8 @@ pub struct App {
     filtering: bool,
     filter: text_input::TextInput,
     overlay: Overlay,
+    /// The help overlay's scroll position, kept across frames.
+    help_scroll: help::Scroll,
     status_msg: Option<(String, Instant)>,
     loading: Option<(usize, usize)>,
     /// The progress-bar label for the current `loading` operation (a refresh or
@@ -261,6 +267,8 @@ impl App {
         let skin = config.skin();
         let cached = cache::load(&cache_path);
         let ui = ui_state::load(&ui_state_path);
+        shortcut_hints::set_visible(ui.hints_visible);
+        install_quit_confirmation(config.confirm_quit, skin);
         // The ZIP cache lives next to the git-info cache in the state directory.
         let zip_cache_path = cache_path
             .parent()
@@ -284,6 +292,7 @@ impl App {
             filtering: false,
             filter: text_input::TextInput::new(""),
             overlay: Overlay::None,
+            help_scroll: help::Scroll::default(),
             status_msg: None,
             loading: None,
             loading_label: REFRESH_LABEL,
@@ -686,8 +695,18 @@ pub fn run(mut app: App, tui: &mut Tui) -> io::Result<RunOutcome> {
             150
         };
         let outcome = match tui.poll_event(Duration::from_millis(timeout))? {
+            // The hard `Ctrl+Q` is the escape hatch and never asks.
             Some(TuiEvent::Quit) => Some(RunOutcome::Quit),
-            Some(TuiEvent::Key(key)) => app.handle_key(key),
+            Some(TuiEvent::Key(key)) => match app.handle_key(key) {
+                // A soft quit (`q`) goes through the confirmation policy;
+                // `handle_key` has no `Tui`, so the loop asks.
+                Some(RunOutcome::Quit) => {
+                    let repaint = |frame: &mut Frame| app.render(frame);
+                    quit::request(tui, QuitKind::Soft, &repaint)
+                        .then_some(RunOutcome::Quit)
+                }
+                other => other,
+            },
             Some(TuiEvent::Resize) | None => None,
         };
         if let Some(outcome) = outcome {
@@ -702,11 +721,42 @@ pub fn run(mut app: App, tui: &mut Tui) -> io::Result<RunOutcome> {
     }
 }
 
+/// Wires the toolkit's quit confirmation: `q` asks when `confirm_quit` is set,
+/// `Ctrl+Q` never does. `skin` is `Copy` and hop never re-themes at runtime, so
+/// the guard can hold it.
+fn install_quit_confirmation(confirm_quit: bool, skin: Skin) {
+    quit::set_confirm(if confirm_quit {
+        QuitConfirm::Soft
+    } else {
+        QuitConfirm::Never
+    });
+    quit::set_guard(move |tui, _kind, bg| {
+        ratada::modal::confirm(tui, &skin, " Quit hop? ", bg)
+    });
+}
+
+/// The label of the group and help section listing the app-wide chords.
+const GLOBAL_GROUP: &str = "Global";
+
+/// The app-wide chords: this app's own keys, resolved through the keymap so a
+/// `[keys]` override shows up here too, followed by the ones the toolkit
+/// intercepts itself (the hints toggle and the hard quit).
+fn global_group(keymap: &Keymap) -> (String, Vec<(String, String)>) {
+    let mut hints = keymap.hints(&[Action::Help, Action::Quit]);
+    hints.extend(shortcut_hints::global_bindings());
+    (GLOBAL_GROUP.to_string(), hints)
+}
+
 impl App {
     /// Handles a key, returning an outcome when the loop should end.
+    ///
+    /// The toolkit's hints toggle is consumed first, so it works in every
+    /// state; `Ctrl+Q` never reaches here (the `Tui` turns it into
+    /// [`TuiEvent::Quit`]).
     fn handle_key(&mut self, key: KeyEvent) -> Option<RunOutcome> {
-        if is_global_quit(key) {
-            return Some(RunOutcome::Quit);
+        if shortcut_hints::consume_toggle(key) {
+            self.save_ui_state();
+            return None;
         }
         match &mut self.overlay {
             Overlay::None => self.handle_list_key(key),
@@ -722,8 +772,10 @@ impl App {
         let overlay = std::mem::replace(&mut self.overlay, Overlay::None);
         match overlay {
             Overlay::Help => {
-                // Any key closes help except those that re-open it elsewhere.
+                // `?`/`Esc` close it; everything else keeps it open, and the
+                // movement keys scroll the (taller than the screen) list.
                 if !matches!(key.code, KeyCode::Char('?') | KeyCode::Esc) {
+                    self.help_scroll.handle_key(key);
                     self.overlay = Overlay::Help;
                 }
             }
@@ -895,7 +947,10 @@ impl App {
             KeyCode::Char('R') => self.reload_status(true),
             KeyCode::Char('x') => self.refresh_targets(false),
             KeyCode::Char('X') => self.refresh_targets(true),
-            KeyCode::Char('?') => self.overlay = Overlay::Help,
+            KeyCode::Char('?') => {
+                self.help_scroll.reset();
+                self.overlay = Overlay::Help;
+            }
             _ => {}
         }
         None
@@ -1040,7 +1095,8 @@ impl App {
         self.save_ui_state();
     }
 
-    /// Persists the sort mode, active tab, slug display and preview mode.
+    /// Persists the sort mode, active tab, slug display, preview mode and
+    /// whether the hint footer is shown.
     fn save_ui_state(&self) {
         let _ = ui_state::save(
             &self.ui_state_path,
@@ -1049,6 +1105,7 @@ impl App {
                 tab: self.tab,
                 show_slugs: self.show_slugs,
                 preview: self.preview.as_key().to_string(),
+                hints_visible: shortcut_hints::visible(),
             },
         );
     }
@@ -1964,12 +2021,6 @@ fn apply_draft(repo: &mut Repo, draft: RepoDraft, path: PathBuf) {
     repo.include_in_backup = draft.include_in_backup;
 }
 
-/// Whether `key` is the global quit chord (`Ctrl+Q`).
-fn is_global_quit(key: KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL)
-        && key.code == KeyCode::Char('q')
-}
-
 impl App {
     /// Renders the whole screen: the panel app-frame (tinted header/content/
     /// status bands plus backgroundless hints), the entry list (and preview) in
@@ -2069,7 +2120,13 @@ impl App {
                 groups.push(((*label).to_string(), hints));
             }
         }
+        groups.push(global_group(&keymap));
         groups
+    }
+
+    /// The app-wide chords, shared by the footer and the help overlay.
+    fn global_hints(&self) -> (String, Vec<(String, String)>) {
+        global_group(&self.config.keymap())
     }
 
     /// Splits `body` into the list area and an optional preview area, per the
@@ -2458,7 +2515,13 @@ impl App {
         let skin = &self.skin;
         match &self.overlay {
             Overlay::None => {}
-            Overlay::Help => help::render(frame, area, skin),
+            Overlay::Help => help::render(
+                frame,
+                area,
+                skin,
+                &self.global_hints(),
+                &self.help_scroll,
+            ),
             Overlay::Confirm(modal, _) => modal.render(frame, area, skin),
             Overlay::Prompt(prompt, _) => prompt.render(frame, area, skin),
             Overlay::Form(form, _) => form.render(frame, area, skin),

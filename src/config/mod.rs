@@ -144,6 +144,9 @@ pub struct Config {
     pub example_mode: bool,
     /// When true, run `git fetch` before the initial status refresh on start.
     pub fetch_on_start: bool,
+    /// When true, quitting with `q` asks for confirmation first. `Ctrl+Q`
+    /// always quits at once.
+    pub confirm_quit: bool,
     /// Preferred editor for opening files (falls back to `$VISUAL`/`$EDITOR`).
     pub editor: Option<String>,
     /// Extensions opened in the editor; other files use the default app.
@@ -171,6 +174,7 @@ impl Default for Config {
             github_username: None,
             example_mode: false,
             fetch_on_start: false,
+            confirm_quit: false,
             editor: None,
             editor_extensions: DEFAULT_EDITOR_EXTENSIONS
                 .iter()

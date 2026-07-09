@@ -13,7 +13,7 @@ use crate::domain::sort::SortMode;
 
 /// The restored UI state. `preview` is a raw key (the layout enum lives in the
 /// TUI layer, which storage must not depend on).
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiState {
     /// The list sort mode.
     pub sort: SortMode,
@@ -23,6 +23,21 @@ pub struct UiState {
     pub show_slugs: bool,
     /// The preview-panel mode key (e.g. "off"/"right"/"bottom").
     pub preview: String,
+    /// Whether the shortcut-hint footer is shown (toggled with `F1`).
+    pub hints_visible: bool,
+}
+
+impl Default for UiState {
+    /// Everything off except the hint footer, which starts out shown.
+    fn default() -> Self {
+        UiState {
+            sort: SortMode::default(),
+            tab: Tab::default(),
+            show_slugs: false,
+            preview: "off".to_string(),
+            hints_visible: true,
+        }
+    }
 }
 
 /// The on-disk UI state document.
@@ -32,6 +47,7 @@ struct UiStateDoc {
     tab: Option<String>,
     show_slugs: Option<bool>,
     preview: Option<String>,
+    hints_visible: Option<bool>,
 }
 
 /// Loads the persisted UI state, defaulting when the file is missing/corrupt.
@@ -50,6 +66,7 @@ pub fn load(path: &Path) -> UiState {
         tab: doc.tab.as_deref().map_or_else(Tab::default, Tab::from_key),
         show_slugs: doc.show_slugs.unwrap_or(false),
         preview: doc.preview.unwrap_or_else(|| "off".to_string()),
+        hints_visible: doc.hints_visible.unwrap_or(true),
     }
 }
 
@@ -63,6 +80,7 @@ pub fn save(path: &Path, state: &UiState) -> Result<()> {
         tab: Some(state.tab.as_key().to_string()),
         show_slugs: Some(state.show_slugs),
         preview: Some(state.preview.clone()),
+        hints_visible: Some(state.hints_visible),
     };
     let text = toml::to_string_pretty(&doc)
         .map_err(|e| Error::invalid(format!("serialise ui state: {e}")))?;
@@ -87,6 +105,7 @@ mod tests {
             tab: Tab::Archive,
             show_slugs: true,
             preview: "right".to_string(),
+            hints_visible: false,
         };
         save(&file, &state).unwrap();
         assert_eq!(load(&file), state);

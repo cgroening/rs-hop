@@ -157,6 +157,7 @@ git_program = "lazygit"        # tool launched for git repos; omit to disable
 github_username = "you"        # stripped from displayed remote names
 example_mode = false           # show example_git_info instead of real status
 fetch_on_start = false         # git fetch in the background when hop starts
+confirm_quit = false           # ask before quitting with `q` (Ctrl+Q never asks)
 # editor = "nvim"              # for opening text files; else $VISUAL / $EDITOR
 # editor_extensions = ["rs", "md", "txt"]  # override the built-in text list
 # zip_backup_folder = "~/Backups/repos"    # where z / Z write ZIP backups
@@ -245,7 +246,9 @@ hop config-path     print the resolved config file path
 | `r` | git tabs: reload status (`R`: + `git fetch`) · Files tab: check that paths still exist |
 | `x` | refresh selection/cursor   ·   `X`: with `git fetch` |
 | `?` | toggle the help overlay |
-| `q` / `Ctrl+Q` | quit |
+| `F1` | show / hide the shortcut-hint footer (remembered across runs) |
+| `q` | quit (asks first when `confirm_quit = true`) |
+| `Ctrl+Q` | force quit, no questions (from any state) |
 
 ## Development
 

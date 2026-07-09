@@ -60,7 +60,6 @@ const GIT_HINT_GROUPS: &[(&str, &[Action])] = &[
             Action::Errors,
         ],
     ),
-    ("App", &[Action::Help, Action::Quit]),
 ];
 
 /// The Archive tab's footer hints. Archived entries are git repos, so the tab
@@ -116,7 +115,6 @@ const FILES_HINT_GROUPS: &[(&str, &[Action])] = &[
         "Paths",
         &[Action::Reload, Action::RepairPath, Action::Errors],
     ),
-    ("App", &[Action::Help, Action::Quit]),
 ];
 
 /// The footer hint groups for `tab`, as `(label, actions)` pairs in display
