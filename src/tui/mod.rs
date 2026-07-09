@@ -8,6 +8,7 @@
 //! terminal is restored.
 
 pub mod appframe;
+pub mod bindings;
 pub mod colors;
 pub mod form;
 pub mod help;
@@ -1948,7 +1949,7 @@ impl App {
             &self.skin,
             active,
             self.status_lines(),
-            &self.hint_pairs(),
+            &self.hint_groups(),
             self.loading.is_some(),
         );
         let (list_area, preview_area) = self.split_preview(areas.content);
@@ -2007,12 +2008,32 @@ impl App {
         lines
     }
 
-    /// The per-tab footer key hints as owned `(keys, description)` pairs.
-    fn hint_pairs(&self) -> Vec<(String, String)> {
-        hints(self.tab)
+    /// The per-tab footer hints as labelled groups (clibase-style). A compact
+    /// Navigation group leads, then each `bindings` group is turned into
+    /// `(key, description)` pairs via the keymap, so the shown keys reflect any
+    /// `[keys]` overrides. Empty groups (no bound key) are dropped.
+    fn hint_groups(&self) -> Vec<(String, Vec<(String, String)>)> {
+        let keymap = self.config.keymap();
+        let navigation = (
+            "Navigation".to_string(),
+            [
+                ("\u{2191}\u{2193}", "move"),
+                ("g/G", "top/bottom"),
+                ("PgUp/PgDn", "page"),
+                ("Ctrl+u/d", "half"),
+            ]
             .into_iter()
-            .map(|(keys, desc)| (keys.to_string(), desc.to_string()))
-            .collect()
+            .map(|(key, desc)| (key.to_string(), desc.to_string()))
+            .collect(),
+        );
+        let mut groups = vec![navigation];
+        for (label, actions) in bindings::hint_groups(self.tab) {
+            let hints = keymap.hints(actions);
+            if !hints.is_empty() {
+                groups.push(((*label).to_string(), hints));
+            }
+        }
+        groups
     }
 
     /// Splits `body` into the list area and an optional preview area, per the
@@ -2435,62 +2456,6 @@ fn backup_dest(folder: &Path, repo: &Repo, repos: &[Repo]) -> PathBuf {
     folder.join(backup::backup_filename(repo, repos))
 }
 
-/// The footer key hints for `tab` (only the keys relevant to that tab).
-fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
-    let mut hints: Vec<(&str, &str)> = vec![("Enter", "cd"), ("L", "open")];
-    // The git tool overlay applies to git repositories, which live on both git
-    // tabs (Git Repos and Archive), not on the Files tab.
-    if tab != Tab::FilesAndFolders {
-        hints.push(("l", "lazygit"));
-    }
-    hints.extend([
-        ("o", "cd"),
-        ("O", "open in app"),
-        ("Space", "select"),
-        ("f", "filter"),
-        ("F", "changes"),
-    ]);
-    // The Files tab groups into sections: s jumps, M manages them.
-    if tab == Tab::FilesAndFolders {
-        hints.push(("s", "section"));
-        hints.push(("M", "sections"));
-    } else {
-        hints.push(("s", "sort"));
-    }
-    hints.push(("v", "preview"));
-    hints.extend([("n", "add"), ("e", "edit"), ("d/Del", "del")]);
-    hints.push(("u", "undo"));
-    hints.push(("*", "fav"));
-    // Git repos and folders can be backed up as ZIP archives (z: target, Z:
-    // every entry opted into the backup).
-    hints.push(("z/Z", "zip"));
-    // Archive tab restores; the others archive.
-    hints.push(match tab {
-        Tab::Archive => ("A", "restore"),
-        _ => ("A", "archive"),
-    });
-    hints.push(("S", "slug"));
-    hints.push(("i", "slugs"));
-    hints.push(("y", "copy path"));
-    hints.push(("b", "github"));
-    hints.push(("p", "fix path"));
-    // Git status refresh applies on both git tabs (Git Repos and Archive); the
-    // Files tab uses `r`/`R` to check that paths still exist instead.
-    match tab {
-        Tab::GitRepos | Tab::Archive => {
-            // r/R reload every entry (R also fetches); x/X refresh only the
-            // selection or cursor (X also fetches).
-            hints.push(("r/R", "reload"));
-            hints.push(("x/X", "refresh one"));
-        }
-        Tab::FilesAndFolders => hints.push(("r/R", "check paths")),
-    }
-    hints.push(("!", "errors"));
-    hints.push(("?", "help"));
-    hints.push(("q", "quit"));
-    hints
-}
-
 /// The fill ratio for `done` of `total`, clamped to `0.0..=1.0` (0 when empty).
 fn progress_ratio(done: usize, total: usize) -> f64 {
     if total == 0 {
@@ -2710,6 +2675,36 @@ mod tests {
             .map(ratatui::buffer::Cell::symbol)
             .collect();
         assert!(text.contains('%') && text.contains("repo"));
+    }
+
+    #[test]
+    fn hint_groups_are_labelled_and_tab_specific() {
+        let labels = |app: &App| {
+            app.hint_groups()
+                .into_iter()
+                .map(|(label, _)| label)
+                .collect::<Vec<_>>()
+        };
+        let mut app = sample_app();
+        app.tab = Tab::GitRepos;
+        let git = labels(&app);
+        assert_eq!(git.first().map(String::as_str), Some("Navigation"));
+        assert!(git.contains(&"Git".to_string()));
+        assert!(!git.contains(&"Sections".to_string()));
+
+        app.tab = Tab::FilesAndFolders;
+        let files = labels(&app);
+        assert!(files.contains(&"Sections".to_string()));
+        assert!(files.contains(&"Paths".to_string()));
+        assert!(!files.contains(&"Git".to_string()));
+
+        // Keys come from the keymap (per-action), e.g. add -> "n".
+        let add = app
+            .hint_groups()
+            .into_iter()
+            .flat_map(|(_, pairs)| pairs)
+            .find(|(_, desc)| desc == "add");
+        assert_eq!(add, Some(("n".to_string(), "add".to_string())));
     }
 
     #[test]

@@ -334,7 +334,7 @@ const ACTIONS: &[ActionSpec] = &[
     ActionSpec {
         action: Action::Archive,
         config_name: "archive",
-        description: "archive",
+        description: "archive/restore",
         default_keys: &["A"],
     },
     ActionSpec {
@@ -370,7 +370,7 @@ const ACTIONS: &[ActionSpec] = &[
     ActionSpec {
         action: Action::Reload,
         config_name: "reload",
-        description: "reload",
+        description: "reload/check",
         default_keys: &["r"],
     },
     ActionSpec {

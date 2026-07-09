@@ -45,7 +45,8 @@ src/
     demo.rs               sample entries for --demo
   tui/
     mod.rs                App + run loop (poll + drain background) + key handling + render
-    appframe.rs           the panel app-frame (bands + hints + dim backdrop)
+    appframe.rs           the panel app-frame (bands + grouped hints + dim backdrop)
+    bindings.rs           per-tab footer hint groups (Action lists -> keymap.hints)
     skin.rs               Colors::from_palette: hop colour roles from the palette
     colors.rs             original rose constants (content renderers, = default theme)
     terminal.rs           re-export of ratada::{Tui, TuiEvent}
@@ -92,7 +93,7 @@ The CLI presentation layer uses the external `sparcli` crate (path dependency, f
 
 ## Keys, theming and glyphs
 
-`keymap.rs` is a top-level layer (not under `tui`) so it can be the single source of truth for shortcuts: `Action` carries each shortcut's config name, description and default keys, and `Keymap::from_overrides(&config.keys)` applies the `[keys]` config overrides and reports conflicts. **Caveat:** the keymap is built and tested but **not yet wired into the TUI dispatch** – `App::handle_list_key` still matches keys inline, and the footer hints come from the `hints(tab)` function, so `[keys]` overrides do not take effect yet. Wiring `keymap` into dispatch + the footer is a planned follow-up (see [Known follow-ups](#known-follow-ups)).
+`keymap.rs` is a top-level layer (not under `tui`) so it can be the single source of truth for shortcuts: `Action` carries each shortcut's config name, description and default keys, and `Keymap::from_overrides(&config.keys)` applies the `[keys]` config overrides and reports conflicts. The **footer hints are keymap-sourced**: `tui/bindings.rs` lists, per tab, which `Action`s appear in each labelled group (`Open`, `Manage`, `Backup`, `View`, `Git`/`Sections`+`Paths`, `App`), and `App::hint_groups` turns each group into `(key, description)` pairs via `config.keymap().hints(actions)` – so the footer keys reflect `[keys]` overrides. A compact static `Navigation` group is prepended (so arrows render as `↑↓ move` rather than the verbose per-key form). **Caveat:** the keymap is still **not wired into the TUI key dispatch** – `App::handle_list_key` matches keys inline, so a `[keys]` override changes the footer label but not yet what the key does. Wiring `keymap::action_for` into dispatch is the remaining follow-up (see [Known follow-ups](#known-follow-ups)).
 
 Theming flows from one config: `[appearance]` (`config/appearance.rs`) sets the active theme, per-colour overrides and the glyph variant; `[themes.<name>]` tables add custom themes over the built-in rose `default` and `monochrome`. `Config` exposes `palette()`, `skin()`, `theme_registry()`, `color_overrides()` and `keymap()` as the bridge to `ratada` and `sparcli`. The glyph variant is `ratada::theme::GlyphVariant`; hop keeps its own richer `IconSet` (`tui/presentation.rs`) keyed off it. The env prefix is `HOP_` (`HOP_GIT_PROGRAM`, `HOP_EDITOR`, `HOP_THEME`, `HOP_GLYPHS`, `HOP_CONFIG`). The legacy `[icons]` block still loads (folded into `[appearance].glyphs`).
 
@@ -141,7 +142,7 @@ When changing widget or theming behaviour that lives in `ratada`/`sparcli`, work
 
 These are documented, deliberate gaps from the clibase migration, not bugs:
 
-- **`keymap.rs` is not yet wired into TUI dispatch.** `App::handle_list_key` still matches keys inline and the footer uses `hints(tab)`, so `[keys]` config overrides have no effect yet. Wiring `Keymap::action_for` into dispatch and sourcing the footer from `keymap.hints(...)` is the intended end state.
+- **`keymap.rs` is not yet wired into TUI key dispatch.** The footer hints are now keymap-sourced (via `tui/bindings.rs`), so `[keys]` overrides show in the footer, but `App::handle_list_key` still matches keys inline – so an override does not yet change what a key *does*. Wiring `Keymap::action_for` into dispatch is the intended end state.
 - **Content-cell colours still come from `tui/colors.rs`** (the original rose constants), which equal the `default` theme. So re-theming currently recolours the frame and modals but not the table/sections/preview content cells. Threading `Colors` (`tui/skin.rs`) through the content renderers would let content follow the active theme and let `colors.rs` be removed.
 - **`scan_picker` keeps the pre-migration bordered style** (it is a standalone CLI picker with its own loop); it could be restyled or moved to a sparcli/`ratada` picker.
 - **Config writes are not atomic** (`config::writer` uses `toml_edit` + `fs::write`); a `util/fs::write_atomic` (temp file + rename) would harden against a crash mid-write.

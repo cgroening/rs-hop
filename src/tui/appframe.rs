@@ -105,7 +105,7 @@ pub fn render_frame(
     skin: &Skin,
     active: usize,
     status: Vec<Line>,
-    hints: &[(String, String)],
+    hints: &[(String, Vec<(String, String)>)],
     show_progress: bool,
 ) -> FrameAreas {
     let area = frame.area();
@@ -203,26 +203,36 @@ fn hint_style(skin: &Skin) -> ratada::shortcut_hints::HintStyle {
     }
 }
 
-/// One flat, label-less hint group over the `(key, description)` pairs.
-fn hint_group(
-    hints: &[(String, String)],
-) -> [ratada::shortcut_hints::HintGroup<'_, String>; 1] {
-    [ratada::shortcut_hints::HintGroup { label: "", hints }]
+/// Borrows the owned `(label, pairs)` hint groups into toolkit
+/// [`HintGroup`](ratada::shortcut_hints::HintGroup)s (aligned label column).
+fn to_hint_groups(
+    groups: &[(String, Vec<(String, String)>)],
+) -> Vec<ratada::shortcut_hints::HintGroup<'_, String>> {
+    groups
+        .iter()
+        .map(|(label, pairs)| ratada::shortcut_hints::HintGroup {
+            label: label.as_str(),
+            hints: pairs.as_slice(),
+        })
+        .collect()
 }
 
-/// The hint-band height for the flat `hints` at `width`, including the
+/// The hint-band height for the grouped `hints` at `width`, including the
 /// top-margin line.
-fn hints_height(hints: &[(String, String)], width: usize) -> u16 {
-    ratada::shortcut_hints::height(&hint_group(hints), width, 1)
+fn hints_height(
+    hints: &[(String, Vec<(String, String)>)],
+    width: usize,
+) -> u16 {
+    ratada::shortcut_hints::height(&to_hint_groups(hints), width, 1)
 }
 
-/// Renders the backgroundless, flat key hints, inset by 1 cell to match the
+/// Renders the backgroundless, grouped key hints, inset by 1 cell to match the
 /// panels, with the blank separator supplied by `top_margin`.
 fn render_hints(
     frame: &mut Frame<'_>,
     area: Rect,
     skin: &Skin,
-    hints: &[(String, String)],
+    hints: &[(String, Vec<(String, String)>)],
 ) {
     let opts = hint_style(skin);
     let hint_area = Rect {
@@ -230,7 +240,12 @@ fn render_hints(
         width: area.width.saturating_sub(2),
         ..area
     };
-    ratada::shortcut_hints::render(frame, hint_area, &hint_group(hints), &opts);
+    ratada::shortcut_hints::render(
+        frame,
+        hint_area,
+        &to_hint_groups(hints),
+        &opts,
+    );
 }
 
 #[cfg(test)]
@@ -255,7 +270,10 @@ mod tests {
                     &skin(),
                     0,
                     vec![Line::raw("info")],
-                    &[("q".to_string(), "quit".to_string())],
+                    &[(
+                        "App".to_string(),
+                        vec![("q".to_string(), "quit".to_string())],
+                    )],
                     show_progress,
                 ));
             })
