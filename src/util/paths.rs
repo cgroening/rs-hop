@@ -112,3 +112,8 @@ pub fn log_file() -> PathBuf {
 pub fn ui_state_file() -> PathBuf {
     state_dir().join("ui-state.toml")
 }
+
+/// Path of the project-statistics cache in the state directory.
+pub fn stats_file() -> PathBuf {
+    state_dir().join("stats-cache.toml")
+}

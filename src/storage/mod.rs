@@ -9,6 +9,7 @@ pub mod cache;
 pub mod git_client;
 pub mod in_memory_repository;
 pub mod repository;
+pub mod stats_cache;
 pub mod subprocess_git_client;
 pub mod toml_repo_repository;
 pub mod ui_state;

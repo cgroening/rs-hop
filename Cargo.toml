@@ -59,6 +59,10 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 # (matches the CRC32 the zip stores). Already in the tree via zip/flate2.
 # https://crates.io/crates/crc32fast
 crc32fast = "1"
+# LOC counting. `default-features = false` drops the `cli` feature, but
+# `clap-cargo` and `table_formatter` (which pulls `colored`) are unconditional
+# library dependencies of tokei 14, so they come along regardless.
+tokei = { version = "14", default-features = false }
 
 [profile.release]
 opt-level = 3

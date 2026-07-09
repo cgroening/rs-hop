@@ -9,3 +9,4 @@ pub mod repo;
 pub mod sections;
 pub mod slug;
 pub mod sort;
+pub mod stats;

@@ -223,13 +223,17 @@ hop config-path     print the resolved config file path
 | `o` | jump only: write path and exit (folder → cd, file → its parent) |
 | `O` | force open with the default app (regardless of kind) |
 | `b` | open the selected repo on GitHub in the browser |
-| `v` | cycle the detail panel (off → right → bottom) |
+| `v` | show or hide the detail panel |
+| `V` | move the detail panel: right ↔ bottom |
+| `Ctrl+↑/↓` | scroll the detail panel |
+| `Ctrl+←/→` | make the detail panel smaller / bigger |
+| `c` | cycle the table's columns (Standard → Code → Activity) |
+| `t` | pick the column to sort by (picking the active one flips the direction) |
 | `f` | live fuzzy filter (`Esc` clears; matched characters are highlighted) |
 | `F` | toggle showing only git repos with a status change |
-| `s` | git tabs: cycle sort (name / recent / frecency / custom) · Files: jump to a section |
+| `s` | Files tab: jump to a section |
 | `M` | Files tab: manage sections (add / rename / delete / reorder) |
 | `Alt+↑/↓` | reorder the entry (custom sort, or within a Files section; favourites stay on top) |
-| `Ctrl+↑/↓` | Files tab: jump to the previous / next section |
 | `n` | add an entry (fill the form; `^O` opens the path picker) |
 | `e` | edit the selected entry |
 | `d` / `Del` / `Backspace` | delete (acts on the selection, else the cursor; confirm) |

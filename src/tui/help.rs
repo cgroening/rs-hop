@@ -7,9 +7,6 @@
 //! `Global` section is handed in by the caller, from the same tokens the footer
 //! uses.
 
-use std::cell::Cell;
-
-use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -18,6 +15,7 @@ use ratatui::widgets::{Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Skin;
+use crate::tui::scroll::Scroll;
 use crate::tui::widgets::centered_box;
 
 /// Rows the block border, the blank spacer and the footer take, on top of the
@@ -28,9 +26,6 @@ const CHROME_ROWS: u16 = 5;
 const PREFERRED_WIDTH: u16 = 60;
 /// Spaces between the key column and the description.
 const KEY_GAP: usize = 2;
-/// Rows a page key moves.
-const PAGE_ROWS: i32 = 10;
-
 /// The shortcut list, grouped into the same sections as the footer hint bar.
 /// The `Global` section is appended at render time so its keys stay in sync
 /// with the keymap and the toolkit's own chords.
@@ -124,8 +119,18 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "live fuzzy filter (Esc clears; matches are highlighted)",
             ),
             ("F", "toggle showing only git repos with a status change"),
-            ("v", "cycle the detail panel (off / right / bottom)"),
+            ("c", "cycle the columns (Standard / Code / Activity)"),
+            ("t", "pick the column to sort by (again: flip direction)"),
             ("i", "toggle showing slugs (dim, italic) after the name"),
+        ],
+    ),
+    (
+        "Panel",
+        &[
+            ("v", "show or hide the detail panel"),
+            ("V", "move the panel: right / bottom"),
+            ("Ctrl+\u{2191}\u{2193}", "scroll the panel"),
+            ("Ctrl+\u{2190}\u{2192}", "make the panel smaller / bigger"),
         ],
     ),
     (
@@ -142,19 +147,11 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
     (
         "Sections",
         &[
-            (
-                "s",
-                "git tabs: cycle sort (name/recent/frecency/custom) \u{b7} \
-                 Files: jump",
-            ),
+            ("s", "Files: jump to a section"),
             ("M", "Files: manage sections (add / rename / delete / move)"),
             (
                 "Alt+\u{2191}\u{2193}",
                 "reorder (custom sort, or within a Files section)",
-            ),
-            (
-                "Ctrl+\u{2191}\u{2193}",
-                "Files: jump to the previous / next section",
             ),
         ],
     ),
@@ -169,38 +166,6 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
 
 /// An owned `(label, hints)` section, as the app builds the `Global` group.
 pub type Section = (String, Vec<(String, String)>);
-
-/// The overlay's scroll position, plus the largest offset the last render
-/// allowed — so the key handler can clamp without knowing the viewport.
-#[derive(Debug, Default)]
-pub struct Scroll {
-    offset: Cell<u16>,
-    max: Cell<u16>,
-}
-
-impl Scroll {
-    /// Scrolls back to the top, when the overlay opens.
-    pub fn reset(&self) {
-        self.offset.set(0);
-    }
-
-    /// Moves the view for `key`, clamped to the scrollable range. Keys that do
-    /// not scroll leave it alone.
-    pub fn handle_key(&self, key: KeyEvent) {
-        let delta = match key.code {
-            KeyCode::Up | KeyCode::Char('k') => -1,
-            KeyCode::Down | KeyCode::Char('j') => 1,
-            KeyCode::PageUp | KeyCode::Char('u') => -PAGE_ROWS,
-            KeyCode::PageDown | KeyCode::Char('d') => PAGE_ROWS,
-            KeyCode::Home | KeyCode::Char('g') => i32::MIN,
-            KeyCode::End | KeyCode::Char('G') => i32::MAX,
-            _ => return,
-        };
-        let max = i32::from(self.max.get());
-        let moved = i32::from(self.offset.get()).saturating_add(delta);
-        self.offset.set(moved.clamp(0, max) as u16);
-    }
-}
 
 /// Renders the help overlay centred in `area`. `global` is the trailing section
 /// with the app-wide chords, built from the same tokens as the footer; `scroll`
@@ -246,9 +211,7 @@ pub fn render(
     // The footer stays pinned; only the sections scroll.
     let viewport = inner.height.saturating_sub(2);
     let total = u16::try_from(lines.len()).unwrap_or(u16::MAX);
-    scroll.max.set(total.saturating_sub(viewport));
-    let offset = scroll.offset.get().min(scroll.max.get());
-    scroll.offset.set(offset);
+    let offset = scroll.fit(total, viewport);
 
     frame.render_widget(block, rect);
     let body = Rect {

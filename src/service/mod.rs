@@ -7,5 +7,6 @@
 
 pub mod preview_service;
 pub mod repo_service;
+pub mod stats_service;
 pub mod status_service;
 pub mod zip_service;

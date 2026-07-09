@@ -87,6 +87,8 @@ mod tests {
     use super::*;
 
     /// A fake client returning a fixed branch, recording fetches.
+    use crate::domain::stats::GitStats;
+
     struct FakeClient;
 
     impl GitClient for FakeClient {
@@ -101,6 +103,9 @@ mod tests {
         fn fetch(&self, _path: &Path) {}
         fn log(&self, _path: &Path, _max: usize) -> Vec<String> {
             Vec::new()
+        }
+        fn stats(&self, _path: &Path) -> GitStats {
+            GitStats::default()
         }
     }
 

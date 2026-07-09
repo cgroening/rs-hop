@@ -67,7 +67,10 @@ fn walk(dir: &Path, exclude_dirs: &[String], files: &mut Vec<PathBuf>) {
 /// `exclude_dirs` (so e.g. `target` also prunes `target.nosync` and
 /// `target-old`). Empty entries are ignored so a stray `""` cannot prune
 /// everything.
-fn is_excluded(name: &str, exclude_dirs: &[String]) -> bool {
+///
+/// Shared with `util::diskusage`, so both agree on what counts as a build
+/// directory.
+pub fn is_excluded(name: &str, exclude_dirs: &[String]) -> bool {
     exclude_dirs
         .iter()
         .any(|dir| !dir.is_empty() && name.starts_with(dir.as_str()))

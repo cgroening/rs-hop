@@ -15,7 +15,8 @@ src/
     filter.rs             Tab, belongs_to_tab, searchable_text, fuzzy_indices
     slug.rs               slugify + validate_format (reserved names)
     sections.rs           group / flatten / section_starts / jump_target
-    sort.rs               SortMode + sort_indices (name/recent/frecency/custom)
+    sort.rs               SortMode + SortDir + SortContext + sort_indices
+    stats.rs              CodeEntry / GitStats / Totals + pure formatters
     backup.rs             backup_filename: unique slugified ZIP name per repo
     doctor.rs             diagnose(repos, exists, is_git) -> Vec<Issue>
     path_repair.rs        nearest_existing ancestor (predicate-injected)
@@ -26,12 +27,14 @@ src/
     git_client.rs         GitClient trait (port) + parse_github_name
     subprocess_git_client.rs  git via std::process::Command
     cache.rs              git-info cache (TOML)
+    stats_cache.rs        statistics cache (code and git, two tables)
     usage_state.rs        last_used/open_count + selected-repo handoff writer
-    ui_state.rs           persisted sort / tab / show_slugs / preview
+    ui_state.rs           persisted sort / tab / slugs / panel / columns
     zip_cache.rs          ZIP-backup fingerprint cache (skip iCloud re-download)
   service/                use cases over the ports
     repo_service.rs       CRUD, fav/archive, slug, path repair, usage, undo
     status_service.rs     collect_all (sync) + spawn_refresh (background)
+    stats_service.rs      spawn_code_stats (tokei) + spawn_git_stats
     preview_service.rs    spawn_logs: background git log for the preview panel
     zip_service.rs        spawn_zip: ZIP backups in the background (ZipUpdate)
   config/
@@ -50,9 +53,12 @@ src/
     skin.rs               Colors::from_palette: hop colour roles from the palette
     terminal.rs           re-export of ratada::{Tui, TuiEvent}
     presentation.rs       IconSet (glyphs), status_text, truncate, name/slug spans
+    columns.rs            column sets, the columns bar and the totals row
+    detail.rs             shared typography (section header, field, bar)
+    scroll.rs             scroll offset shared by help and the detail panel
     table.rs              repo table rendering (git tabs)
     sections_view.rs      Files-tab sectioned list (headers + entry rows)
-    preview.rs            detail/preview panel + cached git log
+    preview.rs            detail panel (layout, statistics, git log)
     form.rs               add/edit form (RepoForm)
     widgets.rs            confirm / text prompt / single-select modals
     path_picker.rs        filesystem picker (repair / form path)
@@ -68,6 +74,7 @@ src/
     opener.rs             launch git tool / editor / default app / url
     scan.rs               recursive git-repo discovery for `hop scan`
     archive.rs            collect_files (excl. build dirs) + write_zip
+    diskusage.rs          metadata-only size walk (total / .git / excluded)
     app_info.rs           APP_NAME / APP_VERSION / APP_ABOUT
 tests/                    integration tests driving the public library API
 ```

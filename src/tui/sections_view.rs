@@ -15,12 +15,16 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, ListState};
+use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use crate::domain::repo::{Repo, is_dir_target};
 use crate::domain::sections::SectionGroup;
+use crate::domain::stats::{CodeEntry, GitStats};
 use crate::theme::Skin;
+use crate::tui::columns::{
+    CellSource, ColumnSet, StatColumn, cell_text, stat_columns,
+};
 use crate::tui::presentation::{IconSet, name_plain, slug_style, truncate};
 use crate::tui::skin::Colors;
 
@@ -57,6 +61,34 @@ pub struct SectionedView<'a> {
     pub zip_backups: &'a HashMap<PathBuf, DateTime<Local>>,
     /// The scroll offset carried across frames.
     pub offset: &'a Cell<usize>,
+    /// Which columns to show.
+    pub columns: ColumnSet,
+    /// Cached code and size statistics, keyed by entry path.
+    pub code: &'a HashMap<PathBuf, CodeEntry>,
+    /// Cached history statistics, keyed by entry path.
+    pub git: &'a HashMap<PathBuf, GitStats>,
+    /// Paths a statistics worker has not reported yet.
+    pub computing: &'a HashSet<PathBuf>,
+    /// The current spinner glyph while a worker runs.
+    pub spinner: Option<&'a str>,
+    /// The reference time for ages, in unix seconds.
+    pub now: i64,
+}
+
+impl SectionedView<'_> {
+    /// The rendered text of one statistics cell.
+    fn stat_text(&self, repo: &Repo, column: StatColumn) -> String {
+        let source = CellSource {
+            code: self.code.get(&repo.path),
+            git: self.git.get(&repo.path),
+            open_count: repo.open_count,
+            last_used: repo.last_used,
+            pending: self.computing.contains(&repo.path),
+            now: self.now,
+        };
+        cell_text(column, source)
+            .unwrap_or_else(|| self.spinner.unwrap_or("-").to_string())
+    }
 }
 
 /// Renders the sectioned list into `area`, highlighting the entry at display
@@ -67,6 +99,20 @@ pub fn render(
     cursor: usize,
     view: &SectionedView,
 ) {
+    // The statistics sets need a column-title row; the sectioned list has none
+    // of its own, so it is drawn above the list and taken off its viewport.
+    let header_rows: u16 = u16::from(view.columns.is_statistics());
+    let area = if header_rows > 0 && area.height > header_rows {
+        render_column_header(frame, area, view);
+        Rect {
+            y: area.y + header_rows,
+            height: area.height - header_rows,
+            ..area
+        }
+    } else {
+        area
+    };
+
     let row_count = view.groups.len() + entry_count(view.groups);
     let viewport = area.height as usize;
     let overflow = viewport > 0 && row_count > viewport;
@@ -170,6 +216,46 @@ fn settled_offset(
     offset
 }
 
+/// The column-title row for a statistics set, drawn above the sectioned list.
+fn render_column_header(frame: &mut Frame, area: Rect, view: &SectionedView) {
+    let row = Rect { height: 1, ..area };
+    let name_width = name_width(view);
+    let mut spans = vec![Span::raw("     ")];
+    spans.push(Span::raw(pad("Name", name_width)));
+    for column in stat_columns(view.columns) {
+        spans.push(Span::raw("  "));
+        spans.push(Span::raw(format!(
+            "{:>width$}",
+            column.title(),
+            width = column.width() as usize
+        )));
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(view.colors.header_style()),
+        row,
+    );
+}
+
+/// The statistics cells of one entry, right-aligned under their headers.
+fn stat_spans(view: &SectionedView, repo: &Repo) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for column in stat_columns(view.columns) {
+        let text = view.stat_text(repo, *column);
+        let width = column.width() as usize;
+        let cell = if column.is_numeric() {
+            format!("{text:>width$}")
+        } else {
+            pad(&text, width)
+        };
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            cell,
+            Style::default().fg(view.colors.foreground),
+        ));
+    }
+    spans
+}
+
 /// A full-width section-header bar: the bold accent label then a dim rule.
 fn header_item<'a>(label: &str, width: usize, colors: &Colors) -> ListItem<'a> {
     let title = format!(" {label} ");
@@ -213,6 +299,22 @@ fn entry_item<'a>(
         name_width,
         view.colors,
     );
+    if view.columns.is_statistics() {
+        let mut spans = vec![
+            lead,
+            marker_span(repo, view),
+            fav_span(repo, view),
+            Span::raw(" "),
+        ];
+        spans.extend(name_field);
+        spans.extend(stat_spans(view, repo));
+        let item = ListItem::new(Line::from(spans));
+        return if selected {
+            item.style(Style::default().bg(view.colors.multi_select_bg))
+        } else {
+            item
+        };
+    }
     let kind = pad(type_label(repo), TYPE_WIDTH);
     // Cells before the path: lead(2) + marker(1) + fav(1) + space(1) + name
     //  + gap(2) + type + gap(2); the path then fills up to the trailing

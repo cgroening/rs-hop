@@ -5,9 +5,9 @@
 //! widgets so both the TUI (dispatch + footer/help hints) and the CLI use it.
 //! Widget-internal shortcuts (modals, pickers, forms) are not covered here.
 //!
-//! Some keys are context-dependent (`s` sorts on the git tabs and jumps to a
-//! section on the Files tab; `r`/`R` reload on the git tabs and re-check paths
-//! on the Files tab); the keymap resolves the key to an [`Action`] and the app
+//! Some keys are context-dependent (`r`/`R` reload on the git tabs and re-check
+//! paths on the Files tab; `s` only jumps to a section where the list is
+//! sectioned); the keymap resolves the key to an [`Action`] and the app
 //! interprets it per tab. `Shift`+arrow (extend selection) and `Shift`+`Tab`
 //! (cycle back) are handled inline in dispatch, because [`KeyChord`] ignores the
 //! shift modifier (it is encoded only in a character's case).
@@ -60,20 +60,30 @@ pub enum Action {
     ChangesFilter,
     /// Open the entry on GitHub.
     Github,
-    /// Cycle the detail preview panel.
+    /// Show or hide the detail panel.
     Preview,
-    /// Cycle the sort mode (git tabs) or jump to a section (Files tab).
+    /// Move the detail panel to the other side.
+    PreviewPosition,
+    /// Scroll the detail panel up.
+    PreviewScrollUp,
+    /// Scroll the detail panel down.
+    PreviewScrollDown,
+    /// Make the detail panel smaller.
+    PreviewShrink,
+    /// Make the detail panel bigger.
+    PreviewGrow,
+    /// Cycle the table's column set.
+    Columns,
+    /// Open the sort picker.
     Sort,
+    /// Jump to a section (Files tab).
+    SectionJump,
     /// Manage sections (Files tab).
     ManageSections,
     /// Reorder the cursor entry up (custom sort / within a section).
     ReorderUp,
     /// Reorder the cursor entry down.
     ReorderDown,
-    /// Jump to the previous section (Files tab).
-    SectionPrev,
-    /// Jump to the next section (Files tab).
-    SectionNext,
     /// Add a new entry.
     Add,
     /// Edit the selected entry.
@@ -250,13 +260,55 @@ const ACTIONS: &[ActionSpec] = &[
     ActionSpec {
         action: Action::Preview,
         config_name: "preview",
-        description: "preview",
+        description: "detail panel",
         default_keys: &["v"],
+    },
+    ActionSpec {
+        action: Action::PreviewPosition,
+        config_name: "preview_position",
+        description: "right/bottom",
+        default_keys: &["V"],
+    },
+    ActionSpec {
+        action: Action::PreviewScrollUp,
+        config_name: "preview_scroll_up",
+        description: "scroll panel",
+        default_keys: &["ctrl+up"],
+    },
+    ActionSpec {
+        action: Action::PreviewScrollDown,
+        config_name: "preview_scroll_down",
+        description: "scroll panel",
+        default_keys: &["ctrl+down"],
+    },
+    ActionSpec {
+        action: Action::PreviewShrink,
+        config_name: "preview_shrink",
+        description: "smaller",
+        default_keys: &["ctrl+left"],
+    },
+    ActionSpec {
+        action: Action::PreviewGrow,
+        config_name: "preview_grow",
+        description: "bigger",
+        default_keys: &["ctrl+right"],
+    },
+    ActionSpec {
+        action: Action::Columns,
+        config_name: "columns",
+        description: "columns",
+        default_keys: &["c"],
     },
     ActionSpec {
         action: Action::Sort,
         config_name: "sort",
-        description: "sort/section",
+        description: "sort",
+        default_keys: &["t"],
+    },
+    ActionSpec {
+        action: Action::SectionJump,
+        config_name: "section_jump",
+        description: "jump to section",
         default_keys: &["s"],
     },
     ActionSpec {
@@ -276,18 +328,6 @@ const ACTIONS: &[ActionSpec] = &[
         config_name: "reorder_down",
         description: "reorder down",
         default_keys: &["alt+down"],
-    },
-    ActionSpec {
-        action: Action::SectionPrev,
-        config_name: "section_prev",
-        description: "prev section",
-        default_keys: &["ctrl+up"],
-    },
-    ActionSpec {
-        action: Action::SectionNext,
-        config_name: "section_next",
-        description: "next section",
-        default_keys: &["ctrl+down"],
     },
     ActionSpec {
         action: Action::Add,
@@ -854,12 +894,17 @@ mod tests {
                 | Action::ChangesFilter
                 | Action::Github
                 | Action::Preview
+                | Action::PreviewPosition
+                | Action::PreviewScrollUp
+                | Action::PreviewScrollDown
+                | Action::PreviewShrink
+                | Action::PreviewGrow
+                | Action::Columns
                 | Action::Sort
+                | Action::SectionJump
                 | Action::ManageSections
                 | Action::ReorderUp
                 | Action::ReorderDown
-                | Action::SectionPrev
-                | Action::SectionNext
                 | Action::Add
                 | Action::Edit
                 | Action::Delete

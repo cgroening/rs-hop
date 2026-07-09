@@ -15,15 +15,6 @@ pub struct SectionGroup {
     pub items: Vec<usize>,
 }
 
-/// Direction of a section-to-section cursor jump.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SectionJump {
-    /// To the start of the previous section.
-    Previous,
-    /// To the start of the next section.
-    Next,
-}
-
 /// Groups `items` into the sections named by `order` (matched case-insensitively
 /// to each item's section via `section_of`), keeping each section's items in
 /// input order. Empty named sections are dropped; items with no section (or one
@@ -89,21 +80,6 @@ pub fn current_section(starts: &[usize], cursor: usize) -> Option<usize> {
     starts.iter().rposition(|&start| start <= cursor)
 }
 
-/// The display position to jump the cursor to for the section adjacent to
-/// `cursor` in `dir`, or `None` at the edges.
-pub fn jump_target(
-    starts: &[usize],
-    cursor: usize,
-    dir: SectionJump,
-) -> Option<usize> {
-    let current = current_section(starts, cursor)?;
-    let target = match dir {
-        SectionJump::Previous => current.checked_sub(1)?,
-        SectionJump::Next => current + 1,
-    };
-    starts.get(target).copied()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,9 +141,5 @@ mod tests {
         assert_eq!(starts, vec![0, 2, 3]);
         assert_eq!(current_section(&starts, 1), Some(0));
         assert_eq!(current_section(&starts, 4), Some(2));
-        assert_eq!(jump_target(&starts, 1, SectionJump::Next), Some(2));
-        assert_eq!(jump_target(&starts, 3, SectionJump::Previous), Some(2));
-        assert_eq!(jump_target(&starts, 0, SectionJump::Previous), None);
-        assert_eq!(jump_target(&starts, 4, SectionJump::Next), None);
     }
 }

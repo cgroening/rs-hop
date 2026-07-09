@@ -8,9 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Project statistics, as swappable columns of the main table.** `c` cycles the columns between `Standard` (what hop always showed), `Code` (lines of code, top language, source files, size on disk) and `Activity` (commits, last commit, authors, branches, opens, last used). Outside `Standard` a totals row and a tinted bar naming the sets appear below the list; both follow the live filter and both step aside on a short terminal. The numbers are gathered in the background, cached in `stats-cache.toml`, and shown from the cache at once on the next start. `Standard` starts no worker at all, and switching to `Activity` never triggers a source walk – the two families are computed independently. Lines are counted with `tokei`, honouring each repository's `.gitignore` plus the configured `zip_exclude_dirs`.
+- **`t` opens a sort picker.** It lists the four general modes (name, recently used, frecency, custom) and, below them, the columns of the active set – you can only sort by a number that is on screen. Picking the active column again flips the direction; the choice is remembered across runs. Entries whose number is still being computed sort last in either direction, so the list does not reshuffle while the workers report. `s` therefore no longer cycles the sort; it is now only the Files tab's jump-to-section picker.
+- **The detail panel gained statistics, a scrollbar, and a size.** It now shows a `CODE` section (lines, source vs total files, size with the `.git` share, and the language distribution as bars) and a fuller `GIT` section (commits, commits in the last 30 days, authors, branches, tags, repository age). `v` shows and hides it, `V` moves it between the right side and the bottom, `Ctrl+↑/↓` scrolls it and `Ctrl+←/→` resizes it along its current axis. Position and both sizes persist. A vertical scrollbar appears only when the content overflows.
 - **`F1` shows and hides the shortcut-hint footer**, in the app and in every dialog. The chord comes from `ratada` (`shortcut_hints::consume_toggle`), so it behaves the same in every app built on the toolkit. Hiding the hints reclaims their rows *and* the blank spacer above them; the choice is remembered across runs.
 - **An optional confirmation before quitting.** `confirm_quit = true` in the config makes `q` ask first. `Ctrl+Q` never asks – it stays the unconditional escape hatch from any state.
 - **The path picker (`p` repair, `^O` in the add/edit form) can show hidden files.** `Ctrl+h` toggles dot-prefixed entries, which are hidden by default. The box also shows an `xx/yy` position indicator in its bottom-right border and a scrollbar when the list overflows, matching the toolkit's picker look.
+
+### Removed
+
+- **The `Ctrl+↑/↓` section jump.** Those chords now scroll the detail panel. Sections are still reachable with `s` (the picker, which lists them all) and the cursor. A `[keys]` entry for `section_prev` or `section_next` stops working; hop logs an unknown-action warning for it and ignores it.
 
 ### Fixed
 
@@ -18,6 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **The detail panel no longer paints its own background** and its border title reads `╭─ Details - <name> ───` rather than a flush `╭ Details`. It cleared its area down to the terminal's default colour instead of keeping the tinted content surface, which made it look like a separate window. A one-cell gutter now separates it from the list, its labels sit in an aligned column, and its sections are headed like the help overlay's.
 - **A theme now recolours the whole app, not just its frame.** The table, the sectioned Files list, the detail panel, the add/edit form, the text inputs and the `hop scan` picker drew their colours from compiled-in constants that happened to equal the `default` theme; they now resolve them from the active palette. `[appearance] theme` and `[appearance] colors` therefore reach the content cells.
 - **`[keys]` overrides now actually rebind keys.** The keymap was previously only the source of the footer hints, while key dispatch matched keys inline – so an override changed the hint label but not what the key did. Dispatch now resolves every key through the keymap. `Shift`+arrow, `Tab`/`Shift+Tab` and `Esc` stay outside it, as does `Ctrl+Q`, which the terminal guard handles before dispatch.
 - **The footer's `App` group is now `Global`** and lists the app-wide chords in one place: `?` help, `q` quit, then the toolkit's `f1 toggle hints` and `ctrl+q force quit`. The help overlay grows the same trailing section, from the same tokens.

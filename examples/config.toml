@@ -23,8 +23,9 @@ example_mode = false
 # same-named repos get a short path-hash suffix. A leading ~ is expanded.
 # zip_backup_folder = "~/Backups/repos"
 # Directory names excluded from a backup (matched as a name prefix, so "target"
-# also covers "target.nosync"). Omit to use the built-in default list
-# (target, node_modules, dist, build, …).
+# also covers "target.nosync"). The same list is excluded from the line count
+# behind the "Code" columns (`c`), on top of each repo's .gitignore. Omit to use
+# the built-in default list (target, node_modules, dist, build, …).
 # zip_exclude_dirs = ["target", "node_modules", "dist", "build"]
 
 # Section order for the Files and Folders tab.

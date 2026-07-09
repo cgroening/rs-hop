@@ -48,6 +48,8 @@ mod tests {
     use crate::domain::repo::GitInfo;
 
     /// A fake client returning a fixed log line per path.
+    use crate::domain::stats::GitStats;
+
     struct FakeClient;
 
     impl GitClient for FakeClient {
@@ -57,6 +59,9 @@ mod tests {
         fn fetch(&self, _path: &Path) {}
         fn log(&self, _path: &Path, _max: usize) -> Vec<String> {
             vec!["abc123 commit".to_string()]
+        }
+        fn stats(&self, _path: &Path) -> GitStats {
+            GitStats::default()
         }
     }
 

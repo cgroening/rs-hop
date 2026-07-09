@@ -9,6 +9,8 @@
 
 pub mod appframe;
 pub mod bindings;
+pub mod columns;
+pub mod detail;
 pub mod form;
 pub mod help;
 pub mod navigation;
@@ -16,6 +18,7 @@ pub mod path_picker;
 pub mod presentation;
 pub mod preview;
 pub mod scan_picker;
+pub mod scroll;
 pub mod sections_modal;
 pub mod sections_view;
 pub mod skin;
@@ -50,20 +53,27 @@ use crate::domain::filter::{Tab, belongs_to_tab, fuzzy_indices};
 use crate::domain::path_repair::nearest_existing_on_disk;
 use crate::domain::repo::{self, Repo, RepoKind};
 use crate::domain::sections;
-use crate::domain::sort::{SortMode, sort_indices};
+use crate::domain::sort::{
+    SortContext, SortDir, SortMode, StatsLookup, sort_indices,
+};
 use crate::keymap::{Action, Keymap};
 use crate::service::preview_service::{self, PreviewLog};
 use crate::service::repo_service::RepoService;
+use crate::service::stats_service::{
+    CodeUpdate, GitStatsUpdate, spawn_code_stats, spawn_git_stats,
+};
 use crate::service::status_service::{StatusUpdate, spawn_refresh};
 use crate::service::zip_service::{ZipJob, ZipUpdate, spawn_zip};
 use crate::storage::cache;
 use crate::storage::git_client::GitClient;
+use crate::storage::stats_cache::{self, StatsCache};
 use crate::storage::ui_state;
 use crate::theme::Skin;
+use crate::tui::columns::ColumnSet;
 use crate::tui::form::{FormResult, RepoDraft, RepoForm};
 use crate::tui::path_picker::{PathPicker, PickerResult};
 use crate::tui::presentation::{IconSet, github_url, render_empty_hint};
-use crate::tui::preview::PreviewMode;
+use crate::tui::preview::PreviewLayout;
 use crate::tui::sections_modal::{SectionsAction, SectionsModal};
 use crate::tui::skin::Colors;
 use crate::tui::widgets::{
@@ -134,6 +144,8 @@ enum Overlay {
     SectionPrompt(TextPrompt, SectionPromptKind),
     /// A confirm dialog to delete the named section.
     SectionDelete(ConfirmModal, String),
+    /// The sort picker; the vec maps rows to modes.
+    Sort(SelectModal, Vec<SortMode>),
 }
 
 /// Why the section prompt is open.
@@ -172,11 +184,12 @@ pub struct App {
     tab: Tab,
     cursor: usize,
     sort: SortMode,
+    sort_dir: SortDir,
     filtering: bool,
     filter: text_input::TextInput,
     overlay: Overlay,
     /// The help overlay's scroll position, kept across frames.
-    help_scroll: help::Scroll,
+    help_scroll: scroll::Scroll,
     status_msg: Option<(String, Instant)>,
     loading: Option<(usize, usize)>,
     /// The progress-bar label for the current `loading` operation (a refresh or
@@ -228,8 +241,22 @@ pub struct App {
     tab_focus: HashMap<Tab, PathBuf>,
     /// The last rendered list height (entry rows), for page-wise navigation.
     list_height: std::cell::Cell<usize>,
-    /// Where the detail/preview panel sits (persisted).
-    preview: PreviewMode,
+    /// Where the detail panel sits and how big it is (persisted).
+    preview: PreviewLayout,
+    /// The detail panel's scroll position, kept across frames.
+    preview_scroll: scroll::Scroll,
+    /// Which columns the table shows (persisted).
+    columns: ColumnSet,
+    /// Path of the statistics cache in the state directory.
+    stats_path: PathBuf,
+    /// Cached code and history statistics, seeded from disk at start.
+    stats: StatsCache,
+    /// Receives background code statistics, drained each loop.
+    code_rx: Option<Receiver<CodeUpdate>>,
+    /// Receives background history statistics, drained each loop.
+    git_stats_rx: Option<Receiver<GitStatsUpdate>>,
+    /// Paths a statistics worker has not reported yet (drive the cell spinner).
+    computing: HashSet<PathBuf>,
     /// Cached `git log` excerpts for the preview, keyed by entry path.
     preview_log: HashMap<PathBuf, Vec<String>>,
     /// Sender handed to the background log workers; kept alive so `preview_rx`
@@ -276,10 +303,10 @@ impl App {
         shortcut_hints::set_visible(ui.hints_visible);
         install_quit_confirmation(config.confirm_quit, skin);
         // The ZIP cache lives next to the git-info cache in the state directory.
-        let zip_cache_path = cache_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("zip-manifests.toml");
+        let state_dir = cache_path.parent().unwrap_or_else(|| Path::new("."));
+        let zip_cache_path = state_dir.join("zip-manifests.toml");
+        let stats_path = state_dir.join("stats-cache.toml");
+        let stats = stats_cache::load(&stats_path);
         let mut service = service;
         service.apply_git_infos(&cached.infos);
         let (preview_tx, preview_rx) = mpsc::channel();
@@ -297,10 +324,11 @@ impl App {
             tab: ui.tab,
             cursor: 0,
             sort: ui.sort,
+            sort_dir: ui.sort_dir,
             filtering: false,
             filter: text_input::TextInput::new(""),
             overlay: Overlay::None,
-            help_scroll: help::Scroll::default(),
+            help_scroll: scroll::Scroll::default(),
             status_msg: None,
             loading: None,
             loading_label: REFRESH_LABEL,
@@ -325,7 +353,18 @@ impl App {
             changes_only: false,
             tab_focus: HashMap::new(),
             list_height: std::cell::Cell::new(1),
-            preview: PreviewMode::from_key(&ui.preview),
+            preview: PreviewLayout::from_state(
+                &ui.preview,
+                ui.preview_width_pct,
+                ui.preview_height_rows,
+            ),
+            preview_scroll: scroll::Scroll::default(),
+            columns: ColumnSet::from_key(&ui.columns).available_on(ui.tab),
+            stats_path,
+            stats,
+            code_rx: None,
+            git_stats_rx: None,
+            computing: HashSet::new(),
             preview_log: HashMap::new(),
             preview_tx,
             preview_rx,
@@ -334,6 +373,7 @@ impl App {
             preview_target_at: Instant::now(),
         };
         app.reload_zip_backups();
+        app.start_stats();
         if let StartupStatus::Refresh { fetch } = startup
             && !app.config.example_mode
         {
@@ -378,12 +418,7 @@ impl App {
         } else {
             // The git tabs apply the chosen sort mode.
             let mut indices = tab_indices;
-            sort_indices(
-                repos,
-                &mut indices,
-                self.sort,
-                Local::now().timestamp(),
-            );
+            sort_indices(repos, &mut indices, &self.sort_context());
             indices
         };
         if self.changes_only {
@@ -437,20 +472,6 @@ impl App {
             SelectModal::new("Jump to section", labels, current),
             starts,
         );
-    }
-
-    /// Moves the cursor to the start of the adjacent section (Ctrl+arrow).
-    fn jump_section(&mut self, delta: isize) {
-        let groups = self.section_groups();
-        let starts = sections::section_starts(&groups);
-        let dir = if delta < 0 {
-            sections::SectionJump::Previous
-        } else {
-            sections::SectionJump::Next
-        };
-        if let Some(target) = sections::jump_target(&starts, self.cursor, dir) {
-            self.cursor = target;
-        }
     }
 
     /// Opens the manage-sections overlay at `cursor` over the current sections.
@@ -691,17 +712,20 @@ pub fn run(mut app: App, tui: &mut Tui) -> io::Result<RunOutcome> {
         app.drain_status();
         app.drain_zip();
         app.drain_preview();
+        app.drain_code_stats();
+        app.drain_git_stats();
         app.request_preview_log();
         tui.draw(|frame| app.render(frame))?;
         // Poll faster while a refresh or backup runs (progress bar) or while a
         // preview log is being debounced/fetched, so updates land promptly.
-        let timeout = if app.is_refreshing() || app.is_zipping() {
-            80
-        } else if app.preview_busy() {
-            60
-        } else {
-            150
-        };
+        let timeout =
+            if app.is_refreshing() || app.is_zipping() || app.is_computing() {
+                80
+            } else if app.preview_busy() {
+                60
+            } else {
+                150
+            };
         let outcome = match tui.poll_event(Duration::from_millis(timeout))? {
             // The hard `Ctrl+Q` is the escape hatch and never asks.
             Some(TuiEvent::Quit) => Some(RunOutcome::Quit),
@@ -742,6 +766,14 @@ fn install_quit_confirmation(confirm_quit: bool, skin: Skin) {
         ratada::modal::confirm(tui, &skin, " Quit hop? ", bg)
     });
 }
+
+/// The blank cell (or row) between the list and the detail panel.
+const PANEL_GUTTER: u16 = 1;
+/// The narrowest list a side panel may squeeze the body down to, in columns.
+const MIN_LIST_COLS: u16 = 20;
+/// The shortest list a bottom panel may squeeze the body down to, in rows.
+/// A column count would leave no room for the panel at all on a normal screen.
+const MIN_LIST_ROWS: u16 = 3;
 
 /// The label of the group and help section listing the app-wide chords.
 const GLOBAL_GROUP: &str = "Global";
@@ -848,6 +880,17 @@ impl App {
                     }
                 }
             }
+            Overlay::Sort(mut modal, modes) => match modal.handle_key(key) {
+                SelectResult::Selected(row) => {
+                    if let Some(&mode) = modes.get(row) {
+                        self.apply_sort(mode);
+                    }
+                }
+                SelectResult::Cancel => {}
+                SelectResult::Pending => {
+                    self.overlay = Overlay::Sort(modal, modes);
+                }
+            },
             Overlay::SectionJump(mut modal, starts) => {
                 match modal.handle_key(key) {
                     SelectResult::Selected(row) => {
@@ -959,18 +1002,24 @@ impl App {
             Action::Filter => self.filtering = true,
             Action::ChangesFilter => self.toggle_changes_only(),
             Action::Github => self.open_on_github(),
-            Action::Preview => self.cycle_preview(),
-            Action::Sort if self.is_sectioned() => self.open_section_jump(),
-            Action::Sort => self.cycle_sort(),
+            Action::Preview => self.toggle_preview(),
+            Action::PreviewPosition => self.flip_preview_position(),
+            Action::PreviewScrollUp => self.scroll_preview(-1),
+            Action::PreviewScrollDown => self.scroll_preview(1),
+            Action::PreviewShrink => self.resize_preview(-1),
+            Action::PreviewGrow => self.resize_preview(1),
+            Action::Columns => self.cycle_columns(),
+            Action::Sort => self.open_sort_picker(),
+            Action::SectionJump if self.is_sectioned() => {
+                self.open_section_jump();
+            }
+            Action::SectionJump => {}
             Action::ManageSections if self.tab == Tab::FilesAndFolders => {
                 self.open_sections_manager();
             }
             Action::ManageSections => {}
             Action::ReorderUp => self.move_entry(-1),
             Action::ReorderDown => self.move_entry(1),
-            Action::SectionPrev if self.is_sectioned() => self.jump_section(-1),
-            Action::SectionNext if self.is_sectioned() => self.jump_section(1),
-            Action::SectionPrev | Action::SectionNext => {}
             Action::Add => self.open_add(),
             Action::Edit => self.open_edit_form(),
             Action::Delete => self.open_delete_confirm(),
@@ -1035,7 +1084,10 @@ impl App {
         self.list_offset.set(0);
         self.table_offset.set(0);
         self.restore_focus();
+        self.columns = self.columns.available_on(tab);
+        self.preview_scroll.reset();
         self.save_ui_state();
+        self.start_stats();
         self.refresh_tab_on_first_visit();
     }
 
@@ -1092,10 +1144,70 @@ impl App {
         self.start_refresh(false);
     }
 
-    /// Cycles the sort mode and persists it for the next run.
-    fn cycle_sort(&mut self) {
-        self.sort = self.sort.next();
+    /// Everything a sort needs, borrowed from the statistics caches.
+    fn sort_context(&self) -> SortContext<'_> {
+        SortContext {
+            mode: self.sort,
+            dir: self.sort_dir,
+            now: Local::now().timestamp(),
+            stats: StatsLookup {
+                code: &self.stats.code,
+                git: &self.stats.git,
+            },
+        }
+    }
+
+    /// The modes the sort picker offers: the four general ones, then the
+    /// columns of the active set - so a user only sorts by what is on screen.
+    fn sort_modes(&self) -> Vec<SortMode> {
+        let mut modes = vec![
+            SortMode::Name,
+            SortMode::Recent,
+            SortMode::Frecency,
+            SortMode::Custom,
+        ];
+        modes.extend_from_slice(self.columns.sort_modes());
+        modes
+    }
+
+    /// Opens the sort picker, with the cursor on the active mode.
+    fn open_sort_picker(&mut self) {
+        let modes = self.sort_modes();
+        let cursor = modes.iter().position(|m| *m == self.sort).unwrap_or(0);
+        let items: Vec<String> = modes
+            .iter()
+            .map(|mode| {
+                if *mode == self.sort {
+                    format!("{}  {}", mode.title(), self.sort_dir.arrow())
+                } else {
+                    mode.title().to_string()
+                }
+            })
+            .collect();
+        self.overlay =
+            Overlay::Sort(SelectModal::new(" Sort by ", items, cursor), modes);
+    }
+
+    /// Applies a picked sort mode. Re-picking the active column flips the
+    /// direction; a fresh statistics column starts descending, because "which
+    /// is the biggest" is the question it answers.
+    fn apply_sort(&mut self, mode: SortMode) {
+        if mode == self.sort {
+            self.sort_dir = self.sort_dir.flip();
+        } else if mode.is_statistic() {
+            self.sort_dir = SortDir::Desc;
+        } else {
+            self.sort_dir = SortDir::Asc;
+        }
+        self.sort = mode;
         self.save_ui_state();
+    }
+
+    /// Cycles the table's column set and starts the worker the new set needs.
+    fn cycle_columns(&mut self) {
+        self.columns = self.columns.next(self.tab);
+        self.save_ui_state();
+        self.start_stats();
     }
 
     /// Toggles the inline slug display and persists it for the next run.
@@ -1118,10 +1230,33 @@ impl App {
         });
     }
 
-    /// Cycles the detail/preview panel (off -> right -> bottom) and persists it.
-    fn cycle_preview(&mut self) {
-        self.preview = self.preview.next();
+    /// Shows or hides the detail panel and persists the choice.
+    fn toggle_preview(&mut self) {
+        self.preview.toggle();
+        self.preview_scroll.reset();
         self.save_ui_state();
+    }
+
+    /// Moves the detail panel to the other side.
+    fn flip_preview_position(&mut self) {
+        self.preview.flip_position();
+        self.save_ui_state();
+    }
+
+    /// Grows or shrinks the detail panel along its current axis.
+    fn resize_preview(&mut self, step: i16) {
+        if !self.preview.visible {
+            return;
+        }
+        self.preview.resize(step);
+        self.save_ui_state();
+    }
+
+    /// Scrolls the detail panel.
+    fn scroll_preview(&mut self, delta: i32) {
+        if self.preview.visible {
+            self.preview_scroll.scroll_by(delta);
+        }
     }
 
     /// Persists the sort mode, active tab, slug display, preview mode and
@@ -1131,9 +1266,13 @@ impl App {
             &self.ui_state_path,
             &ui_state::UiState {
                 sort: self.sort,
+                sort_dir: self.sort_dir,
                 tab: self.tab,
                 show_slugs: self.show_slugs,
                 preview: self.preview.as_key().to_string(),
+                preview_width_pct: self.preview.width_pct,
+                preview_height_rows: self.preview.height_rows,
+                columns: self.columns.as_key().to_string(),
                 hints_visible: shortcut_hints::visible(),
             },
         );
@@ -1640,6 +1779,101 @@ impl App {
     }
 
     /// Applies any pending background ZIP-backup progress without blocking.
+    /// Starts the worker the active column set needs, over the paths currently
+    /// shown. `Standard` starts nothing at all, so a user who never opens the
+    /// statistics never pays for a source walk.
+    ///
+    /// In example mode no worker ever runs; the cells fall back to a dash
+    /// rather than spinning forever.
+    fn start_stats(&mut self) {
+        self.code_rx = None;
+        self.git_stats_rx = None;
+        self.computing.clear();
+        if !self.columns.is_statistics() || self.config.example_mode {
+            return;
+        }
+        let paths: Vec<PathBuf> = self
+            .ordered_view()
+            .iter()
+            .filter_map(|&i| self.service.get(i))
+            .map(|repo| repo.path.clone())
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        self.computing = paths.iter().cloned().collect();
+        if self.columns.needs_code_stats() {
+            self.code_rx = Some(spawn_code_stats(
+                paths,
+                self.config.zip_exclude_dirs.clone(),
+            ));
+        } else if self.columns.needs_git_stats() {
+            self.git_stats_rx =
+                Some(spawn_git_stats(Arc::clone(&self.git_client), paths));
+        }
+    }
+
+    /// Drains the background code statistics into the cache.
+    fn drain_code_stats(&mut self) {
+        let Some(rx) = self.code_rx.take() else {
+            return;
+        };
+        loop {
+            match rx.try_recv() {
+                Ok(CodeUpdate::Started { .. }) => {}
+                Ok(CodeUpdate::Done { path, stats }) => {
+                    self.computing.remove(&path);
+                    self.stats.code.insert(path, *stats);
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    self.code_rx = Some(rx);
+                    return;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.finish_stats();
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Drains the background history statistics into the cache.
+    fn drain_git_stats(&mut self) {
+        let Some(rx) = self.git_stats_rx.take() else {
+            return;
+        };
+        loop {
+            match rx.try_recv() {
+                Ok(GitStatsUpdate::Started { .. }) => {}
+                Ok(GitStatsUpdate::Done { path, stats }) => {
+                    self.computing.remove(&path);
+                    self.stats.git.insert(path, stats);
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    self.git_stats_rx = Some(rx);
+                    return;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.finish_stats();
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Persists the statistics cache once a worker has finished.
+    fn finish_stats(&mut self) {
+        self.computing.clear();
+        if let Err(error) = stats_cache::save(&self.stats_path, &self.stats) {
+            log::warn!("could not write the stats cache: {error}");
+        }
+    }
+
+    /// Whether a statistics worker is still running.
+    fn is_computing(&self) -> bool {
+        self.code_rx.is_some() || self.git_stats_rx.is_some()
+    }
+
     fn drain_zip(&mut self) {
         let Some(rx) = self.zip_rx.take() else {
             return;
@@ -1789,7 +2023,7 @@ impl App {
             "reloading status…"
         });
         self.start_refresh(fetch);
-        if self.preview != PreviewMode::Off {
+        if self.preview.visible {
             let paths = self.tab_git_paths();
             self.invalidate_logs(&paths);
             self.fetch_logs(paths);
@@ -1832,7 +2066,7 @@ impl App {
         };
         self.set_status(message);
         self.refresh_paths(paths, fetch, false);
-        if self.preview != PreviewMode::Off {
+        if self.preview.visible {
             let git_paths: Vec<PathBuf> = targets
                 .iter()
                 .filter_map(|&i| self.service.get(i))
@@ -2068,8 +2302,17 @@ impl App {
             &self.hint_groups(),
             self.loading.is_some(),
         );
-        let (list_area, preview_area) = self.split_preview(areas.content);
+        let (body, footer) = self.split_columns_footer(areas.content);
+        let (list_area, preview_area) = self.split_preview(body);
         self.render_body(frame, list_area);
+        if let Some(footer) = footer {
+            self::columns::render_footer(
+                frame,
+                footer,
+                (self.columns, self.tab),
+                (self.visible_totals(), &self.colors),
+            );
+        }
         if let Some(preview_area) = preview_area {
             self.render_preview(frame, preview_area);
         }
@@ -2165,35 +2408,66 @@ impl App {
         global_group(&self.keymap)
     }
 
-    /// Splits `body` into the list area and an optional preview area, per the
-    /// active [`PreviewMode`] (right pane, bottom pane, or none).
-    fn split_preview(&self, body: Rect) -> (Rect, Option<Rect>) {
-        match self.preview {
-            PreviewMode::Off => (body, None),
-            PreviewMode::Right => {
-                let parts = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([
-                        Constraint::Min(20),
-                        Constraint::Percentage(40),
-                    ])
-                    .split(body);
-                (parts[0], Some(parts[1]))
-            }
-            PreviewMode::Bottom => {
-                let parts = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Min(3), Constraint::Length(9)])
-                    .split(body);
-                (parts[0], Some(parts[1]))
-            }
+    /// Splits the content band into the body and, outside the standard column
+    /// set, the totals-and-bar footer below it. A short terminal keeps every
+    /// row for the list and gets no footer.
+    fn split_columns_footer(&self, content: Rect) -> (Rect, Option<Rect>) {
+        let rows = self::columns::footer_rows(self.columns, content.height);
+        if rows == 0 {
+            return (content, None);
         }
+        let parts = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(rows)])
+            .split(content);
+        (parts[0], Some(parts[1]))
+    }
+
+    /// The summed statistics of the entries currently shown, so the totals row
+    /// follows the filter.
+    fn visible_totals(&self) -> crate::domain::stats::Totals {
+        let entries = self
+            .ordered_view()
+            .into_iter()
+            .filter_map(|i| self.service.get(i))
+            .filter_map(|repo| self.stats.code.get(&repo.path));
+        crate::domain::stats::totals(entries)
+    }
+
+    /// Splits `body` into the list area and an optional panel area, per the
+    /// active [`PreviewLayout`]. A one-cell gutter separates the two, so the
+    /// panel's border never touches the list.
+    fn split_preview(&self, body: Rect) -> (Rect, Option<Rect>) {
+        if !self.preview.visible {
+            return (body, None);
+        }
+        let (direction, minimum, panel) = match self.preview.position {
+            preview::PreviewPosition::Right => (
+                Direction::Horizontal,
+                MIN_LIST_COLS,
+                Constraint::Percentage(self.preview.width_pct),
+            ),
+            preview::PreviewPosition::Bottom => (
+                Direction::Vertical,
+                MIN_LIST_ROWS,
+                Constraint::Length(self.preview.height_rows),
+            ),
+        };
+        let parts = Layout::default()
+            .direction(direction)
+            .constraints([
+                Constraint::Min(minimum),
+                Constraint::Length(PANEL_GUTTER),
+                panel,
+            ])
+            .split(body);
+        (parts[0], Some(parts[2]))
     }
 
     /// The cursor entry's path when it is a git repo whose log the preview
     /// would show (preview visible, not example mode); otherwise `None`.
     fn preview_log_path(&self) -> Option<PathBuf> {
-        if self.preview == PreviewMode::Off || self.config.example_mode {
+        if !self.preview.visible || self.config.example_mode {
             return None;
         }
         let repo = self.selected_index().and_then(|i| self.service.get(i))?;
@@ -2287,6 +2561,7 @@ impl App {
         preview::render(
             frame,
             area,
+            &self.skin,
             preview::PreviewContext {
                 repo,
                 icons: &self.icons,
@@ -2294,6 +2569,10 @@ impl App {
                 example_mode: self.config.example_mode,
                 log: log.unwrap_or(&[]),
                 log_loading,
+                code: repo.and_then(|r| self.stats.code.get(&r.path)),
+                git: repo.and_then(|r| self.stats.git.get(&r.path)),
+                now: Local::now().timestamp(),
+                scroll: &self.preview_scroll,
             },
         );
     }
@@ -2514,6 +2793,11 @@ impl App {
             config: &self.config,
             skin: &self.skin,
             colors: &self.colors,
+            columns: self.columns,
+            code: &self.stats.code,
+            git: &self.stats.git,
+            computing: &self.computing,
+            now: Local::now().timestamp(),
             icons: &self.icons,
             example_mode: self.config.example_mode,
             spinner,
@@ -2538,6 +2822,12 @@ impl App {
             icons: &self.icons,
             skin: &self.skin,
             colors: &self.colors,
+            columns: self.columns,
+            code: &self.stats.code,
+            git: &self.stats.git,
+            computing: &self.computing,
+            spinner: self.spinner_frame(),
+            now: Local::now().timestamp(),
             selected: &self.selected,
             has_selection: !self.selected.is_empty(),
             missing: &self.files_missing,
@@ -2572,6 +2862,7 @@ impl App {
             Overlay::Errors(modal, _) => modal.render(frame, area, skin),
             Overlay::ErrorAction(modal, _) => modal.render(frame, area, skin),
             Overlay::SectionJump(modal, _) => modal.render(frame, area, skin),
+            Overlay::Sort(modal, _) => modal.render(frame, area, skin),
             Overlay::Sections(modal) => modal.render(frame, area, skin),
             Overlay::SectionPrompt(prompt, _) => {
                 prompt.render(frame, area, skin)
@@ -2736,6 +3027,8 @@ mod tests {
     use crate::storage::in_memory_repository::InMemoryRepoRepository;
     use crate::theme::GlyphVariant;
 
+    use crate::domain::stats::GitStats;
+
     /// A git client that does nothing (the smoke test runs in example mode).
     struct NoGit;
 
@@ -2746,6 +3039,9 @@ mod tests {
         fn fetch(&self, _path: &Path) {}
         fn log(&self, _path: &Path, _max: usize) -> Vec<String> {
             Vec::new()
+        }
+        fn stats(&self, _path: &Path) -> GitStats {
+            GitStats::default()
         }
     }
 
@@ -2783,8 +3079,14 @@ mod tests {
         folder.kind = RepoKind::Path;
         let mut archived = Repo::new(PathBuf::from("/old"));
         archived.archived = true;
+        // Each app needs its own state files: the tests run in parallel and
+        // would otherwise read each other's persisted sort and column set.
+        static NEXT: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let dir = std::env::temp_dir()
-            .join(format!("hop-tui-test-{}", std::process::id()));
+            .join(format!("hop-tui-test-{}-{id}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
         let service = RepoService::new(
             Box::new(InMemoryRepoRepository::new(vec![
                 git, missing, folder, archived,
@@ -2841,6 +3143,151 @@ mod tests {
             press(&mut app, KeyCode::Char(tab));
             terminal.draw(|frame| app.render(frame)).unwrap();
         }
+    }
+
+    /// The whole rendered buffer as one string.
+    fn screen(app: &App, width: u16, height: u16) -> String {
+        let mut terminal =
+            Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect()
+    }
+
+    #[test]
+    fn c_cycles_the_column_sets_and_only_they_show_the_bar() {
+        let mut app = sample_app();
+        // Standard looks exactly as it always did: no bar, no totals row.
+        let standard = screen(&app, 120, 30);
+        assert!(standard.contains("Branch"));
+        assert!(!standard.contains("Columns"), "no bar in the standard set");
+
+        press(&mut app, KeyCode::Char('c'));
+        let code = screen(&app, 120, 30);
+        assert!(code.contains("LOC") && code.contains("Language"));
+        assert!(
+            !code.contains("Branch"),
+            "the standard columns are replaced"
+        );
+        assert!(code.contains("Columns"), "the bar names the sets");
+        assert!(code.contains("projects"), "the totals row is shown");
+
+        press(&mut app, KeyCode::Char('c'));
+        let activity = screen(&app, 120, 30);
+        assert!(activity.contains("Commits") && activity.contains("Authors"));
+
+        press(&mut app, KeyCode::Char('c'));
+        assert!(screen(&app, 120, 30).contains("Branch"), "back to standard");
+    }
+
+    #[test]
+    fn example_mode_shows_dashes_rather_than_spinning_forever() {
+        // No worker ever runs in example mode, so a spinner would never stop.
+        // Unicode glyphs, because the ASCII spinner uses `-` itself - which is
+        // also the text for a value that will never arrive.
+        let mut config = sample_config();
+        config.appearance.glyphs = GlyphVariant::Unicode;
+        let mut app = app_with(config);
+        assert!(app.config.example_mode);
+        press(&mut app, KeyCode::Char('c'));
+        let code = screen(&app, 120, 30);
+        assert!(code.contains('-'), "an uncomputable cell reads as a dash");
+        for frame in app.icons.spinner {
+            assert!(
+                !code.contains(frame),
+                "example mode must never spin: found {frame:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_bar_and_totals_vanish_on_a_short_terminal() {
+        let mut app = sample_app();
+        press(&mut app, KeyCode::Char('c'));
+        assert!(screen(&app, 120, 30).contains("Columns"));
+        // Too short to spare five rows: the list keeps them.
+        assert!(!screen(&app, 120, 14).contains("Columns"));
+    }
+
+    #[test]
+    fn v_toggles_the_panel_and_capital_v_moves_it() {
+        let mut app = sample_app();
+        assert!(!screen(&app, 120, 30).contains("Details"));
+        press(&mut app, KeyCode::Char('v'));
+        // The border title names the cursor entry.
+        assert!(screen(&app, 120, 30).contains("Details - hop"));
+        assert_eq!(app.preview.position, preview::PreviewPosition::Right);
+        press(&mut app, KeyCode::Char('V'));
+        assert_eq!(app.preview.position, preview::PreviewPosition::Bottom);
+        assert!(screen(&app, 120, 30).contains("Details - hop"));
+        press(&mut app, KeyCode::Char('v'));
+        assert!(!screen(&app, 120, 30).contains("Details"));
+    }
+
+    #[test]
+    fn ctrl_arrows_resize_the_panel_only_while_it_is_open() {
+        let mut app = sample_app();
+        let before = app.preview.width_pct;
+        // Closed: the chord does nothing.
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL));
+        assert_eq!(app.preview.width_pct, before);
+
+        press(&mut app, KeyCode::Char('v'));
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL));
+        assert!(app.preview.width_pct > before, "ctrl+right widens it");
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL));
+        assert_eq!(app.preview.width_pct, before, "ctrl+left narrows it back");
+    }
+
+    #[test]
+    fn t_opens_the_sort_picker_and_re_picking_flips_the_direction() {
+        let mut app = sample_app();
+        press(&mut app, KeyCode::Char('t'));
+        assert!(matches!(app.overlay, Overlay::Sort(_, _)));
+        let listed = screen(&app, 120, 30);
+        assert!(listed.contains("Sort by") && listed.contains("Frecency"));
+        // Standard offers no column modes.
+        assert!(!listed.contains("Lines of code"));
+
+        // Name is active and first; Enter re-picks it and flips the direction.
+        assert_eq!((app.sort, app.sort_dir), (SortMode::Name, SortDir::Asc));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!((app.sort, app.sort_dir), (SortMode::Name, SortDir::Desc));
+    }
+
+    #[test]
+    fn the_sort_picker_offers_the_active_column_sets_modes() {
+        let mut app = sample_app();
+        press(&mut app, KeyCode::Char('c'));
+        press(&mut app, KeyCode::Char('t'));
+        let listed = screen(&app, 120, 30);
+        assert!(listed.contains("Lines of code") && listed.contains("Size"));
+        assert!(!listed.contains("Commits"), "those belong to Activity");
+    }
+
+    #[test]
+    fn the_files_tab_never_offers_the_activity_columns() {
+        let mut app = sample_app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('c'));
+        assert_eq!(app.columns, ColumnSet::Code);
+        press(&mut app, KeyCode::Char('c'));
+        assert_eq!(app.columns, ColumnSet::Standard, "Activity is skipped");
+    }
+
+    #[test]
+    fn a_column_set_the_tab_lacks_falls_back_when_switching_to_it() {
+        let mut app = sample_app();
+        press(&mut app, KeyCode::Char('c'));
+        press(&mut app, KeyCode::Char('c'));
+        assert_eq!(app.columns, ColumnSet::Activity);
+        press(&mut app, KeyCode::Char('2'));
+        assert_eq!(app.columns, ColumnSet::Standard);
     }
 
     #[test]

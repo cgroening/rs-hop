@@ -6,9 +6,13 @@
 use std::path::Path;
 use std::process::Command;
 
+use chrono::{Duration, Local};
+
 use crate::domain::repo::{GitInfo, PATH_NOT_FOUND};
+use crate::domain::stats::{GitStats, RECENT_DAYS};
 use crate::storage::git_client::{
-    GitClient, git_info_from_counts, parse_github_name,
+    GitClient, git_info_from_counts, parse_github_name, parse_refs,
+    parse_shortlog, parse_timestamps,
 };
 
 /// Gathers git status by shelling out to `git`.
@@ -76,6 +80,58 @@ impl GitClient for SubprocessGitClient {
             .map(|out| out.lines().map(str::to_string).collect())
             .unwrap_or_default()
     }
+
+    fn stats(&self, path: &Path) -> GitStats {
+        if !path.exists() {
+            return GitStats::default();
+        }
+        // `shortlog` reads stdin without a revision, which would hang the
+        // worker thread; `HEAD` is required, not decoration.
+        let (commits, contributors) =
+            git_output(path, &["shortlog", "-sne", "HEAD"])
+                .map(|out| parse_shortlog(&out))
+                .unwrap_or_default();
+        let (branches, tags) = git_output(
+            path,
+            &[
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/heads",
+                "refs/tags",
+            ],
+        )
+        .map(|out| parse_refs(&out))
+        .unwrap_or_default();
+        GitStats {
+            commits,
+            contributors,
+            branches,
+            tags,
+            // `--max-parents=0` lists the root commits: a grafted history has
+            // several, and the repository began at the earliest.
+            first_commit: git_output(
+                path,
+                &["log", "--max-parents=0", "--format=%ct", "HEAD"],
+            )
+            .and_then(|out| parse_timestamps(&out)),
+            last_commit: git_output(
+                path,
+                &["log", "-1", "--format=%ct", "HEAD"],
+            )
+            .and_then(|out| parse_timestamps(&out)),
+            commits_recent: recent_commits(path),
+        }
+    }
+}
+
+/// Commits within the last [`RECENT_DAYS`] days. The cutoff is computed here
+/// rather than handed to git as a relative phrase, so the boundary is ours.
+fn recent_commits(path: &Path) -> u64 {
+    let cutoff = Local::now() - Duration::days(RECENT_DAYS);
+    let since = format!("--since={}", cutoff.format("%Y-%m-%dT%H:%M:%S%z"));
+    git_output(path, &["rev-list", "--count", &since, "HEAD"])
+        .and_then(|out| out.trim().parse::<u64>().ok())
+        .unwrap_or(0)
 }
 
 /// Runs `git -C <path> <args>` and returns trimmed stdout on success.

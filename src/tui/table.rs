@@ -18,7 +18,11 @@ use unicode_width::UnicodeWidthStr;
 use crate::config::{ColumnWidth, Config};
 use crate::domain::filter::Tab;
 use crate::domain::repo::{GitInfo, Repo, RepoKind, is_dir_target};
+use crate::domain::stats::{CodeEntry, GitStats};
 use crate::theme::Skin;
+use crate::tui::columns::{
+    CellSource, ColumnSet, StatColumn, cell_text, stat_columns,
+};
 use crate::tui::presentation::{
     IconSet, highlight_name, name_plain, slug_style, status_text, truncate,
 };
@@ -58,6 +62,44 @@ pub struct TableView<'a> {
     /// The scroll offset carried across frames, so moving the cursor up while it
     /// is still visible does not scroll the list.
     pub offset: &'a std::cell::Cell<usize>,
+    /// Which columns to show.
+    pub columns: ColumnSet,
+    /// Cached code and size statistics, keyed by entry path.
+    pub code: &'a HashMap<PathBuf, CodeEntry>,
+    /// Cached history statistics, keyed by entry path.
+    pub git: &'a HashMap<PathBuf, GitStats>,
+    /// Paths a statistics worker has not reported yet (drive the cell spinner).
+    pub computing: &'a HashSet<PathBuf>,
+    /// The reference time for ages, in unix seconds.
+    pub now: i64,
+}
+
+impl TableView<'_> {
+    /// What the statistics cells of `repo` read from.
+    fn cell_source<'b>(&'b self, repo: &Repo) -> CellSource<'b> {
+        CellSource {
+            code: self.code.get(&repo.path),
+            git: self.git.get(&repo.path),
+            open_count: repo.open_count,
+            last_used: repo.last_used,
+            pending: self.computing.contains(&repo.path),
+            now: self.now,
+        }
+    }
+
+    /// The rendered text of one statistics cell: the value, a spinner while its
+    /// worker runs, or a dash when nothing will ever fill it.
+    fn stat_text(&self, repo: &Repo, column: StatColumn) -> String {
+        match cell_text(column, self.cell_source(repo)) {
+            Some(text) => text,
+            None => self.spinner_frame().to_string(),
+        }
+    }
+
+    /// The current spinner glyph, or a dash outside a run.
+    fn spinner_frame(&self) -> &str {
+        self.spinner.map_or("-", |(_, glyph)| glyph)
+    }
 }
 
 /// Predicts the scroll offset: keep the saved one unless the cursor fell off an
@@ -207,6 +249,18 @@ fn widths(
     } else {
         &[Constraint::Length(1), Constraint::Length(1)]
     };
+    if view.columns.is_statistics() {
+        let mut constraints = lead.to_vec();
+        constraints.push(Constraint::Length(name));
+        constraints.extend(
+            stat_columns(view.columns)
+                .iter()
+                .map(|column| Constraint::Length(column.width())),
+        );
+        // Leave the remainder unused rather than stretching a number column.
+        constraints.push(Constraint::Min(0));
+        return constraints;
+    }
     match view.tab {
         Tab::FilesAndFolders => [
             lead,
@@ -308,9 +362,25 @@ fn status_display(repo: &Repo, view: &TableView) -> String {
 /// The header row for `tab` (a leading blank cell for the selection column when
 /// a selection is active).
 fn header_row(view: &TableView) -> Row<'static> {
-    let titles: Vec<&str> = match view.tab {
-        Tab::FilesAndFolders => vec!["", "", "Name", "Type", "Path"],
-        _ => vec!["", "", "Name", "Branch", "Status", "GitHub", "ZIP Backup"],
+    let titles: Vec<String> = if view.columns.is_statistics() {
+        let mut titles = vec![String::new(), String::new(), "Name".to_string()];
+        titles.extend(
+            stat_columns(view.columns)
+                .iter()
+                .map(|column| column.title().to_string()),
+        );
+        titles.push(String::new());
+        titles
+    } else {
+        match view.tab {
+            Tab::FilesAndFolders => vec!["", "", "Name", "Type", "Path"],
+            _ => {
+                vec!["", "", "Name", "Branch", "Status", "GitHub", "ZIP Backup"]
+            }
+        }
+        .into_iter()
+        .map(str::to_string)
+        .collect()
     };
     let mut cells: Vec<Cell> = Vec::new();
     if view.has_selection {
@@ -329,6 +399,19 @@ fn row_for<'a>(repo: &Repo, view: &TableView, selected: bool) -> Row<'a> {
     cells.push(marker_cell(repo, view));
     cells.push(fav_cell(repo, view));
     cells.push(Cell::from(Line::from(name_cell_spans(repo, view))));
+    if view.columns.is_statistics() {
+        for column in stat_columns(view.columns) {
+            let text = view.stat_text(repo, *column);
+            let cell = if column.is_numeric() {
+                Cell::from(Line::from(text).right_aligned())
+            } else {
+                Cell::from(text)
+            };
+            cells.push(cell);
+        }
+        cells.push(Cell::from(""));
+        return Row::new(cells);
+    }
     match view.tab {
         Tab::FilesAndFolders => {
             cells.push(Cell::from(type_label(repo)));
