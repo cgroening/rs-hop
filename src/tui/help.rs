@@ -2,11 +2,12 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
-use crate::tui::colors::{ACCENT, DIM};
+use crate::theme::Skin;
+use crate::tui::skin::Colors;
 use crate::tui::widgets::centered_rect;
 
 /// The grouped shortcut list shown in the overlay.
@@ -98,18 +99,12 @@ const SHORTCUTS: &[(&str, &str)] = &[
 ];
 
 /// Renders the help overlay centred in `area`.
-pub fn render(frame: &mut Frame, area: Rect) {
+pub fn render(frame: &mut Frame, area: Rect, skin: &Skin) {
+    let colors = Colors::from_palette(&skin.palette);
     let height = (SHORTCUTS.len() as u16 + 4).min(area.height);
     let rect = centered_rect(72, height, area);
     frame.render_widget(Clear, rect);
-    let block = Block::default()
-        .title(Span::styled(
-            " Keyboard shortcuts ",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-        ))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(ACCENT));
+    let block = ratada::chrome::modal_block(skin, "Keyboard shortcuts");
 
     let mut lines: Vec<Line> = SHORTCUTS
         .iter()
@@ -117,11 +112,11 @@ pub fn render(frame: &mut Frame, area: Rect) {
             Line::from(vec![
                 Span::styled(
                     format!(" {keys:<12}"),
-                    Style::default().fg(ACCENT),
+                    Style::default().fg(colors.accent),
                 ),
                 Span::styled(
                     (*description).to_string(),
-                    Style::default().fg(DIM),
+                    Style::default().fg(colors.dim),
                 ),
             ])
         })
@@ -129,7 +124,7 @@ pub fn render(frame: &mut Frame, area: Rect) {
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(
         " Esc / ? to close",
-        Style::default().fg(DIM),
+        Style::default().fg(colors.dim),
     )));
     frame.render_widget(Paragraph::new(lines).block(block), rect);
 }

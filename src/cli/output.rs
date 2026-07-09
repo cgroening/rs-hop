@@ -1,18 +1,21 @@
-//! CLI output helpers: error reporting at the binary edge.
+//! CLI output helpers: error reporting at the binary edge, via sparcli.
 
+use std::io;
 use std::process::ExitCode;
 
-use crate::domain::error::Error;
-use crate::util::app_info::APP_NAME;
+use sparcli::{Alert, Renderable};
 
-/// Prints `error` to stderr and returns a failure exit code.
+use crate::domain::error::Error;
+
+/// Prints `error` as a sparcli error alert to stderr and returns a failure code.
 pub fn report_error(error: &Error) -> ExitCode {
-    eprintln!("{APP_NAME}: {error}");
+    let _ = Alert::error(error.to_string()).print_to(&mut io::stderr().lock());
     ExitCode::FAILURE
 }
 
-/// Prints a plain error line and returns a failure exit code.
+/// Prints a sparcli error alert to stderr and returns a failure exit code.
 pub fn fail(message: &str) -> ExitCode {
-    eprintln!("{APP_NAME}: {message}");
+    let _ =
+        Alert::error(message.to_string()).print_to(&mut io::stderr().lock());
     ExitCode::FAILURE
 }

@@ -30,6 +30,28 @@ example_mode = false
 # Section order for the Files and Folders tab.
 sections = ["Code", "Docs"]
 
+# Appearance: the active theme, per-colour overrides and the glyph set. hop
+# ships a rose "default" theme and a "monochrome" theme; add your own under
+# [themes.<name>]. The legacy [icons] table below still works (folded into
+# `glyphs`) but [appearance].glyphs is preferred.
+[appearance]
+theme = "default"     # default | monochrome | <your [themes.*] name>
+glyphs = "unicode"    # unicode | ascii
+# colors = { accent = "#f7a3bd" }   # override individual palette colours
+
+# A user-defined theme (only accent/foreground/background are required; the rest
+# derive from the background). Select it via [appearance].theme = "midnight".
+# [themes.midnight]
+# accent = "#8899ff"
+# background = "#0b0b14"
+
+# Rebind keys per action (see the help overlay for action names). A value may be
+# one key or a list. Example:
+# [keys]
+# add = "n"
+# delete = ["d", "backspace"]
+
+# Legacy glyph selector (kept for back-compat; prefer [appearance].glyphs).
 [icons]
 variant = "unicode"   # unicode | ascii
 

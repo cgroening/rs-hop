@@ -6,8 +6,19 @@
 //! that stores the `[[repos]]` entries, but the two concerns are read by
 //! different layers ([`loader`] here, the repository in `storage`).
 
+pub mod appearance;
 pub mod loader;
 pub mod writer;
+
+use std::collections::BTreeMap;
+
+pub use appearance::Appearance;
+
+use crate::keymap::Keymap;
+use crate::theme::{
+    Color, ColorOverrides, DEFAULT_THEME, Palette, Skin, ThemeColors,
+    ThemeRegistry,
+};
 
 /// File extensions opened in the editor (everything else uses the default app).
 /// Files without an extension count as text too. Overridable via the
@@ -51,25 +62,24 @@ pub const DEFAULT_ZIP_EXCLUDE_DIRS: &[&str] = &[
     ".cache",
 ];
 
-/// Which glyph set the TUI renders, per the user's terminal support.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum IconVariant {
-    /// Plain Unicode symbols (the default): width-consistent across terminals.
-    #[default]
-    Unicode,
-    /// ASCII-only fallback.
-    Ascii,
-}
-
-impl IconVariant {
-    /// Parses the config string value, defaulting to [`IconVariant::Unicode`].
-    pub fn from_config_value(value: &str) -> Self {
-        match value.trim().to_lowercase().as_str() {
-            "ascii" => IconVariant::Ascii,
-            _ => IconVariant::Unicode,
-        }
-    }
-}
+/// hop's built-in default theme: the rose accent kept from the pre-migration
+/// look, on a dark scheme whose header/footer bands sit below a lighter content
+/// surface (the panel layout). Registered as the `default` theme, replacing the
+/// toolkit's teal built-in.
+const HOP_DEFAULT_THEME: ThemeColors = ThemeColors {
+    accent: Color::hex("#f7a3bd"),
+    foreground: Color::hex("#e5e5e5"),
+    background: Color::hex("#151515"),
+    header: Color::hex("#0e0c12"),
+    footer: Color::hex("#0e0c12"),
+    panel: Color::hex("#1c1a20"),
+    surface: Color::hex("#26222b"),
+    border: Color::hex("#4a4652"),
+    success: Color::hex("#8fbf7f"),
+    warning: Color::hex("#dcbe5a"),
+    error: Color::hex("#d05050"),
+    info: Color::hex("#7fb3d4"),
+};
 
 /// A column's width budget: a lower bound and an optional upper bound it may
 /// grow to when content needs it and space is available.
@@ -138,8 +148,12 @@ pub struct Config {
     pub editor: Option<String>,
     /// Extensions opened in the editor; other files use the default app.
     pub editor_extensions: Vec<String>,
-    /// Which glyph set to render.
-    pub icons: IconVariant,
+    /// Theme, per-color overrides and glyph variant (`[appearance]`).
+    pub appearance: Appearance,
+    /// User-defined themes layered over the built-ins (`[themes.<name>]`).
+    pub themes: Vec<(String, ThemeColors)>,
+    /// Per-action key overrides (`[keys]`), an action name to its key strings.
+    pub keys: BTreeMap<String, Vec<String>>,
     /// Table column width budgets.
     pub column_widths: ColumnWidths,
     /// Destination folder for repo ZIP backups (`z`/`Z`); `None` disables them.
@@ -162,7 +176,9 @@ impl Default for Config {
                 .iter()
                 .map(|ext| (*ext).to_string())
                 .collect(),
-            icons: IconVariant::default(),
+            appearance: Appearance::default(),
+            themes: Vec::new(),
+            keys: BTreeMap::new(),
             column_widths: ColumnWidths::default(),
             zip_backup_folder: None,
             zip_exclude_dirs: DEFAULT_ZIP_EXCLUDE_DIRS
@@ -170,5 +186,44 @@ impl Default for Config {
                 .map(|dir| (*dir).to_string())
                 .collect(),
         }
+    }
+}
+
+impl Config {
+    /// The theme registry: the built-ins with hop's rose theme installed as
+    /// `default`, then any user `[themes.<name>]` layered on top.
+    pub fn theme_registry(&self) -> ThemeRegistry {
+        ThemeRegistry::builtin()
+            .with_custom([(DEFAULT_THEME.to_string(), HOP_DEFAULT_THEME)])
+            .with_custom(self.themes.iter().cloned())
+    }
+
+    /// The per-color overrides from `[appearance].colors`, resolved by name.
+    pub fn color_overrides(&self) -> ColorOverrides<'_> {
+        ColorOverrides::from_lookup(|name| {
+            self.appearance.colors.get(name).map_or("", String::as_str)
+        })
+    }
+
+    /// The resolved color palette: the active theme with the color overrides
+    /// layered on.
+    pub fn palette(&self) -> Palette {
+        let base = self.theme_registry().resolve(&self.appearance.theme);
+        Palette::resolve(base, &self.color_overrides())
+    }
+
+    /// The resolved skin (palette plus glyphs) the TUI renders with.
+    pub fn skin(&self) -> Skin {
+        Skin::new(self.palette(), self.glyphs())
+    }
+
+    /// The resolved marker glyphs.
+    pub fn glyphs(&self) -> crate::theme::Glyphs {
+        crate::theme::Glyphs::new(self.appearance.glyphs)
+    }
+
+    /// The keymap: hop's default bindings with any `[keys]` overrides applied.
+    pub fn keymap(&self) -> Keymap {
+        Keymap::from_overrides(&self.keys)
     }
 }

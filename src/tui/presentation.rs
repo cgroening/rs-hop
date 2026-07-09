@@ -1,7 +1,7 @@
 //! Glyphs (two tiers), status formatting and shared rendering helpers.
 //!
 //! Every marker is defined in two tiers - a plain Unicode symbol and an
-//! ASCII-only fallback - and the configured [`IconVariant`] selects which
+//! ASCII-only fallback - and the configured [`GlyphVariant`] selects which
 //! renders. All glyphs are single-cell (no Nerd Font, no emoji) so column
 //! layout matches what the terminal draws.
 
@@ -16,8 +16,8 @@ use ratatui::widgets::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::config::IconVariant;
 use crate::domain::repo::GitInfo;
+use crate::theme::GlyphVariant;
 use crate::tui::colors::{ACCENT, DIM};
 
 /// The resolved glyph set for the active icon variant. Every glyph is a
@@ -62,9 +62,9 @@ const ASCII_SPINNER: &[&str] = &["|", "/", "-", "\\"];
 
 impl IconSet {
     /// Builds the glyph set for `variant`.
-    pub fn new(variant: IconVariant) -> Self {
+    pub fn new(variant: GlyphVariant) -> Self {
         match variant {
-            IconVariant::Unicode => IconSet {
+            GlyphVariant::Unicode => IconSet {
                 missing: "\u{2717}",   // ✗
                 favourite: "\u{2605}", // ★
                 clean: "\u{2713}",     // ✓
@@ -78,7 +78,7 @@ impl IconSet {
                 excluded: "\u{2298}",  // ⊘
                 spinner: UNICODE_SPINNER,
             },
-            IconVariant::Ascii => IconSet {
+            GlyphVariant::Ascii => IconSet {
                 missing: "!",
                 favourite: "*",
                 clean: "ok",
@@ -345,7 +345,7 @@ mod tests {
     use super::*;
 
     fn unicode() -> IconSet {
-        IconSet::new(IconVariant::Unicode)
+        IconSet::new(GlyphVariant::Unicode)
     }
 
     #[test]
@@ -415,7 +415,7 @@ mod tests {
 
     #[test]
     fn status_text_formats_counts_and_clean() {
-        let icons = IconSet::new(IconVariant::Ascii);
+        let icons = IconSet::new(GlyphVariant::Ascii);
         // Invalid -> dash.
         let invalid = GitInfo::default();
         assert_eq!(status_text(&invalid, &icons), "-");

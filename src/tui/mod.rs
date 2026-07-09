@@ -7,6 +7,7 @@
 //! an entry returns a [`RunOutcome`] the composition root acts on after the
 //! terminal is restored.
 
+pub mod appframe;
 pub mod colors;
 pub mod form;
 pub mod help;
@@ -17,6 +18,7 @@ pub mod preview;
 pub mod scan_picker;
 pub mod sections_modal;
 pub mod sections_view;
+pub mod skin;
 pub mod table;
 pub mod terminal;
 pub mod text_input;
@@ -30,17 +32,14 @@ use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local};
-use crossterm::event::{
-    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
-};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
-pub use terminal::Tui;
+pub use terminal::{Tui, TuiEvent};
 
 use crate::config::Config;
 use crate::domain::backup;
@@ -56,14 +55,11 @@ use crate::service::zip_service::{ZipJob, ZipUpdate, spawn_zip};
 use crate::storage::cache;
 use crate::storage::git_client::GitClient;
 use crate::storage::ui_state;
-use crate::tui::colors::{
-    ACCENT, CHANGES, DANGER, DIM, MUTED, SELECTION_BG, tab_active,
-};
+use crate::theme::Skin;
+use crate::tui::colors::{ACCENT, CHANGES, DANGER, DIM, MUTED};
 use crate::tui::form::{FormResult, RepoDraft, RepoForm};
 use crate::tui::path_picker::{PathPicker, PickerResult};
-use crate::tui::presentation::{
-    IconSet, footer_lines, github_url, render_empty_hint,
-};
+use crate::tui::presentation::{IconSet, github_url, render_empty_hint};
 use crate::tui::preview::PreviewMode;
 use crate::tui::sections_modal::{SectionsAction, SectionsModal};
 use crate::tui::widgets::{
@@ -85,9 +81,6 @@ const ZIP_LABEL: &str = "zipping";
 /// Padding width of the percentage in the progress text, so `XX %` keeps a
 /// constant width from `0` through `100`.
 const PERCENT_WIDTH: usize = 3;
-
-/// Separator between the percentage/counts prefix and the entry name.
-const PROGRESS_SEPARATOR: &str = " - ";
 
 /// How long the cursor must rest on an entry before its preview `git log` is
 /// fetched, so quick scrolling does not spawn a fetch per row.
@@ -157,6 +150,8 @@ pub struct App {
     config: Config,
     service: RepoService,
     icons: IconSet,
+    /// The resolved skin (config-driven palette + glyphs) for the panel frame.
+    skin: Skin,
     git_client: Arc<dyn GitClient>,
     cache_path: PathBuf,
     /// Path of the ZIP-backup fingerprint cache (in the state directory).
@@ -258,7 +253,8 @@ impl App {
         ui_state_path: PathBuf,
         startup: StartupStatus,
     ) -> Self {
-        let icons = IconSet::new(config.icons);
+        let icons = IconSet::new(config.appearance.glyphs);
+        let skin = config.skin();
         let cached = cache::load(&cache_path);
         let ui = ui_state::load(&ui_state_path);
         // The ZIP cache lives next to the git-info cache in the state directory.
@@ -273,6 +269,7 @@ impl App {
             config,
             service,
             icons,
+            skin,
             git_client,
             cache_path,
             zip_cache_path,
@@ -674,7 +671,7 @@ pub fn run(mut app: App, tui: &mut Tui) -> io::Result<RunOutcome> {
         app.drain_zip();
         app.drain_preview();
         app.request_preview_log();
-        tui.terminal.draw(|frame| app.render(frame))?;
+        tui.draw(|frame| app.render(frame))?;
         // Poll faster while a refresh or backup runs (progress bar) or while a
         // preview log is being debounced/fetched, so updates land promptly.
         let timeout = if app.is_refreshing() || app.is_zipping() {
@@ -684,11 +681,12 @@ pub fn run(mut app: App, tui: &mut Tui) -> io::Result<RunOutcome> {
         } else {
             150
         };
-        if event::poll(Duration::from_millis(timeout))?
-            && let Event::Key(key) = event::read()?
-            && key.kind == KeyEventKind::Press
-            && let Some(outcome) = app.handle_key(key)
-        {
+        let outcome = match tui.poll_event(Duration::from_millis(timeout))? {
+            Some(TuiEvent::Quit) => Some(RunOutcome::Quit),
+            Some(TuiEvent::Key(key)) => app.handle_key(key),
+            Some(TuiEvent::Resize) | None => None,
+        };
+        if let Some(outcome) = outcome {
             match outcome {
                 RunOutcome::LaunchGitToolInline(path) => {
                     app.run_git_inline(tui, &path)?;
@@ -1143,7 +1141,7 @@ impl App {
             self.set_status("no git_program configured");
             return Ok(());
         };
-        tui.suspended(|| {
+        tui.suspend(|| {
             if let Err(error) = launch_git_tool(&program, dir) {
                 log::error!("could not launch {program}: {error}");
             }
@@ -1933,31 +1931,61 @@ fn is_global_quit(key: KeyEvent) -> bool {
 }
 
 impl App {
-    /// Renders the whole screen.
+    /// Renders the whole screen: the panel app-frame (tinted header/content/
+    /// status bands plus backgroundless hints), the entry list (and preview) in
+    /// the content surface, and any overlay on top.
     fn render(&self, frame: &mut Frame) {
         let area = frame.area();
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(4), // header box: 2 lines + rounded border
-                Constraint::Min(1),
-                Constraint::Length(self.footer_height(area.width)),
-            ])
-            .split(area);
-        self.render_header(frame, rows[0]);
-        // One column of margin on each side of the list.
-        let body = Rect {
-            x: rows[1].x.saturating_add(1),
-            width: rows[1].width.saturating_sub(2),
-            ..rows[1]
-        };
-        let (list_area, preview_area) = self.split_preview(body);
+        let active = Tab::ALL
+            .iter()
+            .position(|tab| *tab == self.tab)
+            .unwrap_or(0);
+        let content = appframe::render_frame(
+            frame,
+            &self.skin,
+            active,
+            self.status_lines(),
+            &self.hint_pairs(),
+        );
+        let (list_area, preview_area) = self.split_preview(content);
         self.render_body(frame, list_area);
         if let Some(preview_area) = preview_area {
             self.render_preview(frame, preview_area);
         }
-        self.render_footer(frame, rows[2]);
+        // Snapshot the finished view so an overlay can dim it as its backdrop.
+        appframe::snapshot_frame(frame);
         self.render_overlay(frame, area);
+    }
+
+    /// The status-band lines: the info line (or the progress line while a
+    /// refresh/backup runs), plus the live-filter input or a transient status
+    /// message when either is active.
+    fn status_lines(&self) -> Vec<Line<'_>> {
+        let mut lines = vec![self.info_line()];
+        if self.filtering {
+            let mut spans =
+                vec![Span::styled("filter: ", Style::default().fg(ACCENT))];
+            spans.extend(self.filter.render_line(Style::default(), true).spans);
+            spans.push(Span::styled(
+                "   Enter open · Esc clear",
+                Style::default().fg(DIM),
+            ));
+            lines.push(Line::from(spans));
+        } else if let Some((message, _)) = &self.status_msg {
+            lines.push(Line::from(Span::styled(
+                format!(" {message}"),
+                Style::default().fg(ACCENT),
+            )));
+        }
+        lines
+    }
+
+    /// The per-tab footer key hints as owned `(keys, description)` pairs.
+    fn hint_pairs(&self) -> Vec<(String, String)> {
+        hints(self.tab)
+            .into_iter()
+            .map(|(keys, desc)| (keys.to_string(), desc.to_string()))
+            .collect()
     }
 
     /// Splits `body` into the list area and an optional preview area, per the
@@ -2092,50 +2120,6 @@ impl App {
         );
     }
 
-    /// Renders the rounded header box: brand + tabs on the first line, the
-    /// combined info line (counts, sort, status and remote) on the second.
-    fn render_header(&self, frame: &mut Frame, area: Rect) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(ACCENT));
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-        let lines = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Length(1)])
-            .split(inner);
-        self.render_tab_bar(frame, lines[0]);
-        self.render_info(frame, lines[1]);
-    }
-
-    /// Renders the tab line: the `hop` brand (accent), then `[n] Label` tabs -
-    /// the active one bold green, the rest dim, separated by a dim `│`.
-    fn render_tab_bar(&self, frame: &mut Frame, area: Rect) {
-        let mut spans = vec![Span::styled(
-            " hop   ",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-        )];
-        for (index, tab) in Tab::ALL.iter().enumerate() {
-            if index > 0 {
-                spans.push(Span::styled(
-                    "  \u{2502}  ",
-                    Style::default().fg(DIM),
-                ));
-            }
-            let label = format!("[{}] {}", index + 1, tab.title());
-            let style = if *tab == self.tab {
-                Style::default()
-                    .fg(tab_active())
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(DIM)
-            };
-            spans.push(Span::styled(label, style));
-        }
-        frame.render_widget(Paragraph::new(Line::from(spans)), area);
-    }
-
     /// The fixed-width leading part of the progress text: the percentage, plus
     /// the file counts while zipping. Widths are padded so the part keeps a
     /// constant width, pinning the `XX %` column for the whole run.
@@ -2150,24 +2134,23 @@ impl App {
         }
     }
 
-    /// Renders the single info line - error count, entry count, sort, local
-    /// status and remote fetch time, each behind its icon - or the progress bar
-    /// while a refresh is running.
-    fn render_info(&self, frame: &mut Frame, area: Rect) {
+    /// The info line for the status band - error count, entry count, sort, the
+    /// active lenses, local status and remote fetch time, each behind its icon -
+    /// or a progress line (`XX % - name`) while a refresh or backup runs.
+    fn info_line(&self) -> Line<'_> {
         if let Some((done, total)) = self.loading {
             let ratio = progress_ratio(done, total);
             let prefix = self.progress_prefix(ratio, done, total);
-            render_progress(
-                frame,
-                area,
-                ProgressText {
-                    prefix: &prefix,
-                    name: self.loading_detail.as_deref().unwrap_or(""),
-                    ratio,
-                    name_width: self.loading_name_width,
-                },
-            );
-            return;
+            let name = self.loading_detail.as_deref().unwrap_or("");
+            let text = if name.is_empty() {
+                format!(" {prefix}")
+            } else {
+                format!(" {prefix} - {name}")
+            };
+            return Line::from(Span::styled(
+                text,
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ));
         }
         let icons = self.icons;
         let muted = Style::default().fg(MUTED);
@@ -2237,7 +2220,7 @@ impl App {
             spans.push(sep());
             spans.push(self.remote_span(icons.remote, muted));
         }
-        frame.render_widget(Paragraph::new(Line::from(spans)), area);
+        Line::from(spans)
     }
 
     /// The remote-fetch segment of the info line: amber when over a day old or
@@ -2394,62 +2377,31 @@ impl App {
         sections_view::render(frame, area, cursor, &view);
     }
 
-    /// The footer height in rows: the filter and status states stay at two
-    /// lines, the key hints take however many rows they wrap into at `width`.
-    fn footer_height(&self, width: u16) -> u16 {
-        if self.filtering || self.status_msg.is_some() {
-            return 2;
-        }
-        let rows = footer_lines(&hints(self.tab), width).len();
-        rows.max(1) as u16
-    }
-
-    /// Renders the footer: the filter line, a status message, or key hints.
-    fn render_footer(&self, frame: &mut Frame, area: Rect) {
-        if self.filtering {
-            let mut spans =
-                vec![Span::styled("filter: ", Style::default().fg(ACCENT))];
-            spans.extend(self.filter.render_line(Style::default(), true).spans);
-            let lines = vec![
-                Line::from(spans),
-                Line::from(Span::styled(
-                    " Enter open · Esc clear",
-                    Style::default().fg(DIM),
-                )),
-            ];
-            frame.render_widget(Paragraph::new(lines), area);
-            return;
-        }
-        if let Some((message, _)) = &self.status_msg {
-            let lines = vec![
-                Line::from(Span::styled(
-                    format!(" {message}"),
-                    Style::default().fg(ACCENT),
-                )),
-                hint_line(self.tab),
-            ];
-            frame.render_widget(Paragraph::new(lines), area);
-            return;
-        }
-        let lines = footer_lines(&hints(self.tab), area.width);
-        frame.render_widget(Paragraph::new(lines), area);
-    }
-
-    /// Renders the active overlay, if any.
+    /// Renders the active overlay, if any, over the dimmed live view (the
+    /// snapshot taken at the end of [`App::render`]), clibase-style.
     fn render_overlay(&self, frame: &mut Frame, area: Rect) {
+        if matches!(self.overlay, Overlay::None) {
+            return;
+        }
+        appframe::dim_backdrop(frame);
+        let skin = &self.skin;
         match &self.overlay {
             Overlay::None => {}
-            Overlay::Help => help::render(frame, area),
-            Overlay::Confirm(modal, _) => modal.render(frame, area),
-            Overlay::Prompt(prompt, _) => prompt.render(frame, area),
-            Overlay::Form(form, _) => form.render(frame, area),
-            Overlay::Picker(picker, _) => picker.render(frame, area),
-            Overlay::Errors(modal, _) => modal.render(frame, area),
-            Overlay::ErrorAction(modal, _) => modal.render(frame, area),
-            Overlay::SectionJump(modal, _) => modal.render(frame, area),
-            Overlay::Sections(modal) => modal.render(frame, area),
-            Overlay::SectionPrompt(prompt, _) => prompt.render(frame, area),
-            Overlay::SectionDelete(confirm, _) => confirm.render(frame, area),
+            Overlay::Help => help::render(frame, area, skin),
+            Overlay::Confirm(modal, _) => modal.render(frame, area, skin),
+            Overlay::Prompt(prompt, _) => prompt.render(frame, area, skin),
+            Overlay::Form(form, _) => form.render(frame, area, skin),
+            Overlay::Picker(picker, _) => picker.render(frame, area, skin),
+            Overlay::Errors(modal, _) => modal.render(frame, area, skin),
+            Overlay::ErrorAction(modal, _) => modal.render(frame, area, skin),
+            Overlay::SectionJump(modal, _) => modal.render(frame, area, skin),
+            Overlay::Sections(modal) => modal.render(frame, area, skin),
+            Overlay::SectionPrompt(prompt, _) => {
+                prompt.render(frame, area, skin)
+            }
+            Overlay::SectionDelete(confirm, _) => {
+                confirm.render(frame, area, skin)
+            }
         }
     }
 }
@@ -2525,24 +2477,6 @@ fn hints(tab: Tab) -> Vec<(&'static str, &'static str)> {
     hints
 }
 
-/// A single dim hint line pointing at the help overlay.
-fn hint_line(_tab: Tab) -> Line<'static> {
-    Line::from(Span::styled(" ? help · q quit", Style::default().fg(DIM)))
-}
-
-/// The composed text and fill ratio for one frame of the progress bar.
-struct ProgressText<'a> {
-    /// The fixed-width leading part (percentage, plus file counts when zipping).
-    prefix: &'a str,
-    /// The entry name shown after the prefix; empty when none is known yet.
-    name: &'a str,
-    /// Fill ratio in `0.0..=1.0`.
-    ratio: f64,
-    /// Display width reserved for the name, so the prefix column stays put as
-    /// names of different lengths come and go.
-    name_width: usize,
-}
-
 /// The fill ratio for `done` of `total`, clamped to `0.0..=1.0` (0 when empty).
 fn progress_ratio(done: usize, total: usize) -> f64 {
     if total == 0 {
@@ -2554,65 +2488,6 @@ fn progress_ratio(done: usize, total: usize) -> f64 {
 /// The number of decimal digits in `n` (at least 1), for padding counts.
 fn digit_count(n: usize) -> usize {
     n.to_string().len()
-}
-
-/// Renders a solid progress bar for an in-flight operation (status refresh or
-/// ZIP backup), filling the whole `area`. The text is `prefix - name`, drawn
-/// over a fixed-width block (prefix + separator + the widest name) that is
-/// centred and pinned, so the percentage never shifts column as the name
-/// changes. The text colour is chosen per cell from whether it sits over the
-/// filled or unfilled part, so it never ends up dark text on the dark
-/// (unfilled) background.
-fn render_progress(frame: &mut Frame, area: Rect, text: ProgressText) {
-    // Leave one blank cell of padding on each side of the bar.
-    let area = Rect {
-        x: area.x.saturating_add(1),
-        width: area.width.saturating_sub(2),
-        ..area
-    };
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-    let filled = (f64::from(area.width) * text.ratio).round() as u16;
-    let line: Vec<char> = if text.name.is_empty() {
-        text.prefix.chars().collect()
-    } else {
-        format!("{}{PROGRESS_SEPARATOR}{}", text.prefix, text.name)
-            .chars()
-            .collect()
-    };
-    let label_width = line.len() as u16;
-    // Reserve room for the widest possible line and centre that block, so the
-    // left edge - and thus the `XX %` column - is fixed for the whole run.
-    let block_width = (UnicodeWidthStr::width(text.prefix)
-        + UnicodeWidthStr::width(PROGRESS_SEPARATOR)
-        + text.name_width) as u16;
-    let start = area.x + area.width.saturating_sub(block_width) / 2;
-    let label_row = area.y + area.height / 2;
-
-    let buf = frame.buffer_mut();
-    for y in area.y..area.bottom() {
-        for x in area.x..area.right() {
-            let over_filled = (x - area.x) < filled;
-            let bg = if over_filled { ACCENT } else { SELECTION_BG };
-            let is_label =
-                y == label_row && x >= start && x < start + label_width;
-            let (symbol, fg) = if is_label {
-                let ch = line[(x - start) as usize];
-                // Dark text on the light filled bar, light text on the rest.
-                let fg = if over_filled { Color::Black } else { ACCENT };
-                (ch.to_string(), fg)
-            } else {
-                (" ".to_string(), bg)
-            };
-            if let Some(cell) = buf.cell_mut((x, y)) {
-                cell.set_symbol(&symbol);
-                cell.set_style(
-                    Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
-                );
-            }
-        }
-    }
 }
 
 /// A short relative age like `2d`, `5h` or `3m` for the remote line.
@@ -2649,9 +2524,10 @@ mod tests {
     use ratatui::backend::TestBackend;
 
     use super::*;
-    use crate::config::{Config, IconVariant};
+    use crate::config::{Appearance, Config};
     use crate::domain::repo::GitInfo;
     use crate::storage::in_memory_repository::InMemoryRepoRepository;
+    use crate::theme::GlyphVariant;
 
     /// A git client that does nothing (the smoke test runs in example mode).
     struct NoGit;
@@ -2688,7 +2564,10 @@ mod tests {
         .unwrap();
         let config = Config {
             example_mode: true,
-            icons: IconVariant::Ascii,
+            appearance: Appearance {
+                glyphs: GlyphVariant::Ascii,
+                ..Appearance::default()
+            },
             ..Config::default()
         };
         App::new(
@@ -2716,15 +2595,11 @@ mod tests {
     }
 
     #[test]
-    fn footer_grows_to_fit_all_hints() {
-        // At a narrow width the hints wrap past two rows; the footer area must
-        // size to hold them all rather than clipping at a fixed height.
+    fn hint_band_grows_to_fit_all_hints() {
+        // At a narrow width the hints wrap past two rows; the panel's hint band
+        // must size to hold them all rather than clipping at a fixed height.
         let app = sample_app();
         let width = 60;
-        let expected = footer_lines(&hints(app.tab), width).len() as u16;
-        assert!(expected > 2, "test width should force wrapping");
-        assert_eq!(app.footer_height(width), expected);
-
         let mut terminal = Terminal::new(TestBackend::new(width, 40)).unwrap();
         terminal.draw(|frame| app.render(frame)).unwrap();
         let rendered = terminal.backend().buffer().clone();

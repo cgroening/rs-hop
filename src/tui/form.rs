@@ -14,11 +14,12 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::domain::repo::{Repo, RepoKind};
 use crate::domain::sections::UNGROUPED;
 use crate::domain::slug::slugify;
+use crate::theme::Skin;
 use crate::tui::colors::{ACCENT, DIM, SELECTION_BG};
 use crate::tui::text_input::TextInput;
 use crate::tui::widgets::centered_rect;
@@ -317,19 +318,12 @@ impl RepoForm {
     }
 
     /// Renders the form centred in `area`.
-    pub fn render(&self, frame: &mut Frame, area: Rect) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
         let fields = self.fields();
         let height = fields.len() as u16 + 4;
         let rect = centered_rect(70, height, area);
         frame.render_widget(Clear, rect);
-        let block = Block::default()
-            .title(Span::styled(
-                format!(" {} ", self.title),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ))
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(ACCENT));
+        let block = ratada::chrome::modal_block(skin, &self.title);
         let mut lines: Vec<Line> = fields
             .iter()
             .enumerate()

@@ -18,7 +18,13 @@
 pub mod cli;
 pub mod config;
 pub mod domain;
+pub mod keymap;
 pub mod service;
 pub mod storage;
 pub mod tui;
 pub mod util;
+
+/// Framework-agnostic theming (colors, palette, glyphs, themes), re-exported
+/// from the `ratada` toolkit so the rest of the crate can refer to
+/// `crate::theme` without naming the dependency at every call site.
+pub use ratada::theme;

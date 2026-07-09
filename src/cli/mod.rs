@@ -15,6 +15,10 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
+use sparcli::{
+    Alert, Cell, Color as UiColor, Column, Renderable, Style as SpStyle, Table,
+    Theme, set_theme,
+};
 
 use crate::config::Config;
 use crate::config::loader::load_config;
@@ -26,6 +30,7 @@ use crate::storage::in_memory_repository::InMemoryRepoRepository;
 use crate::storage::repository::RepoRepository;
 use crate::storage::subprocess_git_client::SubprocessGitClient;
 use crate::storage::toml_repo_repository::TomlRepoRepository;
+use crate::theme::{Color, GlyphVariant};
 use crate::tui::{self, App, RunOutcome, StartupStatus, Tui};
 use crate::util::app_info::{APP_ABOUT, APP_NAME, APP_VERSION};
 use crate::util::opener::{
@@ -125,6 +130,8 @@ fn run_with_service(cli: Cli, config_path: PathBuf) -> ExitCode {
         Ok(config) => config,
         Err(error) => return output::report_error(&error),
     };
+    // Style sparcli's CLI output from the same config palette as the TUI.
+    apply_sparcli_theme(&config);
     if cli.command.is_none() && cli.demo {
         return run_demo(config);
     }
@@ -293,11 +300,20 @@ fn launch_tool(config: &Config, dir: &Path) {
 fn cmd_list(_config: &Config, service: &RepoService, cli: &Cli) -> ExitCode {
     let repos = service.repos();
     if repos.is_empty() {
-        println!("No entries yet. Run hop to add some, or hop add <path>.");
+        let _ = Alert::info(
+            "No entries yet. Run hop to add some, or hop add <path>.",
+        )
+        .print();
         return ExitCode::SUCCESS;
     }
-    for repo in repos {
-        println!("{}", list_line(repo));
+    // On a terminal, render a styled sparcli table; when piped, keep the plain
+    // tab-separated lines so scripts consuming `hop list` are unaffected.
+    if sparcli::terminal::is_output_tty() {
+        print_list_table(repos);
+    } else {
+        for repo in repos {
+            println!("{}", list_line(repo));
+        }
     }
     // `list` prints stored fields only (no git status), so the status flags do
     // not apply here; they affect the TUI and `hop <slug> --fetch`.
@@ -305,13 +321,29 @@ fn cmd_list(_config: &Config, service: &RepoService, cli: &Cli) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// A single plain-text list line for an entry.
-fn list_line(repo: &Repo) -> String {
-    let slug = repo
-        .slug
-        .as_deref()
-        .map(|s| format!("[{s}] "))
-        .unwrap_or_default();
+/// Renders the entry list as a styled sparcli table.
+fn print_list_table(repos: &[Repo]) {
+    let mut table = Table::new().columns([
+        Column::new("Slug"),
+        Column::new("Name"),
+        Column::new("Kind"),
+        Column::new("Path"),
+        Column::new("Flags"),
+    ]);
+    for repo in repos {
+        table = table.row([
+            Cell::new(repo.slug.clone().unwrap_or_default()),
+            Cell::new(repo.display_name().to_string()),
+            Cell::new(repo.kind.as_config_value().to_string()),
+            Cell::new(repo.path.display().to_string()),
+            Cell::new(entry_flags(repo)),
+        ]);
+    }
+    let _ = table.print();
+}
+
+/// The comma-separated `fav`/`archived` flags of an entry (empty when none).
+fn entry_flags(repo: &Repo) -> String {
     let mut flags = Vec::new();
     if repo.fav {
         flags.push("fav");
@@ -319,10 +351,21 @@ fn list_line(repo: &Repo) -> String {
     if repo.archived {
         flags.push("archived");
     }
+    flags.join(", ")
+}
+
+/// A single plain-text list line for an entry (the piped, script-friendly form).
+fn list_line(repo: &Repo) -> String {
+    let slug = repo
+        .slug
+        .as_deref()
+        .map(|s| format!("[{s}] "))
+        .unwrap_or_default();
+    let flags = entry_flags(repo);
     let flags = if flags.is_empty() {
         String::new()
     } else {
-        format!(" ({})", flags.join(", "))
+        format!(" ({flags})")
     };
     format!(
         "{slug}{}\t{}\t{}{flags}",
@@ -330,6 +373,32 @@ fn list_line(repo: &Repo) -> String {
         repo.kind.as_config_value(),
         repo.path.display(),
     )
+}
+
+/// Builds a sparcli theme from the config palette and installs it globally, so
+/// CLI output shares the TUI's colors. `NO_COLOR` and non-terminal output are
+/// handled by sparcli itself.
+fn apply_sparcli_theme(config: &Config) {
+    let palette = config.palette();
+    let mut theme = Theme {
+        accent: map_color(palette.accent),
+        unicode: matches!(config.appearance.glyphs, GlyphVariant::Unicode),
+        ..Theme::default()
+    };
+    theme.success = SpStyle::new().fg(map_color(palette.success));
+    theme.error = SpStyle::new().fg(map_color(palette.error));
+    theme.warning = SpStyle::new().fg(map_color(palette.warning));
+    theme.info = SpStyle::new().fg(map_color(palette.info));
+    theme.secondary = SpStyle::new().fg(map_color(palette.foreground_dim));
+    set_theme(theme);
+}
+
+/// Maps a resolved palette [`Color`] to sparcli's color (truecolor, else reset).
+fn map_color(color: Color) -> UiColor {
+    match color.rgb() {
+        Some((red, green, blue)) => UiColor::Rgb(red, green, blue),
+        None => UiColor::Reset,
+    }
 }
 
 /// Handles `hop add`: registers an entry for a path (default the current
@@ -357,7 +426,12 @@ fn cmd_add(
     if let Some(section) = section {
         let _ = service.ensure_section(section);
     }
-    println!("Added {} ({})", absolute.display(), kind.as_config_value());
+    let _ = Alert::success(format!(
+        "Added {} ({})",
+        absolute.display(),
+        kind.as_config_value()
+    ))
+    .print();
     ExitCode::SUCCESS
 }
 
@@ -395,7 +469,9 @@ fn cmd_scan(
     let (new, duplicates) = partition_found(&found, &known, canon_key);
 
     if new.is_empty() {
-        println!("No new git repos under {}.", root.display());
+        let _ =
+            Alert::info(format!("No new git repos under {}.", root.display()))
+                .print();
         return ExitCode::SUCCESS;
     }
     if dry_run {
@@ -412,13 +488,13 @@ fn cmd_scan(
     let chosen = match tui::scan_picker::run(&new, &duplicates) {
         Ok(Some(chosen)) => chosen,
         Ok(None) => {
-            println!("Cancelled.");
+            let _ = Alert::info("Cancelled.").print();
             return ExitCode::SUCCESS;
         }
         Err(error) => return output::fail(&format!("terminal: {error}")),
     };
     if chosen.is_empty() {
-        println!("Nothing selected.");
+        let _ = Alert::info("Nothing selected.").print();
         return ExitCode::SUCCESS;
     }
     let count = chosen.len();
@@ -433,7 +509,7 @@ fn cmd_scan(
     if let Err(error) = service.add_many(repos) {
         return output::report_error(&error);
     }
-    println!("Added {count} git repo(s).");
+    let _ = Alert::success(format!("Added {count} git repo(s).")).print();
     ExitCode::SUCCESS
 }
 
@@ -446,10 +522,11 @@ fn cmd_doctor(service: &RepoService) -> ExitCode {
         |path| path.join(".git").exists(),
     );
     if issues.is_empty() {
-        println!("hop doctor: no issues.");
+        let _ = Alert::success("hop doctor: no issues.").print();
         return ExitCode::SUCCESS;
     }
-    println!("hop doctor: {} issue(s)", issues.len());
+    let _ = Alert::warning(format!("hop doctor: {} issue(s)", issues.len()))
+        .print();
     for issue in &issues {
         println!("  {issue}");
     }

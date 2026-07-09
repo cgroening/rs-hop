@@ -7,15 +7,14 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph,
-};
+use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
-use crate::tui::colors::{ACCENT, DANGER, DIM, selection_style};
+use crate::theme::Skin;
 use crate::tui::navigation::cycle;
 use crate::tui::presentation::render_scrollbar;
+use crate::tui::skin::Colors;
 use crate::tui::text_input::TextInput;
 
 /// Outcome of feeding a key to a confirm dialog.
@@ -53,18 +52,22 @@ impl ConfirmModal {
     }
 
     /// Renders the dialog centred in `area`.
-    pub fn render(&self, frame: &mut Frame, area: Rect) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
+        let colors = Colors::from_palette(&skin.palette);
         let body = vec![
-            Line::from(Span::raw(self.message.clone())),
+            Line::from(Span::styled(
+                self.message.clone(),
+                Style::default().fg(colors.danger),
+            )),
             Line::raw(""),
             Line::from(vec![
-                Span::styled("y", Style::default().fg(ACCENT)),
-                Span::styled(" confirm   ", Style::default().fg(DIM)),
-                Span::styled("n", Style::default().fg(ACCENT)),
-                Span::styled(" cancel", Style::default().fg(DIM)),
+                Span::styled("y", Style::default().fg(colors.accent)),
+                Span::styled(" confirm   ", Style::default().fg(colors.dim)),
+                Span::styled("n", Style::default().fg(colors.accent)),
+                Span::styled(" cancel", Style::default().fg(colors.dim)),
             ]),
         ];
-        render_modal(frame, area, &self.title, DANGER, body, 60, 7);
+        render_modal(frame, area, skin, &self.title, body, 60, 7);
     }
 }
 
@@ -112,10 +115,11 @@ impl TextPrompt {
     }
 
     /// Renders the prompt centred in `area`.
-    pub fn render(&self, frame: &mut Frame, area: Rect) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
+        let colors = Colors::from_palette(&skin.palette);
         let mut field = vec![Span::styled(
             format!("{}: ", self.label),
-            Style::default().fg(DIM),
+            Style::default().fg(colors.dim),
         )];
         field.extend(self.input.render_line(Style::default(), true).spans);
         let body = vec![
@@ -123,10 +127,10 @@ impl TextPrompt {
             Line::raw(""),
             Line::from(Span::styled(
                 "Enter save · Esc cancel",
-                Style::default().fg(DIM),
+                Style::default().fg(colors.dim),
             )),
         ];
-        render_modal(frame, area, &self.title, ACCENT, body, 60, 7);
+        render_modal(frame, area, skin, &self.title, body, 60, 7);
     }
 }
 
@@ -181,18 +185,12 @@ impl SelectModal {
     }
 
     /// Renders the list centred in `area`.
-    pub fn render(&self, frame: &mut Frame, area: Rect) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
+        let colors = Colors::from_palette(&skin.palette);
         let height = (self.items.len() as u16 + 2).clamp(3, 16);
         let rect = centered_rect(50, height, area);
         frame.render_widget(Clear, rect);
-        let block = Block::default()
-            .title(Span::styled(
-                format!(" {} ", self.title),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ))
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(ACCENT));
+        let block = ratada::chrome::modal_block(skin, &self.title);
         let items: Vec<ListItem> = self
             .items
             .iter()
@@ -200,7 +198,7 @@ impl SelectModal {
             .collect();
         let list = List::new(items)
             .block(block)
-            .highlight_style(selection_style());
+            .highlight_style(colors.selection_style());
         let mut state = ListState::default();
         state.select(Some(self.cursor));
         frame.render_stateful_widget(list, rect, &mut state);
@@ -243,28 +241,21 @@ pub fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect {
         .split(vertical[1])[1]
 }
 
-/// Renders a bordered modal with `title`, `border` colour and `body` lines.
+/// Renders a rounded, accent-titled modal (clibase `modal_block`) with `title`
+/// and `body` lines over a lifted fill, centred in `area`.
 fn render_modal(
     frame: &mut Frame,
     area: Rect,
+    skin: &Skin,
     title: &str,
-    border: ratatui::style::Color,
     body: Vec<Line<'static>>,
     width_percent: u16,
     height: u16,
 ) {
     let rect = centered_rect(width_percent, height, area);
     frame.render_widget(Clear, rect);
-    let block = Block::default()
-        .title(Span::styled(
-            format!(" {title} "),
-            Style::default().fg(border).add_modifier(Modifier::BOLD),
-        ))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(border));
-    let paragraph = Paragraph::new(body).block(block);
-    frame.render_widget(paragraph, rect);
+    let block = ratada::chrome::modal_block(skin, title);
+    frame.render_widget(Paragraph::new(body).block(block), rect);
 }
 
 #[cfg(test)]
@@ -276,10 +267,11 @@ mod tests {
 
     /// Collects the whole rendered buffer into one string.
     fn rendered(modal: &SelectModal, width: u16, height: u16) -> String {
+        let skin = crate::config::Config::default().skin();
         let mut terminal =
             Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
-            .draw(|frame| modal.render(frame, frame.area()))
+            .draw(|frame| modal.render(frame, frame.area(), &skin))
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
         buffer.content().iter().map(|cell| cell.symbol()).collect()

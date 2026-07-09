@@ -5,7 +5,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::KeyCode;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -17,7 +17,7 @@ use ratatui::widgets::{
 use crate::tui::colors::{ACCENT, DIM, selection_style};
 use crate::tui::navigation::cycle;
 use crate::tui::presentation::truncate;
-use crate::tui::terminal::Tui;
+use crate::tui::terminal::{Tui, TuiEvent};
 
 /// Runs the picker over the discovered-but-new `found` repos, showing the
 /// already-`known` ones for context. Returns the chosen paths, or `None` when
@@ -32,14 +32,12 @@ pub fn run(
     let mut tui = Tui::new()?;
     let mut state = PickerState::new(found.len());
     loop {
-        tui.terminal
-            .draw(|frame| render(frame, found, known, &state))?;
-        let Event::Key(key) = event::read()? else {
-            continue;
+        tui.draw(|frame| render(frame, found, known, &state))?;
+        let key = match tui.read_event()? {
+            TuiEvent::Key(key) => key,
+            TuiEvent::Quit => return Ok(None),
+            TuiEvent::Resize => continue,
         };
-        if key.kind != KeyEventKind::Press {
-            continue;
-        }
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => return Ok(None),
             KeyCode::Enter => return Ok(Some(state.chosen(found))),

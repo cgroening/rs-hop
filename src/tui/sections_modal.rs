@@ -5,15 +5,14 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, BorderType, Borders, Clear, List, ListItem, ListState,
-};
+use ratatui::widgets::{Clear, List, ListItem, ListState};
 
 use crate::domain::sections::UNGROUPED;
-use crate::tui::colors::{ACCENT, DIM, selection_style};
+use crate::theme::Skin;
 use crate::tui::navigation::cycle;
+use crate::tui::skin::Colors;
 use crate::tui::widgets::centered_rect;
 
 /// What a key press on the sections manager asks the app to do.
@@ -108,18 +107,12 @@ impl SectionsModal {
     }
 
     /// Renders the manager centred in `area`.
-    pub fn render(&self, frame: &mut Frame, area: Rect) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
+        let colors = Colors::from_palette(&skin.palette);
         let height = (self.names.len() as u16 + 5).clamp(6, 18);
         let rect = centered_rect(50, height, area);
         frame.render_widget(Clear, rect);
-        let block = Block::default()
-            .title(Span::styled(
-                " Manage sections ",
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ))
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(ACCENT));
+        let block = ratada::chrome::modal_block(skin, "Manage sections");
         let inner = block.inner(rect);
         frame.render_widget(block, rect);
 
@@ -130,15 +123,15 @@ impl SectionsModal {
             .collect();
         items.push(ListItem::new(Line::from(Span::styled(
             format!("{UNGROUPED} (auto)"),
-            Style::default().fg(DIM),
+            Style::default().fg(colors.dim),
         ))));
         items.push(ListItem::new(Line::raw("")));
         items.push(ListItem::new(Line::from(Span::styled(
             "n new · r rename · d delete · Alt+\u{2191}\u{2193} move · Esc close",
-            Style::default().fg(DIM),
+            Style::default().fg(colors.dim),
         ))));
 
-        let list = List::new(items).highlight_style(selection_style());
+        let list = List::new(items).highlight_style(colors.selection_style());
         let mut state = ListState::default();
         if !self.names.is_empty() {
             state.select(Some(self.cursor));

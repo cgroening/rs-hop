@@ -11,15 +11,14 @@ use std::path::{Path, PathBuf};
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph,
-};
+use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
-use crate::tui::colors::{ACCENT, DIM, selection_style};
+use crate::theme::Skin;
 use crate::tui::navigation::cycle;
 use crate::tui::presentation::truncate;
+use crate::tui::skin::Colors;
 use crate::tui::text_input::TextInput;
 use crate::tui::widgets::centered_rect;
 
@@ -87,25 +86,19 @@ impl PathPicker {
     }
 
     /// Renders the picker centred in `area`.
-    pub fn render(&self, frame: &mut Frame, area: Rect) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
+        let colors = Colors::from_palette(&skin.palette);
         let rect =
             centered_rect(70, area.height.saturating_sub(4).max(8), area);
         frame.render_widget(Clear, rect);
         let title = format!(
-            " Pick path - {} ",
+            "Pick path - {}",
             truncate(
                 &self.current_dir.to_string_lossy(),
                 rect.width.saturating_sub(16) as usize,
             )
         );
-        let block = Block::default()
-            .title(Span::styled(
-                title,
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ))
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(ACCENT));
+        let block = ratada::chrome::modal_block(skin, &title);
         let inner = block.inner(rect);
         frame.render_widget(block, rect);
 
@@ -117,28 +110,28 @@ impl PathPicker {
                 Constraint::Length(1),
             ])
             .split(inner);
-        self.render_filter(frame, rows[0]);
-        self.render_list(frame, rows[1]);
+        self.render_filter(frame, rows[0], &colors);
+        self.render_list(frame, rows[1], &colors);
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 " \u{2191}\u{2193} move · \u{2192} open · \u{2190} up · \
                  Enter choose · Esc cancel",
-                Style::default().fg(DIM),
+                Style::default().fg(colors.dim),
             ))),
             rows[2],
         );
     }
 
     /// Renders the filter line.
-    fn render_filter(&self, frame: &mut Frame, area: Rect) {
+    fn render_filter(&self, frame: &mut Frame, area: Rect, colors: &Colors) {
         let mut spans =
-            vec![Span::styled("filter: ", Style::default().fg(DIM))];
+            vec![Span::styled("filter: ", Style::default().fg(colors.dim))];
         spans.extend(self.filter.render_line(Style::default(), true).spans);
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 
     /// Renders the entry list.
-    fn render_list(&self, frame: &mut Frame, area: Rect) {
+    fn render_list(&self, frame: &mut Frame, area: Rect, colors: &Colors) {
         let items: Vec<ListItem> = self
             .visible
             .iter()
@@ -146,7 +139,7 @@ impl PathPicker {
                 let entry = &self.entries[index];
                 let suffix = if entry.is_dir { "/" } else { "" };
                 let style = if entry.is_dir {
-                    Style::default().fg(ACCENT)
+                    Style::default().fg(colors.accent)
                 } else {
                     Style::default()
                 };
@@ -156,7 +149,7 @@ impl PathPicker {
                 ))
             })
             .collect();
-        let list = List::new(items).highlight_style(selection_style());
+        let list = List::new(items).highlight_style(colors.selection_style());
         let mut state = ListState::default();
         if !self.visible.is_empty() {
             state.select(Some(self.cursor));
