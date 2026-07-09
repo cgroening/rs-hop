@@ -20,12 +20,9 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::domain::repo::{Repo, is_dir_target};
 use crate::domain::sections::SectionGroup;
-use crate::tui::colors::{
-    ACCENT, DANGER, DIM, FAVOURITE, MULTI_SELECT_BG, selection_style,
-};
-use crate::tui::presentation::{
-    IconSet, name_plain, render_scrollbar, slug_style, truncate,
-};
+use crate::theme::Skin;
+use crate::tui::presentation::{IconSet, name_plain, slug_style, truncate};
+use crate::tui::skin::Colors;
 
 /// The lower and upper bound for the auto-sized name column.
 const NAME_MIN: usize = 4;
@@ -44,6 +41,10 @@ pub struct SectionedView<'a> {
     pub repos: &'a [Repo],
     /// The glyph set.
     pub icons: &'a IconSet,
+    /// The active theme, for the scrollbar.
+    pub skin: &'a Skin,
+    /// The colour roles resolved from the active theme.
+    pub colors: &'a Colors,
     /// Service indices that are part of the multi-selection.
     pub selected: &'a HashSet<usize>,
     /// Whether a multi-selection is active (shows the leading marker column).
@@ -92,14 +93,23 @@ pub fn render(
     );
     view.offset.set(offset);
 
-    let list = List::new(items).highlight_style(selection_style());
+    let list = List::new(items).highlight_style(view.colors.selection_style());
     let mut state = ListState::default();
     *state.offset_mut() = offset;
     state.select(Some(cursor_row));
     frame.render_stateful_widget(list, list_area, &mut state);
 
     if overflow {
-        render_scrollbar(frame, area, row_count, offset, viewport);
+        ratada::scroll::render_scrollbar(
+            frame,
+            area,
+            view.skin,
+            ratada::nav::ScrollView {
+                total: row_count,
+                offset,
+                viewport,
+            },
+        );
     }
 }
 
@@ -122,7 +132,7 @@ fn build_items<'a>(
     let mut entry_pos = 0;
     let mut seen_entry = false;
     for group in view.groups {
-        items.push(header_item(&group.label, width));
+        items.push(header_item(&group.label, width, view.colors));
         for &index in &group.items {
             let row = items.len();
             if !seen_entry {
@@ -161,16 +171,18 @@ fn settled_offset(
 }
 
 /// A full-width section-header bar: the bold accent label then a dim rule.
-fn header_item<'a>(label: &str, width: usize) -> ListItem<'a> {
+fn header_item<'a>(label: &str, width: usize, colors: &Colors) -> ListItem<'a> {
     let title = format!(" {label} ");
     let used = UnicodeWidthStr::width(title.as_str());
     let rule = "\u{2500}".repeat(width.saturating_sub(used));
     ListItem::new(Line::from(vec![
         Span::styled(
             title,
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(colors.accent)
+                .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(rule, Style::default().fg(DIM)),
+        Span::styled(rule, Style::default().fg(colors.dim)),
     ]))
 }
 
@@ -188,7 +200,9 @@ fn entry_item<'a>(
     let lead = if view.has_selection && selected {
         Span::styled(
             "\u{25b8} ",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(view.colors.accent)
+                .add_modifier(Modifier::BOLD),
         )
     } else {
         Span::raw("  ")
@@ -197,6 +211,7 @@ fn entry_item<'a>(
         &repo.display_name(),
         shown_slug(view, repo),
         name_width,
+        view.colors,
     );
     let kind = pad(type_label(repo), TYPE_WIDTH);
     // Cells before the path: lead(2) + marker(1) + fav(1) + space(1) + name
@@ -209,7 +224,7 @@ fn entry_item<'a>(
     let mut spans = vec![
         lead,
         marker_span(repo, view),
-        fav_span(repo, view.icons),
+        fav_span(repo, view),
         Span::raw(" "),
     ];
     spans.extend(name_field);
@@ -217,13 +232,13 @@ fn entry_item<'a>(
         Span::raw("  "),
         Span::raw(kind),
         Span::raw("  "),
-        Span::styled(path, Style::default().fg(DIM)),
+        Span::styled(path, Style::default().fg(view.colors.dim)),
         Span::raw("  "),
-        Span::styled(zip, Style::default().fg(DIM)),
+        Span::styled(zip, Style::default().fg(view.colors.dim)),
     ]);
     let item = ListItem::new(Line::from(spans));
     if selected {
-        item.style(Style::default().bg(MULTI_SELECT_BG))
+        item.style(Style::default().bg(view.colors.multi_select_bg))
     } else {
         item
     }
@@ -235,7 +250,9 @@ fn marker_span(repo: &Repo, view: &SectionedView) -> Span<'static> {
     if view.missing.contains(&repo.path) {
         Span::styled(
             view.icons.missing.to_string(),
-            Style::default().fg(DANGER).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(view.colors.danger)
+                .add_modifier(Modifier::BOLD),
         )
     } else {
         Span::raw(" ")
@@ -243,11 +260,11 @@ fn marker_span(repo: &Repo, view: &SectionedView) -> Span<'static> {
 }
 
 /// The favourite star glyph when favourited, else blank.
-fn fav_span(repo: &Repo, icons: &IconSet) -> Span<'static> {
+fn fav_span(repo: &Repo, view: &SectionedView) -> Span<'static> {
     if repo.fav {
         Span::styled(
-            icons.favourite.to_string(),
-            Style::default().fg(FAVOURITE),
+            view.icons.favourite.to_string(),
+            Style::default().fg(view.colors.favourite),
         )
     } else {
         Span::raw(" ")
@@ -283,6 +300,7 @@ fn name_field_spans(
     name: &str,
     slug: Option<&str>,
     width: usize,
+    colors: &Colors,
 ) -> Vec<Span<'static>> {
     let Some(slug) = slug else {
         return vec![Span::raw(pad(name, width))];
@@ -296,7 +314,7 @@ fn name_field_spans(
     let used = name_w + 1 + UnicodeWidthStr::width(slug_text.as_str());
     vec![
         Span::raw(name.to_string()),
-        Span::styled(format!(" {slug_text}"), slug_style()),
+        Span::styled(format!(" {slug_text}"), slug_style(colors)),
         Span::raw(" ".repeat(width.saturating_sub(used))),
     ]
 }
@@ -356,11 +374,13 @@ mod tests {
 
     #[test]
     fn name_field_spans_adds_slug_only_with_room() {
+        let colors =
+            Colors::from_palette(&crate::config::Config::default().palette());
         // No slug -> one padded span.
-        assert_eq!(name_field_spans("hop", None, 10).len(), 1);
+        assert_eq!(name_field_spans("hop", None, 10, &colors).len(), 1);
         // Slug with room -> name + slug + padding.
-        assert_eq!(name_field_spans("hop", Some("hp"), 12).len(), 3);
+        assert_eq!(name_field_spans("hop", Some("hp"), 12, &colors).len(), 3);
         // Too narrow for a slug -> just the padded name.
-        assert_eq!(name_field_spans("hop", Some("hp"), 4).len(), 1);
+        assert_eq!(name_field_spans("hop", Some("hp"), 4, &colors).len(), 1);
     }
 }

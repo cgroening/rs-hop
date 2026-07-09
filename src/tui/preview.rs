@@ -11,8 +11,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
 use crate::domain::repo::{Repo, RepoKind, is_dir_target};
-use crate::tui::colors::{ACCENT, DIM, MUTED};
 use crate::tui::presentation::{IconSet, status_text, truncate};
+use crate::tui::skin::Colors;
 
 /// Where the preview panel sits (persisted; cycled with `v`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -67,6 +67,8 @@ pub struct PreviewContext<'a> {
     pub log: &'a [String],
     /// Whether the entry's log is still being fetched in the background.
     pub log_loading: bool,
+    /// The colour roles resolved from the active theme.
+    pub colors: &'a Colors,
 }
 
 /// Renders the preview panel into `area`.
@@ -75,11 +77,13 @@ pub fn render(frame: &mut Frame, area: Rect, ctx: PreviewContext) {
     let block = Block::default()
         .title(Span::styled(
             " Details ",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(ctx.colors.accent)
+                .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(DIM));
+        .border_style(Style::default().fg(ctx.colors.dim));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -87,7 +91,7 @@ pub fn render(frame: &mut Frame, area: Rect, ctx: PreviewContext) {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 "no entry",
-                Style::default().fg(MUTED),
+                Style::default().fg(ctx.colors.muted),
             ))),
             inner,
         );
@@ -106,9 +110,14 @@ fn entry_lines(
 ) -> Vec<Line<'static>> {
     let mut lines = vec![Line::from(Span::styled(
         repo.display_name(),
-        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(ctx.colors.accent)
+            .add_modifier(Modifier::BOLD),
     ))];
-    lines.push(dim_line(truncate(&repo.path.to_string_lossy(), width)));
+    lines.push(dim_line(
+        truncate(&repo.path.to_string_lossy(), width),
+        ctx.colors,
+    ));
 
     let mut meta: Vec<String> = vec![format!("kind: {}", kind_label(repo))];
     if let Some(slug) = &repo.slug {
@@ -120,12 +129,12 @@ fn entry_lines(
     if repo.fav {
         meta.push("fav".to_string());
     }
-    lines.push(dim_line(meta.join("  ·  ")));
+    lines.push(dim_line(meta.join("  ·  "), ctx.colors));
 
     if repo.kind == RepoKind::Git {
         push_git_lines(&mut lines, repo, ctx);
     }
-    push_usage_line(&mut lines, repo);
+    push_usage_line(&mut lines, repo, ctx.colors);
 
     push_log_lines(&mut lines, ctx, width);
     lines
@@ -144,13 +153,13 @@ fn push_log_lines(
     if ctx.log.is_empty() && !ctx.log_loading {
         return;
     }
-    lines.push(dim_line("─ log ─".to_string()));
+    lines.push(dim_line("─ log ─".to_string(), ctx.colors));
     if ctx.log.is_empty() {
-        lines.push(dim_line(LOG_LOADING.to_string()));
+        lines.push(dim_line(LOG_LOADING.to_string(), ctx.colors));
         return;
     }
     for entry in ctx.log {
-        lines.push(dim_line(truncate(entry, width)));
+        lines.push(dim_line(truncate(entry, width), ctx.colors));
     }
 }
 
@@ -166,7 +175,7 @@ fn push_git_lines(
         repo.git_info.as_ref()
     };
     let Some(info) = info else {
-        lines.push(dim_line("status: …".to_string()));
+        lines.push(dim_line("status: …".to_string(), ctx.colors));
         return;
     };
     let mut parts = Vec::new();
@@ -177,21 +186,25 @@ fn push_git_lines(
     if let Some(name) = &info.github_repo_name {
         parts.push(name.clone());
     }
-    lines.push(dim_line(parts.join("  ·  ")));
+    lines.push(dim_line(parts.join("  ·  "), ctx.colors));
 }
 
 /// Appends the usage line (last used / open count) when known.
-fn push_usage_line(lines: &mut Vec<Line<'static>>, repo: &Repo) {
+fn push_usage_line(
+    lines: &mut Vec<Line<'static>>,
+    repo: &Repo,
+    colors: &Colors,
+) {
     if repo.last_used.is_none() && repo.open_count == 0 {
         return;
     }
     let opens = format!("opens: {}", repo.open_count);
-    lines.push(dim_line(opens));
+    lines.push(dim_line(opens, colors));
 }
 
 /// A dim-styled single-line.
-fn dim_line(text: String) -> Line<'static> {
-    Line::from(Span::styled(text, Style::default().fg(MUTED)))
+fn dim_line(text: String, colors: &Colors) -> Line<'static> {
+    Line::from(Span::styled(text, Style::default().fg(colors.muted)))
 }
 
 /// The type label for the entry.

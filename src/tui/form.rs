@@ -20,7 +20,7 @@ use crate::domain::repo::{Repo, RepoKind};
 use crate::domain::sections::UNGROUPED;
 use crate::domain::slug::slugify;
 use crate::theme::Skin;
-use crate::tui::colors::{ACCENT, DIM, SELECTION_BG};
+use crate::tui::skin::Colors;
 use crate::tui::text_input::TextInput;
 use crate::tui::widgets::centered_rect;
 
@@ -319,6 +319,7 @@ impl RepoForm {
 
     /// Renders the form centred in `area`.
     pub fn render(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
+        let colors = Colors::from_palette(&skin.palette);
         let fields = self.fields();
         let height = fields.len() as u16 + 4;
         let rect = centered_rect(70, height, area);
@@ -327,31 +328,37 @@ impl RepoForm {
         let mut lines: Vec<Line> = fields
             .iter()
             .enumerate()
-            .map(|(index, field)| self.field_line(*field, index))
+            .map(|(index, field)| self.field_line(*field, index, &colors))
             .collect();
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
             "Tab field · \u{2190}\u{2192} change · Space fav · ^O pick path · \
              Enter save · Esc cancel",
-            Style::default().fg(DIM),
+            Style::default().fg(colors.dim),
         )));
         frame.render_widget(Paragraph::new(lines).block(block), rect);
     }
 
     /// Builds the rendered line for `field` at focus position `index`.
-    fn field_line(&self, field: Field, index: usize) -> Line<'static> {
+    fn field_line(
+        &self,
+        field: Field,
+        index: usize,
+        colors: &Colors,
+    ) -> Line<'static> {
         match field {
-            Field::Path => self.text_line("Path", &self.path, index),
-            Field::Name => self.text_line("Name", &self.name, index),
-            Field::Slug => self.text_line("Slug", &self.slug, index),
+            Field::Path => self.text_line("Path", &self.path, index, colors),
+            Field::Name => self.text_line("Name", &self.name, index, colors),
+            Field::Slug => self.text_line("Slug", &self.slug, index, colors),
             Field::Section => {
-                self.choice_line("Section", self.section_label(), index)
+                let label = self.section_label();
+                self.choice_line("Section", label, index, colors)
             }
             Field::Kind => {
-                self.choice_line("Kind", kind_label(self.kind), index)
+                self.choice_line("Kind", kind_label(self.kind), index, colors)
             }
-            Field::Fav => self.fav_line(index),
-            Field::Backup => self.backup_line(index),
+            Field::Fav => self.fav_line(index, colors),
+            Field::Backup => self.backup_line(index, colors),
         }
     }
 
@@ -361,11 +368,16 @@ impl RepoForm {
         label: &str,
         input: &TextInput,
         index: usize,
+        colors: &Colors,
     ) -> Line<'static> {
-        let mut spans = vec![self.label_span(label, index)];
+        let mut spans = vec![self.label_span(label, index, colors)];
         let focused = index == self.focus;
-        spans.extend(input.render_line(Style::default(), focused).spans);
-        self.styled(spans, index)
+        spans.extend(
+            input
+                .render_line(Style::default(), colors.cursor, focused)
+                .spans,
+        );
+        self.styled(spans, index, colors)
     }
 
     /// A `< value >` selector line (section, kind).
@@ -374,30 +386,36 @@ impl RepoForm {
         label: &str,
         value: &str,
         index: usize,
+        colors: &Colors,
     ) -> Line<'static> {
         let spans = vec![
-            self.label_span(label, index),
-            Span::styled(format!("< {value} >"), Style::default().fg(ACCENT)),
+            self.label_span(label, index, colors),
+            Span::styled(
+                format!("< {value} >"),
+                Style::default().fg(colors.accent),
+            ),
         ];
-        self.styled(spans, index)
+        self.styled(spans, index, colors)
     }
 
     /// The favourite toggle line.
-    fn fav_line(&self, index: usize) -> Line<'static> {
+    fn fav_line(&self, index: usize, colors: &Colors) -> Line<'static> {
         let mark = if self.fav { "[x]" } else { "[ ]" };
-        let spans =
-            vec![self.label_span("Fav", index), Span::raw(mark.to_string())];
-        self.styled(spans, index)
+        let spans = vec![
+            self.label_span("Fav", index, colors),
+            Span::raw(mark.to_string()),
+        ];
+        self.styled(spans, index, colors)
     }
 
     /// The "include in backup all (`Z`)" toggle line.
-    fn backup_line(&self, index: usize) -> Line<'static> {
+    fn backup_line(&self, index: usize, colors: &Colors) -> Line<'static> {
         let mark = if self.include_in_backup { "[x]" } else { "[ ]" };
         let spans = vec![
-            self.label_span("Backup", index),
+            self.label_span("Backup", index, colors),
             Span::raw(mark.to_string()),
         ];
-        self.styled(spans, index)
+        self.styled(spans, index, colors)
     }
 
     /// The label of the currently selected section option.
@@ -409,20 +427,32 @@ impl RepoForm {
     }
 
     /// The fixed-width field label, accented when focused.
-    fn label_span(&self, label: &str, index: usize) -> Span<'static> {
+    fn label_span(
+        &self,
+        label: &str,
+        index: usize,
+        colors: &Colors,
+    ) -> Span<'static> {
         let style = if index == self.focus {
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(colors.accent)
+                .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(DIM)
+            Style::default().fg(colors.dim)
         };
         Span::styled(format!("{label:<8}"), style)
     }
 
     /// Applies the focus background tint to a field line.
-    fn styled(&self, spans: Vec<Span<'static>>, index: usize) -> Line<'static> {
+    fn styled(
+        &self,
+        spans: Vec<Span<'static>>,
+        index: usize,
+        colors: &Colors,
+    ) -> Line<'static> {
         let line = Line::from(spans);
         if index == self.focus {
-            line.style(Style::default().bg(SELECTION_BG))
+            line.style(Style::default().bg(colors.selection_bg))
         } else {
             line
         }

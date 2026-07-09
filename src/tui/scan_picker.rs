@@ -14,9 +14,9 @@ use ratatui::widgets::{
     Block, BorderType, Borders, List, ListItem, ListState, Paragraph,
 };
 
-use crate::tui::colors::{ACCENT, DIM, selection_style};
 use crate::tui::navigation::cycle;
 use crate::tui::presentation::truncate;
+use crate::tui::skin::Colors;
 use crate::tui::terminal::{Tui, TuiEvent};
 
 /// Runs the picker over the discovered-but-new `found` repos, showing the
@@ -28,11 +28,12 @@ use crate::tui::terminal::{Tui, TuiEvent};
 pub fn run(
     found: &[PathBuf],
     known: &[PathBuf],
+    colors: &Colors,
 ) -> io::Result<Option<Vec<PathBuf>>> {
     let mut tui = Tui::new()?;
     let mut state = PickerState::new(found.len());
     loop {
-        tui.draw(|frame| render(frame, found, known, &state))?;
+        tui.draw(|frame| render(frame, found, known, (&state, colors)))?;
         let key = match tui.read_event()? {
             TuiEvent::Key(key) => key,
             TuiEvent::Quit => return Ok(None),
@@ -97,7 +98,7 @@ fn render(
     frame: &mut Frame,
     found: &[PathBuf],
     known: &[PathBuf],
-    state: &PickerState,
+    (state, colors): (&PickerState, &Colors),
 ) {
     let area = frame.area();
     let chunks = Layout::default()
@@ -116,17 +117,19 @@ fn render(
                 " Scan: {} new git repo(s) - {count} selected",
                 found.len()
             ),
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(colors.accent)
+                .add_modifier(Modifier::BOLD),
         ))),
         chunks[0],
     );
 
-    render_body(frame, chunks[1], found, known, state);
+    render_body(frame, chunks[1], (found, known), (state, colors));
 
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             " Space toggle · a all · Enter import · Esc cancel",
-            Style::default().fg(DIM),
+            Style::default().fg(colors.dim),
         ))),
         chunks[2],
     );
@@ -136,9 +139,8 @@ fn render(
 fn render_body(
     frame: &mut Frame,
     area: Rect,
-    found: &[PathBuf],
-    known: &[PathBuf],
-    state: &PickerState,
+    (found, known): (&[PathBuf], &[PathBuf]),
+    (state, colors): (&PickerState, &Colors),
 ) {
     let (list_area, known_area) = if known.is_empty() {
         (area, None)
@@ -160,32 +162,37 @@ fn render_body(
             let name = basename(path);
             let rest = width.saturating_sub(mark.len() + name.len() + 1);
             ListItem::new(Line::from(vec![
-                Span::styled(mark, Style::default().fg(ACCENT)),
+                Span::styled(mark, Style::default().fg(colors.accent)),
                 Span::raw(name),
                 Span::raw(" "),
                 Span::styled(
                     truncate(&path.to_string_lossy(), rest),
-                    Style::default().fg(DIM),
+                    Style::default().fg(colors.dim),
                 ),
             ]))
         })
         .collect();
-    let list = List::new(items).highlight_style(selection_style());
+    let list = List::new(items).highlight_style(colors.selection_style());
     let mut list_state = ListState::default().with_selected(Some(state.cursor));
     frame.render_stateful_widget(list, list_area, &mut list_state);
 
     if let Some(known_area) = known_area {
-        render_known(frame, known_area, known);
+        render_known(frame, known_area, known, colors);
     }
 }
 
 /// Renders the dim, non-selectable "already in hop" panel.
-fn render_known(frame: &mut Frame, area: Rect, known: &[PathBuf]) {
+fn render_known(
+    frame: &mut Frame,
+    area: Rect,
+    known: &[PathBuf],
+    colors: &Colors,
+) {
     let block = Block::default()
         .title(format!(" already in hop ({}) ", known.len()))
         .borders(Borders::TOP)
         .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(DIM));
+        .border_style(Style::default().fg(colors.dim));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let width = inner.width as usize;
@@ -194,7 +201,7 @@ fn render_known(frame: &mut Frame, area: Rect, known: &[PathBuf]) {
         .map(|path| {
             Line::from(Span::styled(
                 truncate(&path.to_string_lossy(), width),
-                Style::default().fg(DIM),
+                Style::default().fg(colors.dim),
             ))
         })
         .collect();

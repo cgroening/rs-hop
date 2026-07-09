@@ -8,8 +8,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
-use crate::tui::colors::CURSOR;
-
 /// Editable single-line text with a caret position (a char index, `0..=len`).
 #[derive(Debug, Clone, Default)]
 pub struct TextInput {
@@ -79,14 +77,19 @@ impl TextInput {
         }
     }
 
-    /// Renders the value as a line, styling the text with `base`. The block
-    /// caret is shown only when `show_cursor` is set (i.e. the field is
-    /// focused); otherwise the plain value is rendered.
-    pub fn render_line(&self, base: Style, show_cursor: bool) -> Line<'static> {
+    /// Renders the value as a line, styling the text with `base` and the block
+    /// caret with `cursor`. The caret is shown only when `show_cursor` is set
+    /// (i.e. the field is focused); otherwise the plain value is rendered.
+    pub fn render_line(
+        &self,
+        base: Style,
+        cursor: Color,
+        show_cursor: bool,
+    ) -> Line<'static> {
         if !show_cursor {
             return Line::from(Span::styled(self.value(), base));
         }
-        let cursor_style = Style::default().fg(Color::Black).bg(CURSOR);
+        let cursor_style = Style::default().fg(Color::Black).bg(cursor);
         let mut spans: Vec<Span> = Vec::new();
         for (index, ch) in self.chars.iter().enumerate() {
             let style = if index == self.cursor {
@@ -97,7 +100,7 @@ impl TextInput {
             spans.push(Span::styled(ch.to_string(), style));
         }
         if self.cursor >= self.chars.len() {
-            spans.push(Span::styled("\u{2588}", Style::default().fg(CURSOR)));
+            spans.push(Span::styled("\u{2588}", Style::default().fg(cursor)));
         }
         Line::from(spans)
     }

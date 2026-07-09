@@ -9,7 +9,6 @@
 
 pub mod appframe;
 pub mod bindings;
-pub mod colors;
 pub mod form;
 pub mod help;
 pub mod navigation;
@@ -61,12 +60,12 @@ use crate::storage::cache;
 use crate::storage::git_client::GitClient;
 use crate::storage::ui_state;
 use crate::theme::Skin;
-use crate::tui::colors::{ACCENT, CHANGES, DANGER, DIM, MUTED, SELECTION_BG};
 use crate::tui::form::{FormResult, RepoDraft, RepoForm};
 use crate::tui::path_picker::{PathPicker, PickerResult};
 use crate::tui::presentation::{IconSet, github_url, render_empty_hint};
 use crate::tui::preview::PreviewMode;
 use crate::tui::sections_modal::{SectionsAction, SectionsModal};
+use crate::tui::skin::Colors;
 use crate::tui::widgets::{
     ConfirmModal, ConfirmResult, PromptResult, SelectModal, SelectResult,
     TextPrompt,
@@ -160,6 +159,8 @@ pub struct App {
     icons: IconSet,
     /// The resolved skin (config-driven palette + glyphs) for the panel frame.
     skin: Skin,
+    /// The colour roles resolved once from the active theme.
+    colors: Colors,
     /// The resolved key bindings, built once so `[keys]` warnings are logged
     /// once and dispatch never rebuilds the map per key press.
     keymap: Keymap,
@@ -268,6 +269,7 @@ impl App {
     ) -> Self {
         let icons = IconSet::new(config.appearance.glyphs);
         let skin = config.skin();
+        let colors = Colors::from_palette(&skin.palette);
         let keymap = config.keymap();
         let cached = cache::load(&cache_path);
         let ui = ui_state::load(&ui_state_path);
@@ -286,6 +288,7 @@ impl App {
             service,
             icons,
             skin,
+            colors,
             keymap,
             git_client,
             cache_path,
@@ -2089,6 +2092,7 @@ impl App {
         render_progress(
             frame,
             area,
+            &self.colors,
             ProgressText {
                 prefix: &prefix,
                 name: self.loading_detail.as_deref().unwrap_or(""),
@@ -2104,18 +2108,24 @@ impl App {
     fn status_lines(&self) -> Vec<Line<'_>> {
         let mut lines = vec![self.info_line()];
         if self.filtering {
-            let mut spans =
-                vec![Span::styled("filter: ", Style::default().fg(ACCENT))];
-            spans.extend(self.filter.render_line(Style::default(), true).spans);
+            let mut spans = vec![Span::styled(
+                "filter: ",
+                Style::default().fg(self.colors.accent),
+            )];
+            spans.extend(
+                self.filter
+                    .render_line(Style::default(), self.colors.cursor, true)
+                    .spans,
+            );
             spans.push(Span::styled(
                 "   Enter open · Esc clear",
-                Style::default().fg(DIM),
+                Style::default().fg(self.colors.dim),
             ));
             lines.push(Line::from(spans));
         } else if let Some((message, _)) = &self.status_msg {
             lines.push(Line::from(Span::styled(
                 format!(" {message}"),
-                Style::default().fg(ACCENT),
+                Style::default().fg(self.colors.accent),
             )));
         }
         lines
@@ -2280,6 +2290,7 @@ impl App {
             preview::PreviewContext {
                 repo,
                 icons: &self.icons,
+                colors: &self.colors,
                 example_mode: self.config.example_mode,
                 log: log.unwrap_or(&[]),
                 log_loading,
@@ -2307,15 +2318,17 @@ impl App {
     /// (see [`App::render_progress_bar`]), so this stays the normal info line.
     fn info_line(&self) -> Line<'_> {
         let icons = self.icons;
-        let muted = Style::default().fg(MUTED);
-        let sep = || Span::styled("   ", Style::default().fg(DIM));
+        let muted = Style::default().fg(self.colors.muted);
+        let sep = || Span::styled("   ", Style::default().fg(self.colors.dim));
         let mut spans = vec![Span::raw(" ")];
 
         let errors = self.error_count();
         if errors > 0 {
             spans.push(Span::styled(
                 format!("{}{errors}", icons.missing),
-                Style::default().fg(DANGER).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(self.colors.danger)
+                    .add_modifier(Modifier::BOLD),
             ));
             spans.push(sep());
         }
@@ -2348,7 +2361,7 @@ impl App {
             spans.push(sep());
             spans.push(Span::styled(
                 lenses.join(" · "),
-                Style::default().fg(ACCENT),
+                Style::default().fg(self.colors.accent),
             ));
         }
 
@@ -2383,7 +2396,7 @@ impl App {
         match self.last_fetched {
             None => Span::styled(
                 format!("{icon} never fetched"),
-                Style::default().fg(CHANGES),
+                Style::default().fg(self.colors.changes),
             ),
             Some(at) => {
                 let age = Local::now().signed_duration_since(at);
@@ -2395,7 +2408,7 @@ impl App {
                     relative_age(age),
                 );
                 let style = if stale {
-                    Style::default().fg(CHANGES)
+                    Style::default().fg(self.colors.changes)
                 } else {
                     muted
                 };
@@ -2479,7 +2492,7 @@ impl App {
             .set(area.height.saturating_sub(1).max(1) as usize);
         let view = self.ordered_view();
         if view.is_empty() {
-            render_empty_hint(frame, area, empty_hint(self.tab));
+            render_empty_hint(frame, area, empty_hint(self.tab), &self.colors);
             return;
         }
         if self.is_sectioned() {
@@ -2499,6 +2512,8 @@ impl App {
         let table_view = table::TableView {
             tab: self.tab,
             config: &self.config,
+            skin: &self.skin,
+            colors: &self.colors,
             icons: &self.icons,
             example_mode: self.config.example_mode,
             spinner,
@@ -2521,6 +2536,8 @@ impl App {
             groups: &groups,
             repos: self.service.repos(),
             icons: &self.icons,
+            skin: &self.skin,
+            colors: &self.colors,
             selected: &self.selected,
             has_selection: !self.selected.is_empty(),
             missing: &self.files_missing,
@@ -2614,7 +2631,12 @@ struct ProgressText<'a> {
 /// changes. The text colour is chosen per cell from whether it sits over the
 /// filled or unfilled part, so it never ends up dark text on the dark
 /// (unfilled) background.
-fn render_progress(frame: &mut Frame, area: Rect, text: ProgressText) {
+fn render_progress(
+    frame: &mut Frame,
+    area: Rect,
+    colors: &Colors,
+    text: ProgressText,
+) {
     // Leave one blank cell of padding on each side of the bar.
     let area = Rect {
         x: area.x.saturating_add(1),
@@ -2645,13 +2667,21 @@ fn render_progress(frame: &mut Frame, area: Rect, text: ProgressText) {
     for y in area.y..area.bottom() {
         for x in area.x..area.right() {
             let over_filled = (x - area.x) < filled;
-            let bg = if over_filled { ACCENT } else { SELECTION_BG };
+            let bg = if over_filled {
+                colors.accent
+            } else {
+                colors.selection_bg
+            };
             let is_label =
                 y == label_row && x >= start && x < start + label_width;
             let (symbol, fg) = if is_label {
                 let ch = line[(x - start) as usize];
                 // Dark text on the light filled bar, light text on the rest.
-                let fg = if over_filled { Color::Black } else { ACCENT };
+                let fg = if over_filled {
+                    Color::Black
+                } else {
+                    colors.accent
+                };
                 (ch.to_string(), fg)
             } else {
                 (" ".to_string(), bg)
@@ -2725,6 +2755,25 @@ mod tests {
 
     /// A sample app whose `[keys]` section holds `overrides`.
     fn app_with_keys(overrides: BTreeMap<String, Vec<String>>) -> App {
+        let mut config = sample_config();
+        config.keys = overrides;
+        app_with(config)
+    }
+
+    /// The demo settings every sample app shares: example mode, ASCII glyphs.
+    fn sample_config() -> Config {
+        Config {
+            example_mode: true,
+            appearance: Appearance {
+                glyphs: GlyphVariant::Ascii,
+                ..Appearance::default()
+            },
+            ..Config::default()
+        }
+    }
+
+    /// A sample app over four demo entries, using `config`.
+    fn app_with(config: Config) -> App {
         let mut git = Repo::new(PathBuf::from("/code/hop"));
         git.name = Some("hop".to_string());
         git.fav = true;
@@ -2744,15 +2793,6 @@ mod tests {
             dir.join("selected.txt"),
         )
         .unwrap();
-        let config = Config {
-            example_mode: true,
-            appearance: Appearance {
-                glyphs: GlyphVariant::Ascii,
-                ..Appearance::default()
-            },
-            keys: overrides,
-            ..Config::default()
-        };
         App::new(
             config,
             service,
@@ -2761,6 +2801,32 @@ mod tests {
             dir.join("ui-state.toml"),
             StartupStatus::Refresh { fetch: false },
         )
+    }
+
+    #[test]
+    fn the_active_theme_colours_the_content_cells() {
+        // The whole point of dropping `tui::colors`: a re-theme must reach the
+        // table cells, not just the frame and the modals.
+        let rose = Colors::from_palette(&sample_config().palette());
+        let mut config = sample_config();
+        config.appearance.theme = "monochrome".to_string();
+        let mono = Colors::from_palette(&config.palette());
+        assert_ne!(rose.accent, mono.accent, "the themes must differ");
+
+        let app = app_with(config);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let foregrounds: Vec<_> =
+            buffer.content().iter().map(|c| c.style().fg).collect();
+        assert!(
+            foregrounds.contains(&Some(mono.accent)),
+            "the theme accent must appear in the rendered content"
+        );
+        assert!(
+            !foregrounds.contains(&Some(rose.accent)),
+            "no cell may keep the compiled-in rose accent"
+        );
     }
 
     fn press(app: &mut App, code: KeyCode) {
@@ -2781,12 +2847,14 @@ mod tests {
     fn progress_bar_paints_accent_fill_and_label() {
         // A half-filled bar: the left cells carry the accent background and the
         // centred percentage label is present.
+        let colors = Colors::from_palette(&Config::default().palette());
         let mut terminal = Terminal::new(TestBackend::new(40, 2)).unwrap();
         terminal
             .draw(|frame| {
                 render_progress(
                     frame,
                     frame.area(),
+                    &colors,
                     ProgressText {
                         prefix: " 50 %",
                         name: "repo",
@@ -2798,9 +2866,12 @@ mod tests {
             .unwrap();
         let buf = terminal.backend().buffer().clone();
         // A cell early in the bar (inside the padded, filled region) is accent.
-        assert_eq!(buf.cell((2, 0)).unwrap().style().bg, Some(ACCENT));
+        assert_eq!(buf.cell((2, 0)).unwrap().style().bg, Some(colors.accent));
         // A cell near the right end (past the half fill) is the track colour.
-        assert_eq!(buf.cell((38, 0)).unwrap().style().bg, Some(SELECTION_BG));
+        assert_eq!(
+            buf.cell((38, 0)).unwrap().style().bg,
+            Some(colors.selection_bg)
+        );
         let text: String = buf
             .content()
             .iter()

@@ -10,15 +10,13 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-};
+use ratatui::text::Span;
+use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
 use crate::domain::repo::GitInfo;
 use crate::theme::GlyphVariant;
-use crate::tui::colors::{ACCENT, DIM};
+use crate::tui::skin::Colors;
 
 /// The resolved glyph set for the active icon variant. Every glyph is a
 /// single-cell symbol (no Nerd Font icons, no colourful emoji), so column
@@ -151,8 +149,10 @@ pub fn truncate(text: &str, width: usize) -> String {
 }
 
 /// The style for an inline slug shown after an entry name: dim and italic.
-pub fn slug_style() -> Style {
-    Style::default().fg(DIM).add_modifier(Modifier::ITALIC)
+pub fn slug_style(colors: &Colors) -> Style {
+    Style::default()
+        .fg(colors.dim)
+        .add_modifier(Modifier::ITALIC)
 }
 
 /// The plain name text used to size the name column: the name, plus ` slug`
@@ -164,25 +164,21 @@ pub fn name_plain(name: &str, slug: Option<&str>) -> String {
     }
 }
 
-/// The spans for an entry name: the name, plus a dim-italic ` slug` when shown.
-/// Used by the git table, where ratatui clips to the column width.
-pub fn name_spans(name: &str, slug: Option<&str>) -> Vec<Span<'static>> {
-    let mut spans = vec![Span::raw(name.to_string())];
-    if let Some(slug) = slug {
-        spans.push(Span::styled(format!(" {slug}"), slug_style()));
-    }
-    spans
-}
-
 /// Spans for `name` with the characters matched by the fuzzy `query` shown in
 /// accent + bold and the rest plain. Falls back to the plain name when the
 /// query is empty or does not match.
-pub fn highlight_name(name: &str, query: &str) -> Vec<Span<'static>> {
+pub fn highlight_name(
+    name: &str,
+    query: &str,
+    colors: &Colors,
+) -> Vec<Span<'static>> {
     let matched = match_indices(name, query);
     if matched.is_empty() {
         return vec![Span::raw(name.to_string())];
     }
-    let hit = Style::default().fg(ACCENT).add_modifier(Modifier::BOLD);
+    let hit = Style::default()
+        .fg(colors.accent)
+        .add_modifier(Modifier::BOLD);
     let mut spans: Vec<Span> = Vec::new();
     let mut current = String::new();
     let mut current_hit = false;
@@ -250,79 +246,13 @@ pub fn github_url(name: &str, username: Option<&str>) -> Option<String> {
     Some(format!("https://github.com/{owner}/{name}"))
 }
 
-/// The separator placed between footer tokens (never at a line end).
-const FOOTER_SEPARATOR: &str = " · ";
-
-/// Wraps footer hints into lines, keeping each `(keys, description)` token
-/// whole. Keys are in the soft accent colour, descriptions dim (like mdtask).
-pub fn footer_lines(items: &[(&str, &str)], width: u16) -> Vec<Line<'static>> {
-    let budget = (width.max(1) as usize).saturating_sub(1);
-    let separator_width = UnicodeWidthStr::width(FOOTER_SEPARATOR);
-    let key_style = Style::default().fg(ACCENT);
-    let dim = Style::default().fg(DIM);
-
-    let mut lines: Vec<Line> = Vec::new();
-    let mut current: Vec<Span> = Vec::new();
-    let mut used = 0usize;
-
-    for (keys, description) in items {
-        let token_width = UnicodeWidthStr::width(*keys)
-            + 1
-            + UnicodeWidthStr::width(*description);
-        let needed = if current.is_empty() {
-            token_width
-        } else {
-            separator_width + token_width
-        };
-        if !current.is_empty() && used + needed > budget {
-            lines.push(finish_footer_line(std::mem::take(&mut current)));
-            used = 0;
-        }
-        if !current.is_empty() {
-            current.push(Span::styled(FOOTER_SEPARATOR, dim));
-            used += separator_width;
-        }
-        current.push(Span::styled(keys.to_string(), key_style));
-        current.push(Span::styled(format!(" {description}"), dim));
-        used += token_width;
-    }
-    if !current.is_empty() {
-        lines.push(finish_footer_line(current));
-    }
-    lines
-}
-
-/// Prepends the left-pad space and builds a footer line.
-fn finish_footer_line(mut spans: Vec<Span<'static>>) -> Line<'static> {
-    spans.insert(0, Span::raw(" "));
-    Line::from(spans)
-}
-
-/// Renders a dim vertical scrollbar reflecting `position` within a `total`-row
-/// list shown through a `viewport`-row window.
-pub fn render_scrollbar(
+/// Renders a dim, centred placeholder in the vertical middle of `area`.
+pub fn render_empty_hint(
     frame: &mut Frame,
     area: Rect,
-    total: usize,
-    position: usize,
-    viewport: usize,
+    text: &str,
+    colors: &Colors,
 ) {
-    if total <= viewport {
-        return;
-    }
-    let content_length = total.saturating_sub(viewport).saturating_add(1);
-    let mut state = ScrollbarState::new(content_length)
-        .position(position)
-        .viewport_content_length(viewport);
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(None)
-        .end_symbol(None)
-        .style(Style::default().fg(DIM));
-    frame.render_stateful_widget(scrollbar, area, &mut state);
-}
-
-/// Renders a dim, centred placeholder in the vertical middle of `area`.
-pub fn render_empty_hint(frame: &mut Frame, area: Rect, text: &str) {
     if area.height < 1 || area.width < 4 {
         return;
     }
@@ -334,7 +264,7 @@ pub fn render_empty_hint(frame: &mut Frame, area: Rect, text: &str) {
     };
     frame.render_widget(
         Paragraph::new(text.to_string())
-            .style(Style::default().fg(DIM))
+            .style(Style::default().fg(colors.dim))
             .alignment(Alignment::Center),
         row,
     );
@@ -408,12 +338,6 @@ mod tests {
     }
 
     #[test]
-    fn name_spans_adds_slug_only_when_present() {
-        assert_eq!(name_spans("hop", None).len(), 1);
-        assert_eq!(name_spans("hop", Some("hp")).len(), 2);
-    }
-
-    #[test]
     fn status_text_formats_counts_and_clean() {
         let icons = IconSet::new(GlyphVariant::Ascii);
         // Invalid -> dash.
@@ -445,12 +369,14 @@ mod tests {
 
     #[test]
     fn highlight_name_marks_matched_chars() {
+        let colors =
+            Colors::from_palette(&crate::config::Config::default().palette());
         // No query -> a single plain span.
-        assert_eq!(highlight_name("hop", "").len(), 1);
+        assert_eq!(highlight_name("hop", "", &colors).len(), 1);
         // A match produces more than one span (hit/non-hit runs).
-        assert!(highlight_name("readme", "rm").len() > 1);
+        assert!(highlight_name("readme", "rm", &colors).len() > 1);
         // A non-match falls back to a single plain span.
-        assert_eq!(highlight_name("abc", "xyz").len(), 1);
+        assert_eq!(highlight_name("abc", "xyz", &colors).len(), 1);
     }
 
     #[test]

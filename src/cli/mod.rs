@@ -158,7 +158,16 @@ fn run_with_service(cli: Cli, config_path: PathBuf) -> ExitCode {
             depth,
             nested,
             dry_run,
-        }) => cmd_scan(service, dir.clone(), *depth, *nested, *dry_run),
+        }) => cmd_scan(
+            service,
+            &config,
+            ScanRequest {
+                dir: dir.clone(),
+                depth: *depth,
+                nested: *nested,
+                dry_run: *dry_run,
+            },
+        ),
         Some(Command::Doctor) => cmd_doctor(&service),
         // ConfigPath is handled before the service is built.
         Some(Command::ConfigPath) => ExitCode::SUCCESS,
@@ -447,21 +456,31 @@ fn resolve_kind(explicit: Option<&str>, has_git_dir: bool) -> RepoKind {
 
 /// Handles `hop scan`: discovers git repos under a directory and imports the
 /// ones chosen in the picker (or all found, with `--dry-run` printing only).
+/// The `hop scan` options, grouped so the handler keeps a short parameter list.
+struct ScanRequest {
+    /// Directory to search (default: the working directory).
+    dir: Option<PathBuf>,
+    /// How deep to descend, if limited.
+    depth: Option<usize>,
+    /// Whether to keep descending into a work tree already found.
+    nested: bool,
+    /// Only report what would be imported.
+    dry_run: bool,
+}
+
 fn cmd_scan(
     mut service: RepoService,
-    dir: Option<PathBuf>,
-    depth: Option<usize>,
-    nested: bool,
-    dry_run: bool,
+    config: &Config,
+    request: ScanRequest,
 ) -> ExitCode {
-    let raw = dir.unwrap_or_else(|| PathBuf::from("."));
+    let raw = request.dir.unwrap_or_else(|| PathBuf::from("."));
     let expanded = paths::expand_tilde(&raw.to_string_lossy());
     let root = std::path::absolute(&expanded).unwrap_or(expanded);
     let found = scan::find_git_repos(
         &root,
         ScanOptions {
-            max_depth: depth,
-            nested,
+            max_depth: request.depth,
+            nested: request.nested,
         },
     );
     let known: HashSet<String> =
@@ -474,7 +493,7 @@ fn cmd_scan(
                 .print();
         return ExitCode::SUCCESS;
     }
-    if dry_run {
+    if request.dry_run {
         println!("{} new git repo(s) under {}:", new.len(), root.display());
         for path in &new {
             println!("  {}", path.display());
@@ -485,7 +504,8 @@ fn cmd_scan(
         return ExitCode::SUCCESS;
     }
 
-    let chosen = match tui::scan_picker::run(&new, &duplicates) {
+    let colors = crate::tui::skin::Colors::from_palette(&config.palette());
+    let chosen = match tui::scan_picker::run(&new, &duplicates, &colors) {
         Ok(Some(chosen)) => chosen,
         Ok(None) => {
             let _ = Alert::info("Cancelled.").print();

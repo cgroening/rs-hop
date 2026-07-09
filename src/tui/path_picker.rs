@@ -154,7 +154,11 @@ impl PathPicker {
     fn render_filter(&self, frame: &mut Frame, area: Rect, colors: &Colors) {
         let mut spans =
             vec![Span::styled("filter: ", Style::default().fg(colors.dim))];
-        spans.extend(self.filter.render_line(Style::default(), true).spans);
+        spans.extend(
+            self.filter
+                .render_line(Style::default(), colors.cursor, true)
+                .spans,
+        );
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 

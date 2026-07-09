@@ -18,14 +18,11 @@ use unicode_width::UnicodeWidthStr;
 use crate::config::{ColumnWidth, Config};
 use crate::domain::filter::Tab;
 use crate::domain::repo::{GitInfo, Repo, RepoKind, is_dir_target};
-use crate::tui::colors::{
-    ACCENT, CHANGES, DANGER, DIM, FAVOURITE, MULTI_SELECT_BG, POSITIVE,
-    header_style, selection_style,
-};
+use crate::theme::Skin;
 use crate::tui::presentation::{
-    IconSet, highlight_name, name_plain, render_scrollbar, slug_style,
-    status_text, truncate,
+    IconSet, highlight_name, name_plain, slug_style, status_text, truncate,
 };
+use crate::tui::skin::Colors;
 
 /// The styling context for a table render, bundled to keep the parameter count
 /// low.
@@ -34,6 +31,10 @@ pub struct TableView<'a> {
     pub tab: Tab,
     /// The resolved settings (column widths).
     pub config: &'a Config,
+    /// The active theme, for the scrollbar.
+    pub skin: &'a Skin,
+    /// The colour roles resolved from the active theme.
+    pub colors: &'a Colors,
     /// The glyph set.
     pub icons: &'a IconSet,
     /// Whether to show example git info instead of live status.
@@ -86,11 +87,13 @@ fn shown_slug<'a>(repo: &'a Repo, view: &TableView) -> Option<&'a str> {
 fn name_cell_spans(repo: &Repo, view: &TableView) -> Vec<Span<'static>> {
     let name = repo.display_name();
     let mut spans = match view.query {
-        Some(query) if !query.trim().is_empty() => highlight_name(&name, query),
+        Some(query) if !query.trim().is_empty() => {
+            highlight_name(&name, query, view.colors)
+        }
         _ => vec![Span::raw(name)],
     };
     if let Some(slug) = shown_slug(repo, view) {
-        spans.push(Span::styled(format!(" {slug}"), slug_style()));
+        spans.push(Span::styled(format!(" {slug}"), slug_style(view.colors)));
     }
     spans
 }
@@ -133,7 +136,7 @@ pub fn render_table(
             let selected = view.selected.get(row).copied().unwrap_or(false);
             let built = row_for(repo, view, selected);
             if selected {
-                built.style(Style::default().bg(MULTI_SELECT_BG))
+                built.style(Style::default().bg(view.colors.multi_select_bg))
             } else {
                 built
             }
@@ -142,7 +145,7 @@ pub fn render_table(
     let table = Table::new(rows, widths(repos, view, table_area.width))
         .header(header_row(view))
         .column_spacing(1)
-        .row_highlight_style(selection_style());
+        .row_highlight_style(view.colors.selection_style());
     // Carry the offset across frames so the cursor moves within the viewport
     // without scrolling until it reaches an edge.
     let offset =
@@ -162,7 +165,16 @@ pub fn render_table(
             width: area.width,
             height: area.height.saturating_sub(1),
         };
-        render_scrollbar(frame, bar_area, repos.len(), offset, viewport);
+        ratada::scroll::render_scrollbar(
+            frame,
+            bar_area,
+            view.skin,
+            ratada::nav::ScrollView {
+                total: repos.len(),
+                offset,
+                viewport,
+            },
+        );
     }
 }
 
@@ -305,24 +317,24 @@ fn header_row(view: &TableView) -> Row<'static> {
         cells.push(Cell::from(""));
     }
     cells.extend(titles.into_iter().map(Cell::from));
-    Row::new(cells).style(header_style())
+    Row::new(cells).style(view.colors.header_style())
 }
 
 /// Builds the data row for one entry; `selected` drives the marker column.
 fn row_for<'a>(repo: &Repo, view: &TableView, selected: bool) -> Row<'a> {
     let mut cells: Vec<Cell> = Vec::new();
     if view.has_selection {
-        cells.push(selection_cell(selected));
+        cells.push(selection_cell(selected, view.colors));
     }
     cells.push(marker_cell(repo, view));
-    cells.push(fav_cell(repo, view.icons));
+    cells.push(fav_cell(repo, view));
     cells.push(Cell::from(Line::from(name_cell_spans(repo, view))));
     match view.tab {
         Tab::FilesAndFolders => {
             cells.push(Cell::from(type_label(repo)));
             cells.push(Cell::from(Span::styled(
                 repo.path.to_string_lossy().into_owned(),
-                Style::default().fg(DIM),
+                Style::default().fg(view.colors.dim),
             )));
         }
         _ => {
@@ -340,7 +352,7 @@ fn row_for<'a>(repo: &Repo, view: &TableView, selected: bool) -> Row<'a> {
             cells.push(Cell::from(github_text(info)));
             cells.push(Cell::from(Span::styled(
                 zip_date_text(repo, view),
-                Style::default().fg(DIM),
+                Style::default().fg(view.colors.dim),
             )));
         }
     }
@@ -348,11 +360,13 @@ fn row_for<'a>(repo: &Repo, view: &TableView, selected: bool) -> Row<'a> {
 }
 
 /// The selection-marker cell: a bold accent `▸` when selected, else blank.
-fn selection_cell<'a>(selected: bool) -> Cell<'a> {
+fn selection_cell<'a>(selected: bool, colors: &Colors) -> Cell<'a> {
     let symbol = if selected { "\u{25b8} " } else { "  " };
     Cell::from(Span::styled(
         symbol,
-        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(colors.accent)
+            .add_modifier(Modifier::BOLD),
     ))
 }
 
@@ -369,7 +383,9 @@ fn marker_cell<'a>(repo: &Repo, view: &TableView) -> Cell<'a> {
     if errored {
         Cell::from(Span::styled(
             view.icons.missing.to_string(),
-            Style::default().fg(DANGER).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(view.colors.danger)
+                .add_modifier(Modifier::BOLD),
         ))
     } else {
         Cell::from(" ")
@@ -377,11 +393,11 @@ fn marker_cell<'a>(repo: &Repo, view: &TableView) -> Cell<'a> {
 }
 
 /// The favourite cell: a star when favourited, else blank.
-fn fav_cell<'a>(repo: &Repo, icons: &IconSet) -> Cell<'a> {
+fn fav_cell<'a>(repo: &Repo, view: &TableView) -> Cell<'a> {
     if repo.fav {
         Cell::from(Span::styled(
-            icons.favourite.to_string(),
-            Style::default().fg(FAVOURITE),
+            view.icons.favourite.to_string(),
+            Style::default().fg(view.colors.favourite),
         ))
     } else {
         Cell::from(" ")
@@ -402,21 +418,27 @@ fn status_cell<'a>(
     {
         return Cell::from(Span::styled(
             glyph.to_string(),
-            Style::default().fg(ACCENT),
+            Style::default().fg(view.colors.accent),
         ));
     }
     let Some(info) = info else {
-        return Cell::from(Span::styled("…", Style::default().fg(DIM)));
+        return Cell::from(Span::styled(
+            "…",
+            Style::default().fg(view.colors.dim),
+        ));
     };
     if info.is_path_missing() {
-        return Cell::from(Span::styled("-", Style::default().fg(DIM)));
+        return Cell::from(Span::styled(
+            "-",
+            Style::default().fg(view.colors.dim),
+        ));
     }
     // The status column is sized to its content, so no truncation is needed.
     let text = status_text(info, view.icons);
     let style = if info.is_clean() {
-        Style::default().fg(POSITIVE)
+        Style::default().fg(view.colors.positive)
     } else if has_changes(info) {
-        Style::default().fg(CHANGES)
+        Style::default().fg(view.colors.changes)
     } else {
         Style::default()
     };

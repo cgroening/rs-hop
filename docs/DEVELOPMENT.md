@@ -48,9 +48,8 @@ src/
     appframe.rs           the panel app-frame (bands + grouped hints + dim backdrop)
     bindings.rs           per-tab footer hint groups (Action lists -> keymap.hints)
     skin.rs               Colors::from_palette: hop colour roles from the palette
-    colors.rs             original rose constants (content renderers, = default theme)
     terminal.rs           re-export of ratada::{Tui, TuiEvent}
-    presentation.rs       IconSet (glyphs), status_text, truncate, scrollbar, footer
+    presentation.rs       IconSet (glyphs), status_text, truncate, name/slug spans
     table.rs              repo table rendering (git tabs)
     sections_view.rs      Files-tab sectioned list (headers + entry rows)
     preview.rs            detail/preview panel + cached git log
@@ -150,6 +149,5 @@ When changing widget or theming behaviour that lives in `ratada`/`sparcli`, work
 
 These are documented, deliberate gaps from the clibase migration, not bugs:
 
-- **Content-cell colours still come from `tui/colors.rs`** (the original rose constants), which equal the `default` theme. So re-theming currently recolours the frame and modals but not the table/sections/preview content cells. Threading `Colors` (`tui/skin.rs`) through the content renderers would let content follow the active theme and let `colors.rs` be removed.
 - **`scan_picker` keeps the pre-migration bordered style** (it is a standalone CLI picker with its own loop); it could be restyled or moved to a sparcli/`ratada` picker.
 - **Config writes are not atomic** (`config::writer` uses `toml_edit` + `fs::write`); a `util/fs::write_atomic` (temp file + rename) would harden against a crash mid-write.

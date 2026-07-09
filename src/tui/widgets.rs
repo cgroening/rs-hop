@@ -13,7 +13,6 @@ use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
 use crate::theme::Skin;
 use crate::tui::navigation::cycle;
-use crate::tui::presentation::render_scrollbar;
 use crate::tui::skin::Colors;
 use crate::tui::text_input::TextInput;
 
@@ -121,7 +120,11 @@ impl TextPrompt {
             format!("{}: ", self.label),
             Style::default().fg(colors.dim),
         )];
-        field.extend(self.input.render_line(Style::default(), true).spans);
+        field.extend(
+            self.input
+                .render_line(Style::default(), colors.cursor, true)
+                .spans,
+        );
         let body = vec![
             Line::from(field),
             Line::raw(""),
@@ -210,12 +213,15 @@ impl SelectModal {
             height: rect.height.saturating_sub(2),
         };
         // Rendering settled the scroll offset; show a scrollbar if it overflows.
-        render_scrollbar(
+        ratada::scroll::render_scrollbar(
             frame,
             inner,
-            self.items.len(),
-            state.offset(),
-            inner.height as usize,
+            skin,
+            ratada::nav::ScrollView {
+                total: self.items.len(),
+                offset: state.offset(),
+                viewport: inner.height as usize,
+            },
         );
     }
 }

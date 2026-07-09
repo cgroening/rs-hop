@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **A theme now recolours the whole app, not just its frame.** The table, the sectioned Files list, the detail panel, the add/edit form, the text inputs and the `hop scan` picker drew their colours from compiled-in constants that happened to equal the `default` theme; they now resolve them from the active palette. `[appearance] theme` and `[appearance] colors` therefore reach the content cells.
 - **`[keys]` overrides now actually rebind keys.** The keymap was previously only the source of the footer hints, while key dispatch matched keys inline – so an override changed the hint label but not what the key did. Dispatch now resolves every key through the keymap. `Shift`+arrow, `Tab`/`Shift+Tab` and `Esc` stay outside it, as does `Ctrl+Q`, which the terminal guard handles before dispatch.
 - **The footer's `App` group is now `Global`** and lists the app-wide chords in one place: `?` help, `q` quit, then the toolkit's `f1 toggle hints` and `ctrl+q force quit`. The help overlay grows the same trailing section, from the same tokens.
 - The help overlay is restyled to match `ratada::help` – uppercase section headers, an aligned key column and a hint footer – while staying non-blocking, so a background refresh keeps running behind it.

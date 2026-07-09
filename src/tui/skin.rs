@@ -99,3 +99,26 @@ fn complement(color: crate::theme::Color) -> crate::theme::Color {
         lightness,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    #[test]
+    fn complement_rotates_the_hue_and_round_trips() {
+        let accent = Config::default().palette().accent;
+        let once = complement(accent);
+        let twice = complement(once);
+        let (Some((hue, _, _)), Some((back, _, _))) =
+            (accent.to_hsl(), twice.to_hsl())
+        else {
+            panic!("the default accent is an rgb colour");
+        };
+        assert!((hue - back).abs() < 1.0, "two rotations return the hue");
+        let Some((rotated, _, _)) = once.to_hsl() else {
+            panic!("rgb");
+        };
+        assert!((rotated - (hue + 180.0).rem_euclid(360.0)).abs() < 1.0);
+    }
+}
