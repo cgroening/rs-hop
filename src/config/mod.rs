@@ -75,6 +75,9 @@ const HOP_DEFAULT_THEME: ThemeColors = ThemeColors {
     panel: Color::hex("#1c1a20"),
     surface: Color::hex("#26222b"),
     border: Color::hex("#4a4652"),
+    // The lifted border a focused box draws, keeping its contrast against the
+    // brighter fill; `border.lighten(0.15)`, the toolkit's own derivation.
+    border_focus: Color::hex("#74707d"),
     success: Color::hex("#8fbf7f"),
     warning: Color::hex("#dcbe5a"),
     error: Color::hex("#d05050"),
