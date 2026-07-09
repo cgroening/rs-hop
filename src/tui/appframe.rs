@@ -82,17 +82,32 @@ pub fn popup_backdrop(frame: &mut Frame<'_>, skin: &Skin, area: Rect) {
     frame.render_widget(Block::default().style(ratada::style::bg(bg)), area);
 }
 
+/// Height of the progress panel above the status band (a refresh/backup bar).
+const PROGRESS_HEIGHT: u16 = 1;
+
+/// The rects [`render_frame`] hands back for the caller to paint into: the
+/// content surface, plus the optional progress-bar region above the status band
+/// (present only while a refresh or backup is running).
+pub struct FrameAreas {
+    /// The content surface (inset by one cell left/right).
+    pub content: Rect,
+    /// The progress-bar row above the status band, when shown.
+    pub progress: Option<Rect>,
+}
+
 /// Renders the full app frame: the tinted header panel, a 1-row content padding,
-/// the tinted content surface, the tinted status band (`status` lines) and the
-/// backgroundless hints below a blank separator. Returns the content [`Rect`]
-/// the caller fills.
+/// the tinted content surface, an optional progress region (when
+/// `show_progress`), the tinted status band (`status` lines) and the
+/// backgroundless hints below a blank separator. Returns the rects the caller
+/// paints into (see [`FrameAreas`]).
 pub fn render_frame(
     frame: &mut Frame<'_>,
     skin: &Skin,
     active: usize,
     status: Vec<Line>,
     hints: &[(String, String)],
-) -> Rect {
+    show_progress: bool,
+) -> FrameAreas {
     let area = frame.area();
     frame.render_widget(
         Block::default().style(ratada::style::base(
@@ -104,6 +119,7 @@ pub fn render_frame(
     let width = area.width.saturating_sub(2) as usize;
     let header_h = header_height(width);
     let status_h = status.len() as u16;
+    let progress_h = if show_progress { PROGRESS_HEIGHT } else { 0 };
     let hints_h = if hints.is_empty() {
         0
     } else {
@@ -113,6 +129,7 @@ pub fn render_frame(
         Constraint::Length(header_h),
         Constraint::Length(1),
         Constraint::Min(1),
+        Constraint::Length(progress_h),
         Constraint::Length(status_h),
         Constraint::Length(hints_h),
     ])
@@ -122,21 +139,23 @@ pub fn render_frame(
     fill(frame, chunks[2], skin.palette.surface);
     render_header(frame, chunks[0], skin, active);
     if status_h > 0 {
-        fill(frame, chunks[3], skin.palette.footer);
+        fill(frame, chunks[4], skin.palette.footer);
         frame.render_widget(
             Paragraph::new(status)
                 .block(Block::default().padding(Padding::horizontal(1))),
-            chunks[3],
+            chunks[4],
         );
     }
     if hints_h > 0 {
-        render_hints(frame, chunks[4], skin, hints);
+        render_hints(frame, chunks[5], skin, hints);
     }
     // The content surface, inset by one cell left/right; the dedicated content-
     // padding row above already gives the top gap.
-    Block::default()
+    let content = Block::default()
         .padding(Padding::new(1, 1, 0, 0))
-        .inner(chunks[2])
+        .inner(chunks[2]);
+    let progress = (progress_h > 0).then_some(chunks[3]);
+    FrameAreas { content, progress }
 }
 
 /// The header-panel height at `width`: the tab rows plus the 1-cell panel
@@ -212,4 +231,49 @@ fn render_hints(
         ..area
     };
     ratada::shortcut_hints::render(frame, hint_area, &hint_group(hints), &opts);
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use super::*;
+
+    fn skin() -> Skin {
+        crate::config::Config::default().skin()
+    }
+
+    /// Renders the frame and returns the content and progress rects.
+    fn areas(show_progress: bool) -> FrameAreas {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let mut out = None;
+        terminal
+            .draw(|frame| {
+                out = Some(render_frame(
+                    frame,
+                    &skin(),
+                    0,
+                    vec![Line::raw("info")],
+                    &[("q".to_string(), "quit".to_string())],
+                    show_progress,
+                ));
+            })
+            .unwrap();
+        out.unwrap()
+    }
+
+    #[test]
+    fn reserves_a_progress_region_when_shown() {
+        let with = areas(true);
+        let progress = with.progress.expect("progress region when shown");
+        assert_eq!(progress.height, PROGRESS_HEIGHT);
+        // The content shrinks by the progress height versus the hidden case.
+        let without = areas(false);
+        assert!(without.progress.is_none());
+        assert_eq!(
+            without.content.height - with.content.height,
+            PROGRESS_HEIGHT,
+        );
+    }
 }

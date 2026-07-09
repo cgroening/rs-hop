@@ -35,7 +35,7 @@ use chrono::{DateTime, Local};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
@@ -56,7 +56,7 @@ use crate::storage::cache;
 use crate::storage::git_client::GitClient;
 use crate::storage::ui_state;
 use crate::theme::Skin;
-use crate::tui::colors::{ACCENT, CHANGES, DANGER, DIM, MUTED};
+use crate::tui::colors::{ACCENT, CHANGES, DANGER, DIM, MUTED, SELECTION_BG};
 use crate::tui::form::{FormResult, RepoDraft, RepoForm};
 use crate::tui::path_picker::{PathPicker, PickerResult};
 use crate::tui::presentation::{IconSet, github_url, render_empty_hint};
@@ -81,6 +81,9 @@ const ZIP_LABEL: &str = "zipping";
 /// Padding width of the percentage in the progress text, so `XX %` keeps a
 /// constant width from `0` through `100`.
 const PERCENT_WIDTH: usize = 3;
+
+/// Separator between the percentage/counts prefix and the entry name.
+const PROGRESS_SEPARATOR: &str = " - ";
 
 /// How long the cursor must rest on an entry before its preview `git log` is
 /// fetched, so quick scrolling does not spawn a fetch per row.
@@ -1940,21 +1943,45 @@ impl App {
             .iter()
             .position(|tab| *tab == self.tab)
             .unwrap_or(0);
-        let content = appframe::render_frame(
+        let areas = appframe::render_frame(
             frame,
             &self.skin,
             active,
             self.status_lines(),
             &self.hint_pairs(),
+            self.loading.is_some(),
         );
-        let (list_area, preview_area) = self.split_preview(content);
+        let (list_area, preview_area) = self.split_preview(areas.content);
         self.render_body(frame, list_area);
         if let Some(preview_area) = preview_area {
             self.render_preview(frame, preview_area);
         }
+        if let Some(progress_area) = areas.progress {
+            self.render_progress_bar(frame, progress_area);
+        }
         // Snapshot the finished view so an overlay can dim it as its backdrop.
         appframe::snapshot_frame(frame);
         self.render_overlay(frame, area);
+    }
+
+    /// Paints the refresh/backup progress bar (pre-migration style) into the
+    /// panel reserved above the status band, when a run is in flight.
+    fn render_progress_bar(&self, frame: &mut Frame, area: Rect) {
+        let Some((done, total)) = self.loading else {
+            return;
+        };
+        let ratio = progress_ratio(done, total);
+        let prefix = self.progress_prefix(ratio, done, total);
+        render_progress(
+            frame,
+            area,
+            ProgressText {
+                prefix: &prefix,
+                name: self.loading_detail.as_deref().unwrap_or(""),
+                ratio,
+                name_width: self.loading_name_width,
+            },
+        );
     }
 
     /// The status-band lines: the info line (or the progress line while a
@@ -2135,23 +2162,10 @@ impl App {
     }
 
     /// The info line for the status band - error count, entry count, sort, the
-    /// active lenses, local status and remote fetch time, each behind its icon -
-    /// or a progress line (`XX % - name`) while a refresh or backup runs.
+    /// active lenses, local status and remote fetch time, each behind its icon.
+    /// The refresh/backup progress is shown by the bar above the status band
+    /// (see [`App::render_progress_bar`]), so this stays the normal info line.
     fn info_line(&self) -> Line<'_> {
-        if let Some((done, total)) = self.loading {
-            let ratio = progress_ratio(done, total);
-            let prefix = self.progress_prefix(ratio, done, total);
-            let name = self.loading_detail.as_deref().unwrap_or("");
-            let text = if name.is_empty() {
-                format!(" {prefix}")
-            } else {
-                format!(" {prefix} - {name}")
-            };
-            return Line::from(Span::styled(
-                text,
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ));
-        }
         let icons = self.icons;
         let muted = Style::default().fg(MUTED);
         let sep = || Span::styled("   ", Style::default().fg(DIM));
@@ -2490,6 +2504,78 @@ fn digit_count(n: usize) -> usize {
     n.to_string().len()
 }
 
+/// The composed text and fill ratio for one frame of the progress bar.
+struct ProgressText<'a> {
+    /// The fixed-width leading part (percentage, plus file counts when zipping).
+    prefix: &'a str,
+    /// The entry name shown after the prefix; empty when none is known yet.
+    name: &'a str,
+    /// Fill ratio in `0.0..=1.0`.
+    ratio: f64,
+    /// Display width reserved for the name, so the prefix column stays put as
+    /// names of different lengths come and go.
+    name_width: usize,
+}
+
+/// Renders a solid progress bar for an in-flight operation (status refresh or
+/// ZIP backup), filling the whole `area`. The text is `prefix - name`, drawn
+/// over a fixed-width block (prefix + separator + the widest name) that is
+/// centred and pinned, so the percentage never shifts column as the name
+/// changes. The text colour is chosen per cell from whether it sits over the
+/// filled or unfilled part, so it never ends up dark text on the dark
+/// (unfilled) background.
+fn render_progress(frame: &mut Frame, area: Rect, text: ProgressText) {
+    // Leave one blank cell of padding on each side of the bar.
+    let area = Rect {
+        x: area.x.saturating_add(1),
+        width: area.width.saturating_sub(2),
+        ..area
+    };
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let filled = (f64::from(area.width) * text.ratio).round() as u16;
+    let line: Vec<char> = if text.name.is_empty() {
+        text.prefix.chars().collect()
+    } else {
+        format!("{}{PROGRESS_SEPARATOR}{}", text.prefix, text.name)
+            .chars()
+            .collect()
+    };
+    let label_width = line.len() as u16;
+    // Reserve room for the widest possible line and centre that block, so the
+    // left edge - and thus the `XX %` column - is fixed for the whole run.
+    let block_width = (UnicodeWidthStr::width(text.prefix)
+        + UnicodeWidthStr::width(PROGRESS_SEPARATOR)
+        + text.name_width) as u16;
+    let start = area.x + area.width.saturating_sub(block_width) / 2;
+    let label_row = area.y + area.height / 2;
+
+    let buf = frame.buffer_mut();
+    for y in area.y..area.bottom() {
+        for x in area.x..area.right() {
+            let over_filled = (x - area.x) < filled;
+            let bg = if over_filled { ACCENT } else { SELECTION_BG };
+            let is_label =
+                y == label_row && x >= start && x < start + label_width;
+            let (symbol, fg) = if is_label {
+                let ch = line[(x - start) as usize];
+                // Dark text on the light filled bar, light text on the rest.
+                let fg = if over_filled { Color::Black } else { ACCENT };
+                (ch.to_string(), fg)
+            } else {
+                (" ".to_string(), bg)
+            };
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.set_symbol(&symbol);
+                cell.set_style(
+                    Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+                );
+            }
+        }
+    }
+}
+
 /// A short relative age like `2d`, `5h` or `3m` for the remote line.
 fn relative_age(age: chrono::Duration) -> String {
     if age.num_days() >= 1 {
@@ -2592,6 +2678,38 @@ mod tests {
             press(&mut app, KeyCode::Char(tab));
             terminal.draw(|frame| app.render(frame)).unwrap();
         }
+    }
+
+    #[test]
+    fn progress_bar_paints_accent_fill_and_label() {
+        // A half-filled bar: the left cells carry the accent background and the
+        // centred percentage label is present.
+        let mut terminal = Terminal::new(TestBackend::new(40, 2)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_progress(
+                    frame,
+                    frame.area(),
+                    ProgressText {
+                        prefix: " 50 %",
+                        name: "repo",
+                        ratio: 0.5,
+                        name_width: 4,
+                    },
+                );
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        // A cell early in the bar (inside the padded, filled region) is accent.
+        assert_eq!(buf.cell((2, 0)).unwrap().style().bg, Some(ACCENT));
+        // A cell near the right end (past the half fill) is the track colour.
+        assert_eq!(buf.cell((38, 0)).unwrap().style().bg, Some(SELECTION_BG));
+        let text: String = buf
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
+        assert!(text.contains('%') && text.contains("repo"));
     }
 
     #[test]
