@@ -49,7 +49,11 @@ const SHORTCUTS: &[(&str, &str)] = &[
         "live fuzzy filter (Esc clears; matches are highlighted)",
     ),
     ("F", "toggle showing only git repos with a status change"),
-    ("b", "open the selected repo on GitHub in the browser"),
+    (
+        "b",
+        "open on GitHub in the browser (a tab per selected git repo, else the \
+         cursor)",
+    ),
     ("v", "cycle the detail panel (off / right / bottom)"),
     (
         "s",
@@ -86,7 +90,11 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("A", "archive / restore (selection or cursor)"),
     ("S", "set or change the slug"),
     ("i", "toggle showing slugs (dim, italic) after the name"),
-    ("y", "copy the selected entry's path to the clipboard"),
+    (
+        "y",
+        "copy path to the clipboard (all selected, one per line, else the \
+         cursor)",
+    ),
     ("p", "repair a missing path"),
     ("!", "list entries with path errors and fix them"),
     (

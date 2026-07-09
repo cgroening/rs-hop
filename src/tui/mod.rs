@@ -1360,44 +1360,80 @@ impl App {
 
     /// Copies the selected entry's path to the system clipboard.
     fn copy_path(&mut self) {
-        let Some(index) = self.selected_index() else {
+        let paths = self.target_paths();
+        if paths.is_empty() {
             return;
-        };
-        let Some(repo) = self.service.get(index) else {
-            return;
-        };
-        let path = repo.path.to_string_lossy().into_owned();
-        match crate::util::clipboard::copy(&path) {
-            Ok(()) => self.set_status("copied path to clipboard"),
+        }
+        let count = paths.len();
+        let text = paths.join("\n");
+        match crate::util::clipboard::copy(&text) {
+            Ok(()) => self.set_status(if count == 1 {
+                "copied path to clipboard".to_string()
+            } else {
+                format!("copied {count} paths to clipboard")
+            }),
             Err(error) => self.set_status(format!("copy failed: {error}")),
         }
+    }
+
+    /// The paths of the target entries (the selection, or the cursor entry when
+    /// nothing is selected), in list order.
+    fn target_paths(&self) -> Vec<String> {
+        self.targets()
+            .into_iter()
+            .filter_map(|index| self.service.get(index))
+            .map(|repo| repo.path.to_string_lossy().into_owned())
+            .collect()
     }
 
     /// Opens the selected git entry's GitHub page in the browser (a non-blocking
     /// GUI handoff, so the TUI stays up).
     fn open_on_github(&mut self) {
-        let name = self.selected_index().and_then(|index| {
-            let repo = self.service.get(index)?;
-            let info = if self.config.example_mode {
-                repo.example_git_info.as_ref()
-            } else {
-                repo.git_info.as_ref()
-            };
-            info.and_then(|info| info.github_repo_name.clone())
-        });
-        let url = name.and_then(|name| {
-            github_url(&name, self.config.github_username.as_deref())
-        });
-        let Some(url) = url else {
+        let targets = self.targets();
+        let urls: Vec<String> = targets
+            .iter()
+            .filter_map(|&index| self.github_url_for(index))
+            .collect();
+        if urls.is_empty() {
             self.set_status("no GitHub remote");
             return;
-        };
-        match crate::util::opener::open_url(&url) {
-            Ok(_) => self.set_status(format!("opening {url}")),
-            Err(error) => {
-                self.set_status(format!("could not open browser: {error}"))
+        }
+        let mut opened = 0;
+        for url in &urls {
+            match crate::util::opener::open_url(url) {
+                Ok(_) => opened += 1,
+                Err(error) => {
+                    self.set_status(format!("could not open browser: {error}"));
+                }
             }
         }
+        if opened == 0 {
+            return;
+        }
+        let skipped = targets.len() - urls.len();
+        if opened == 1 && skipped == 0 {
+            self.set_status(format!("opening {}", urls[0]));
+        } else if skipped == 0 {
+            self.set_status(format!("opening {opened} GitHub pages"));
+        } else {
+            self.set_status(format!(
+                "opening {opened} GitHub pages ({skipped} skipped)"
+            ));
+        }
+    }
+
+    /// The GitHub URL for the entry at `index`, if it is a git repo with a
+    /// resolvable remote (non-git entries and repos without a remote yield
+    /// `None`).
+    fn github_url_for(&self, index: usize) -> Option<String> {
+        let repo = self.service.get(index)?;
+        let info = if self.config.example_mode {
+            repo.example_git_info.as_ref()
+        } else {
+            repo.git_info.as_ref()
+        };
+        let name = info.and_then(|info| info.github_repo_name.clone())?;
+        github_url(&name, self.config.github_username.as_deref())
     }
 
     /// The entries an action applies to: the multi-selection, or the cursor
@@ -2675,6 +2711,20 @@ mod tests {
             .map(ratatui::buffer::Cell::symbol)
             .collect();
         assert!(text.contains('%') && text.contains("repo"));
+    }
+
+    #[test]
+    fn copy_targets_collects_selected_paths() {
+        let mut app = sample_app();
+        // No selection: just the cursor entry (the first git repo).
+        assert_eq!(app.target_paths(), vec!["/code/hop".to_string()]);
+        // Selecting two entries copies both paths, in index order.
+        app.selected.insert(0);
+        app.selected.insert(2);
+        assert_eq!(
+            app.target_paths(),
+            vec!["/code/hop".to_string(), "/notes".to_string()],
+        );
     }
 
     #[test]
