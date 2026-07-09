@@ -12,7 +12,7 @@ use serde::Deserialize;
 
 use crate::config::{Appearance, ColumnWidth, ColumnWidths, Config};
 use crate::domain::error::{Error, Result};
-use crate::theme::{GlyphVariant, ThemeColors, parse_color};
+use crate::theme::{GlyphVariant, Palette, ThemeColors, parse_color};
 
 /// Environment override for the git tool.
 const GIT_PROGRAM_ENV: &str = "HOP_GIT_PROGRAM";
@@ -133,6 +133,7 @@ fn read_raw(path: &Path) -> Result<RawConfig> {
 /// Merges a [`RawConfig`] onto the defaults.
 fn build(raw: RawConfig) -> Config {
     let defaults = Config::default();
+    report_unknown(&unknown_color_names(&raw));
     Config {
         git_program: raw.git_program.or(defaults.git_program),
         github_username: raw.github_username.or(defaults.github_username),
@@ -215,6 +216,51 @@ fn resolve_themes(
         .collect()
 }
 
+/// Every color the file names in a section that cannot carry it, as
+/// `(section, name)` pairs.
+///
+/// The two sections take different color sets, and mixing them up is silent:
+/// `[appearance].colors` overrides any palette color, while a
+/// `[themes.<name>]` contributes only the [`ThemeColors`] a palette is derived
+/// *from*. Validating a theme against `Palette::KEYS` accepts the derived ones
+/// (`selection`, `cursor`, `input_bg`, ...) and then drops the value without a
+/// word.
+fn unknown_color_names(raw: &RawConfig) -> Vec<(String, String)> {
+    let mut unknown = Vec::new();
+    if let Some(colors) =
+        raw.appearance.as_ref().and_then(|it| it.colors.as_ref())
+    {
+        for name in unknown_colors(colors.keys(), Palette::KEYS) {
+            unknown.push(("appearance.colors".to_string(), name));
+        }
+    }
+    for (theme, colors) in raw.themes.iter().flatten() {
+        for name in unknown_colors(colors.keys(), ThemeColors::KEYS) {
+            unknown.push((format!("themes.{theme}"), name));
+        }
+    }
+    unknown
+}
+
+/// The names in `names` that are not in `known`.
+fn unknown_colors<'a>(
+    names: impl Iterator<Item = &'a String>,
+    known: &[&str],
+) -> Vec<String> {
+    names
+        .filter(|name| !known.contains(&name.as_str()))
+        .cloned()
+        .collect()
+}
+
+/// Warns about each unusable color name, so a typo (or a color in the wrong
+/// section) surfaces instead of being silently ignored.
+fn report_unknown(unknown: &[(String, String)]) {
+    for (section, name) in unknown {
+        log::warn!("unknown color '{name}' in [{section}], ignoring");
+    }
+}
+
 /// Resolves the column width budgets, applying any configured override onto the
 /// per-column defaults.
 fn resolve_column_widths(
@@ -269,6 +315,80 @@ fn apply_env(config: &mut Config) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The `(section, name)` pairs `content` reports as unusable.
+    fn unknown(content: &str) -> Vec<(String, String)> {
+        let raw: RawConfig = toml::from_str(content).expect("valid toml");
+        unknown_color_names(&raw)
+    }
+
+    #[test]
+    fn a_theme_table_rejects_the_palettes_derived_colors() {
+        // `cursor`, `selection` and the input fills are derived by the toolkit;
+        // a theme cannot contribute them. Accepting them here would drop the
+        // value without a word.
+        let mut reported = unknown(
+            "[themes.mine]\n\
+             accent = \"#010203\"\n\
+             border = \"#010203\"\n\
+             cursor = \"#010203\"\n\
+             selection = \"#010203\"\n",
+        );
+        reported.sort();
+        assert_eq!(
+            reported,
+            vec![
+                ("themes.mine".to_string(), "cursor".to_string()),
+                ("themes.mine".to_string(), "selection".to_string()),
+            ],
+        );
+    }
+
+    #[test]
+    fn appearance_colors_may_name_any_palette_color() {
+        let reported = unknown(
+            "[appearance]\n\
+             colors = { cursor = \"#010203\", selection = \"#010203\" }\n",
+        );
+        assert!(reported.is_empty(), "{reported:?}");
+    }
+
+    #[test]
+    fn a_theme_may_name_every_theme_color() {
+        let table =
+            ThemeColors::KEYS
+                .iter()
+                .fold(String::new(), |mut table, name| {
+                    table.push_str(name);
+                    table.push_str(" = \"#010203\"\n");
+                    table
+                });
+        assert!(unknown(&format!("[themes.mine]\n{table}")).is_empty());
+    }
+
+    #[test]
+    fn both_sections_report_a_typo() {
+        assert_eq!(
+            unknown("[appearance]\ncolors = { bordr = \"#010203\" }\n"),
+            vec![("appearance.colors".to_string(), "bordr".to_string())],
+        );
+        assert_eq!(
+            unknown("[themes.mine]\nbordr = \"#010203\"\n"),
+            vec![("themes.mine".to_string(), "bordr".to_string())],
+        );
+    }
+
+    #[test]
+    fn a_clean_file_reports_nothing() {
+        assert!(unknown("[appearance]\ntheme = \"default\"\n").is_empty());
+    }
+
+    #[test]
+    fn every_theme_color_name_is_also_a_palette_color_name() {
+        for name in ThemeColors::KEYS {
+            assert!(Palette::KEYS.contains(name), "{name} is unreachable");
+        }
+    }
 
     #[test]
     fn defaults_when_empty() {
