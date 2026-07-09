@@ -789,6 +789,37 @@ mod tests {
     }
 
     #[test]
+    fn every_action_has_a_reachable_default_key() {
+        // Dispatch resolves keys through the map, so an action whose default
+        // chord does not parse or round-trip would be silently unreachable.
+        let map = Keymap::default();
+        for action in Action::all() {
+            assert!(
+                !map.keys_for(action).is_empty(),
+                "'{}' has no bound key",
+                action.config_name()
+            );
+            for text in action.default_keys() {
+                let chord =
+                    KeyChord::parse(text).expect("default key must parse");
+                let mut modifiers = KeyModifiers::NONE;
+                if chord.ctrl {
+                    modifiers |= KeyModifiers::CONTROL;
+                }
+                if chord.alt {
+                    modifiers |= KeyModifiers::ALT;
+                }
+                assert_eq!(
+                    map.action_for(&key(chord.code, modifiers)),
+                    Some(action),
+                    "'{text}' does not resolve back to '{}'",
+                    action.config_name()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn hints_pair_keys_with_descriptions() {
         let map = Keymap::default();
         let hints = map.hints(&[Action::Add, Action::Quit]);

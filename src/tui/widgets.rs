@@ -6,7 +6,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
@@ -220,25 +220,25 @@ impl SelectModal {
     }
 }
 
-/// Computes a centred rect of `width` percent and `height` rows within `area`.
-pub fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect {
+/// Centres a `width` by `height` box, in cells, within `area`. Both are capped
+/// at what `area` can give, so an oversized box shrinks instead of overflowing.
+pub fn centered_box(width: u16, height: u16, area: Rect) -> Rect {
+    let width = width.min(area.width);
     let height = height.min(area.height);
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length((area.height.saturating_sub(height)) / 2),
-            Constraint::Length(height),
-            Constraint::Min(0),
-        ])
-        .split(area);
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - width_percent) / 2),
-            Constraint::Percentage(width_percent),
-            Constraint::Percentage((100 - width_percent) / 2),
-        ])
-        .split(vertical[1])[1]
+    Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    }
+}
+
+/// Computes a centred rect of `width_percent` percent and `height` rows within
+/// `area`. Percentages above 100 are treated as the full width.
+pub fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect {
+    // u32 so a wide terminal times a large percentage cannot overflow u16.
+    let width = u32::from(area.width) * u32::from(width_percent.min(100)) / 100;
+    centered_box(width as u16, height, area)
 }
 
 /// Renders a rounded, accent-titled modal (clibase `modal_block`) with `title`
@@ -264,6 +264,26 @@ mod tests {
     use ratatui::backend::TestBackend;
 
     use super::*;
+
+    #[test]
+    fn centered_box_caps_an_oversized_box_at_the_area() {
+        let area = Rect::new(0, 0, 40, 10);
+        let rect = centered_box(200, 99, area);
+        assert_eq!(rect, area, "an oversized box must shrink, not overflow");
+    }
+
+    #[test]
+    fn centered_box_centres_a_fitting_box() {
+        let rect = centered_box(20, 4, Rect::new(0, 0, 40, 10));
+        assert_eq!(rect, Rect::new(10, 3, 20, 4));
+    }
+
+    #[test]
+    fn centered_rect_survives_a_very_wide_area() {
+        // `area.width * width_percent` must not overflow u16.
+        let rect = centered_rect(100, 4, Rect::new(0, 0, 2000, 10));
+        assert_eq!(rect.width, 2000);
+    }
 
     /// Collects the whole rendered buffer into one string.
     fn rendered(modal: &SelectModal, width: u16, height: u16) -> String {

@@ -160,6 +160,9 @@ pub struct App {
     icons: IconSet,
     /// The resolved skin (config-driven palette + glyphs) for the panel frame.
     skin: Skin,
+    /// The resolved key bindings, built once so `[keys]` warnings are logged
+    /// once and dispatch never rebuilds the map per key press.
+    keymap: Keymap,
     git_client: Arc<dyn GitClient>,
     cache_path: PathBuf,
     /// Path of the ZIP-backup fingerprint cache (in the state directory).
@@ -265,6 +268,7 @@ impl App {
     ) -> Self {
         let icons = IconSet::new(config.appearance.glyphs);
         let skin = config.skin();
+        let keymap = config.keymap();
         let cached = cache::load(&cache_path);
         let ui = ui_state::load(&ui_state_path);
         shortcut_hints::set_visible(ui.hints_visible);
@@ -282,6 +286,7 @@ impl App {
             service,
             icons,
             skin,
+            keymap,
             git_client,
             cache_path,
             zip_cache_path,
@@ -887,90 +892,111 @@ impl App {
     }
 
     /// Handles a key for the list view (no overlay open).
+    ///
+    /// Keys the keymap cannot express are consumed first (see
+    /// [`App::handle_untracked_key`]); everything else resolves to an
+    /// [`Action`], so a `[keys]` override actually rebinds it.
     fn handle_list_key(&mut self, key: KeyEvent) -> Option<RunOutcome> {
         if self.filtering {
             return self.handle_filter_key(key);
         }
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if self.handle_untracked_key(key) {
+            return None;
+        }
+        let action = self.keymap.action_for(&key)?;
+        self.run_action(action)
+    }
+
+    /// Handles the keys that have no [`Action`], returning whether one matched.
+    ///
+    /// `Shift`+arrow cannot be a binding because [`KeyChord`](crate::keymap::
+    /// KeyChord) ignores the shift modifier, so it has to be caught before the
+    /// keymap turns a shifted arrow into a plain cursor move. Tab cycling and
+    /// `Esc` are structural, not user-facing actions.
+    fn handle_untracked_key(&mut self, key: KeyEvent) -> bool {
+        // Only a bare `Shift`+arrow extends: `Ctrl`/`Alt`+arrow are real chords
+        // the keymap owns, and they keep winning as they did before.
+        let shift = key.modifiers == KeyModifiers::SHIFT;
         match key.code {
-            KeyCode::Char('1') => self.switch_tab(Tab::GitRepos),
-            KeyCode::Char('2') => self.switch_tab(Tab::FilesAndFolders),
-            KeyCode::Char('3') => self.switch_tab(Tab::Archive),
+            KeyCode::Up if shift => self.extend_selection(-1),
+            KeyCode::Down if shift => self.extend_selection(1),
             KeyCode::Tab => self.cycle_tab(1),
             KeyCode::BackTab => self.cycle_tab(-1),
-            KeyCode::Up => self.on_arrow(key, -1),
-            KeyCode::Down => self.on_arrow(key, 1),
-            KeyCode::Char('g') => self.cursor_to_edge(false),
-            KeyCode::Char('G') => self.cursor_to_edge(true),
-            KeyCode::PageUp => self.page(-1, false),
-            KeyCode::PageDown => self.page(1, false),
-            KeyCode::Char('u') if ctrl => self.page(-1, true),
-            KeyCode::Char('d') if ctrl => self.page(1, true),
-            KeyCode::Char('u') => self.undo(),
-            KeyCode::Char(' ') => self.toggle_select(),
             KeyCode::Esc => self.clear_selection(),
-            KeyCode::Enter => return self.open_selected(false),
-            KeyCode::Char('L') => return self.open_selected(true),
-            KeyCode::Char('l') => return self.open_git_inline(),
-            KeyCode::Char('o') => return self.open_selected(false),
-            KeyCode::Char('O') => return self.force_open_with(),
-            KeyCode::Char('q') => return Some(RunOutcome::Quit),
-            KeyCode::Char('f') => self.filtering = true,
-            KeyCode::Char('F') => self.toggle_changes_only(),
-            KeyCode::Char('s') if self.is_sectioned() => {
-                self.open_section_jump()
+            _ => return false,
+        }
+        true
+    }
+
+    /// Runs `action` on the list view, returning an outcome when the loop should
+    /// end.
+    ///
+    /// The context-dependent actions branch on the active tab here rather than
+    /// on the key, so a rebound key keeps its meaning: `Sort` jumps to a section
+    /// where the list is sectioned, `Reload`/`ReloadFetch` re-check paths on the
+    /// Files tab, and `ManageSections` only applies there.
+    fn run_action(&mut self, action: Action) -> Option<RunOutcome> {
+        match action {
+            Action::Up => self.move_cursor(-1),
+            Action::Down => self.move_cursor(1),
+            Action::Top => self.cursor_to_edge(false),
+            Action::Bottom => self.cursor_to_edge(true),
+            Action::PageUp => self.page(-1, false),
+            Action::PageDown => self.page(1, false),
+            Action::HalfPageUp => self.page(-1, true),
+            Action::HalfPageDown => self.page(1, true),
+            Action::TabGit => self.switch_tab(Tab::GitRepos),
+            Action::TabFiles => self.switch_tab(Tab::FilesAndFolders),
+            Action::TabArchive => self.switch_tab(Tab::Archive),
+            Action::ToggleSelect => self.toggle_select(),
+            Action::Jump | Action::JumpCd => return self.open_selected(false),
+            Action::Open => return self.open_selected(true),
+            Action::GitTool => return self.open_git_inline(),
+            Action::OpenApp => return self.force_open_with(),
+            Action::Filter => self.filtering = true,
+            Action::ChangesFilter => self.toggle_changes_only(),
+            Action::Github => self.open_on_github(),
+            Action::Preview => self.cycle_preview(),
+            Action::Sort if self.is_sectioned() => self.open_section_jump(),
+            Action::Sort => self.cycle_sort(),
+            Action::ManageSections if self.tab == Tab::FilesAndFolders => {
+                self.open_sections_manager();
             }
-            KeyCode::Char('s') => self.cycle_sort(),
-            KeyCode::Char('M') if self.tab == Tab::FilesAndFolders => {
-                self.open_sections_manager()
+            Action::ManageSections => {}
+            Action::ReorderUp => self.move_entry(-1),
+            Action::ReorderDown => self.move_entry(1),
+            Action::SectionPrev if self.is_sectioned() => self.jump_section(-1),
+            Action::SectionNext if self.is_sectioned() => self.jump_section(1),
+            Action::SectionPrev | Action::SectionNext => {}
+            Action::Add => self.open_add(),
+            Action::Edit => self.open_edit_form(),
+            Action::Delete => self.open_delete_confirm(),
+            Action::Undo => self.undo(),
+            Action::ToggleFav => self.toggle_fav(),
+            Action::Zip => self.zip_targets(),
+            Action::ZipAll => self.zip_all(),
+            Action::Archive => self.toggle_archive(),
+            Action::Slug => self.open_slug_prompt(),
+            Action::ToggleSlugs => self.toggle_slugs(),
+            Action::CopyPath => self.copy_path(),
+            Action::RepairPath => self.open_repair_picker(),
+            Action::Errors => self.open_error_list(),
+            Action::Reload | Action::ReloadFetch
+                if self.tab == Tab::FilesAndFolders =>
+            {
+                self.check_files_existence();
             }
-            KeyCode::Char('n') => self.open_add(),
-            KeyCode::Char('e') => self.open_edit_form(),
-            KeyCode::Char('d') | KeyCode::Delete | KeyCode::Backspace => {
-                self.open_delete_confirm()
-            }
-            KeyCode::Char('*') => self.toggle_fav(),
-            KeyCode::Char('z') => self.zip_targets(),
-            KeyCode::Char('Z') => self.zip_all(),
-            KeyCode::Char('y') => self.copy_path(),
-            KeyCode::Char('b') => self.open_on_github(),
-            KeyCode::Char('v') => self.cycle_preview(),
-            KeyCode::Char('i') => self.toggle_slugs(),
-            KeyCode::Char('A') => self.toggle_archive(),
-            KeyCode::Char('S') => self.open_slug_prompt(),
-            KeyCode::Char('p') => self.open_repair_picker(),
-            KeyCode::Char('!') => self.open_error_list(),
-            KeyCode::Char('r' | 'R') if self.tab == Tab::FilesAndFolders => {
-                self.check_files_existence()
-            }
-            KeyCode::Char('r') => self.reload_status(false),
-            KeyCode::Char('R') => self.reload_status(true),
-            KeyCode::Char('x') => self.refresh_targets(false),
-            KeyCode::Char('X') => self.refresh_targets(true),
-            KeyCode::Char('?') => {
+            Action::Reload => self.reload_status(false),
+            Action::ReloadFetch => self.reload_status(true),
+            Action::RefreshOne => self.refresh_targets(false),
+            Action::RefreshOneFetch => self.refresh_targets(true),
+            Action::Help => {
                 self.help_scroll.reset();
                 self.overlay = Overlay::Help;
             }
-            _ => {}
+            Action::Quit => return Some(RunOutcome::Quit),
         }
         None
-    }
-
-    /// Routes an arrow key: `Alt` reorders, `Ctrl` jumps section-to-section (on
-    /// the Files tab), `Shift` extends the selection, otherwise the cursor
-    /// moves.
-    fn on_arrow(&mut self, key: KeyEvent, delta: isize) {
-        if key.modifiers.contains(KeyModifiers::ALT) {
-            self.move_entry(delta);
-        } else if key.modifiers.contains(KeyModifiers::CONTROL)
-            && self.is_sectioned()
-        {
-            self.jump_section(delta);
-        } else if key.modifiers.contains(KeyModifiers::SHIFT) {
-            self.extend_selection(delta);
-        } else {
-            self.move_cursor(delta);
-        }
     }
 
     /// Handles a key while the live filter is active.
@@ -2100,7 +2126,7 @@ impl App {
     /// `(key, description)` pairs via the keymap, so the shown keys reflect any
     /// `[keys]` overrides. Empty groups (no bound key) are dropped.
     fn hint_groups(&self) -> Vec<(String, Vec<(String, String)>)> {
-        let keymap = self.config.keymap();
+        let keymap = &self.keymap;
         let navigation = (
             "Navigation".to_string(),
             [
@@ -2120,13 +2146,13 @@ impl App {
                 groups.push(((*label).to_string(), hints));
             }
         }
-        groups.push(global_group(&keymap));
+        groups.push(global_group(keymap));
         groups
     }
 
     /// The app-wide chords, shared by the footer and the help overlay.
     fn global_hints(&self) -> (String, Vec<(String, String)>) {
-        global_group(&self.config.keymap())
+        global_group(&self.keymap)
     }
 
     /// Splits `body` into the list area and an optional preview area, per the
@@ -2667,6 +2693,7 @@ fn repo_has_change(repo: &Repo, example_mode: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::path::Path;
 
     use crossterm::event::KeyModifiers;
@@ -2693,6 +2720,11 @@ mod tests {
     }
 
     fn sample_app() -> App {
+        app_with_keys(BTreeMap::new())
+    }
+
+    /// A sample app whose `[keys]` section holds `overrides`.
+    fn app_with_keys(overrides: BTreeMap<String, Vec<String>>) -> App {
         let mut git = Repo::new(PathBuf::from("/code/hop"));
         git.name = Some("hop".to_string());
         git.fav = true;
@@ -2718,6 +2750,7 @@ mod tests {
                 glyphs: GlyphVariant::Ascii,
                 ..Appearance::default()
             },
+            keys: overrides,
             ..Config::default()
         };
         App::new(
@@ -2878,13 +2911,41 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_q_quits() {
+    fn q_quits() {
+        let mut app = sample_app();
+        let outcome = app
+            .handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+        assert!(matches!(outcome, Some(RunOutcome::Quit)));
+    }
+
+    #[test]
+    fn ctrl_q_is_left_to_the_terminal_guard() {
+        // The `Tui` turns `Ctrl+Q` into `TuiEvent::Quit` before dispatch ever
+        // sees it, so no list binding may claim the chord. Dispatch used to
+        // quit on it only because it matched on `KeyCode` and ignored the
+        // modifier.
         let mut app = sample_app();
         let outcome = app.handle_key(KeyEvent::new(
             KeyCode::Char('q'),
             KeyModifiers::CONTROL,
         ));
-        assert!(matches!(outcome, Some(RunOutcome::Quit)));
+        assert!(outcome.is_none());
+    }
+
+    #[test]
+    fn a_keys_override_rebinds_the_action() {
+        let overrides =
+            BTreeMap::from([("quit".to_string(), vec!["w".to_string()])]);
+        let mut app = app_with_keys(overrides);
+        let rebound = app
+            .handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::NONE));
+        assert!(matches!(rebound, Some(RunOutcome::Quit)));
+        let default = app
+            .handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+        assert!(
+            default.is_none(),
+            "the replaced default must not still quit"
+        );
     }
 
     #[test]

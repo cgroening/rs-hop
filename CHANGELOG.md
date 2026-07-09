@@ -12,8 +12,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **An optional confirmation before quitting.** `confirm_quit = true` in the config makes `q` ask first. `Ctrl+Q` never asks – it stays the unconditional escape hatch from any state.
 - **The path picker (`p` repair, `^O` in the add/edit form) can show hidden files.** `Ctrl+h` toggles dot-prefixed entries, which are hidden by default. The box also shows an `xx/yy` position indicator in its bottom-right border and a scrollbar when the list overflows, matching the toolkit's picker look.
 
+### Fixed
+
+- **The help overlay (`?`) crashed the app unless the terminal was between 60 and 125 columns wide.** It passed a column count to a helper that expected a percentage, so above 125 columns the centring arithmetic overflowed; below 60 columns its `clamp` had a minimum larger than the maximum. The overlay now asks for an absolute width, and `centered_box` caps any box against the area it must fit in.
+
 ### Changed
 
+- **`[keys]` overrides now actually rebind keys.** The keymap was previously only the source of the footer hints, while key dispatch matched keys inline – so an override changed the hint label but not what the key did. Dispatch now resolves every key through the keymap. `Shift`+arrow, `Tab`/`Shift+Tab` and `Esc` stay outside it, as does `Ctrl+Q`, which the terminal guard handles before dispatch.
 - **The footer's `App` group is now `Global`** and lists the app-wide chords in one place: `?` help, `q` quit, then the toolkit's `f1 toggle hints` and `ctrl+q force quit`. The help overlay grows the same trailing section, from the same tokens.
 - The help overlay is restyled to match `ratada::help` – uppercase section headers, an aligned key column and a hint footer – while staying non-blocking, so a background refresh keeps running behind it.
 - hop no longer defines its own `Ctrl+Q` chord; the `ratada::Tui` guard already surfaces it as a quit event in every state.

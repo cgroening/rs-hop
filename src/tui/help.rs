@@ -18,11 +18,14 @@ use ratatui::widgets::{Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Skin;
-use crate::tui::widgets::centered_rect;
+use crate::tui::widgets::centered_box;
 
 /// Rows the block border, the blank spacer and the footer take, on top of the
 /// section rows.
 const CHROME_ROWS: u16 = 5;
+/// The width the overlay wants for its longest description, before it has to
+/// give in and take whatever the terminal offers.
+const PREFERRED_WIDTH: u16 = 60;
 /// Spaces between the key column and the description.
 const KEY_GAP: usize = 2;
 /// Rows a page key moves.
@@ -210,10 +213,11 @@ pub fn render(
     scroll: &Scroll,
 ) {
     let palette = &skin.palette;
-    // Wide enough for the long descriptions, tall enough to fill the screen.
-    let width = (area.width * 4 / 5).clamp(60, area.width);
-    let height = (section_rows(global) + CHROME_ROWS).min(area.height);
-    let rect = centered_rect(width, height, area);
+    // Four fifths of the screen, but never below the width the long
+    // descriptions need. `centered_box` caps both against `area`.
+    let width = (area.width * 4 / 5).max(PREFERRED_WIDTH);
+    let height = section_rows(global) + CHROME_ROWS;
+    let rect = centered_box(width, height, area);
     frame.render_widget(Clear, rect);
     let block = ratada::chrome::modal_block(skin, "Keyboard shortcuts");
     let inner = block.inner(rect);
@@ -317,4 +321,43 @@ fn footer_hint(skin: &Skin, width: usize) -> Line<'static> {
     .into_iter()
     .next()
     .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use super::*;
+    use crate::config::Config;
+
+    fn global_section() -> Section {
+        (
+            "Global".to_string(),
+            vec![("q".to_string(), "quit".to_string())],
+        )
+    }
+
+    /// The overlay used to render only between 60 and 125 columns: below that
+    /// its `clamp` had `min > max`, above it the width overflowed a percentage.
+    #[test]
+    fn renders_at_any_terminal_size() {
+        let skin = Config::default().skin();
+        let global = global_section();
+        let scroll = Scroll::default();
+        for width in [1, 20, 40, 59, 60, 100, 126, 200, 400] {
+            for height in [1, 2, 3, 5, 40] {
+                let mut terminal =
+                    Terminal::new(TestBackend::new(width, height))
+                        .expect("the test backend never fails");
+                terminal
+                    .draw(|frame| {
+                        render(frame, frame.area(), &skin, &global, &scroll);
+                    })
+                    .unwrap_or_else(|error| {
+                        panic!("{width}x{height} failed to render: {error}")
+                    });
+            }
+        }
+    }
 }
