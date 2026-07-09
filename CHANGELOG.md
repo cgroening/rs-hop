@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **The path picker (`p` repair, `^O` in the add/edit form) can show hidden files.** `Ctrl+h` toggles dot-prefixed entries, which are hidden by default. The box also shows an `xx/yy` position indicator in its bottom-right border and a scrollbar when the list overflows, matching the toolkit's picker look.
+
 ### Changed
 
 - **The footer shortcut hints are now grouped by function** (clibase-style) instead of one flat list: a `Navigation` group followed by `Open` / `Manage` / `Backup` / `View` / `Git` (or `Sections` + `Paths` on the Files tab) / `App`, each with an aligned label column. The hint keys are sourced from the keymap, so a `[keys]` override is reflected in the footer.

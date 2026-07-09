@@ -3,17 +3,21 @@
 //! It opens at a starting directory (for path repair, the nearest existing
 //! ancestor of the broken path), lists its children with a typed filter, lets
 //! the user descend/ascend, and returns the chosen path. Folders are always
-//! selectable; files only when `allow_files` is set.
+//! selectable; files only when `allow_files` is set. The box shows an `xx/yy`
+//! position badge in its border and `Ctrl+h` toggles hidden (dot-prefixed)
+//! entries, which are hidden by default. Styled after `ratada`'s picker while
+//! staying hop's own non-blocking overlay.
 
+use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::theme::Skin;
 use crate::tui::navigation::cycle;
@@ -43,10 +47,14 @@ struct Entry {
 pub struct PathPicker {
     current_dir: PathBuf,
     allow_files: bool,
+    /// When false (the default), dot-prefixed entries are hidden.
+    show_hidden: bool,
     entries: Vec<Entry>,
     visible: Vec<usize>,
     filter: TextInput,
     cursor: usize,
+    /// The list scroll offset, carried across frames by `ratada::list`.
+    offset: Cell<usize>,
 }
 
 impl PathPicker {
@@ -57,10 +65,12 @@ impl PathPicker {
         let mut picker = PathPicker {
             current_dir,
             allow_files,
+            show_hidden: false,
             entries: Vec::new(),
             visible: Vec::new(),
             filter: TextInput::new(""),
             cursor: 0,
+            offset: Cell::new(0),
         };
         picker.reload();
         picker
@@ -75,6 +85,11 @@ impl PathPicker {
             KeyCode::Right => self.descend(),
             KeyCode::Left => self.ascend(),
             KeyCode::Backspace if self.filter.is_empty() => self.ascend(),
+            KeyCode::Char('h')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                self.toggle_hidden();
+            }
             KeyCode::Enter => return self.choose(),
             _ => {
                 if self.filter.handle_key(key) {
@@ -85,44 +100,57 @@ impl PathPicker {
         PickerResult::Pending
     }
 
-    /// Renders the picker centred in `area`.
+    /// Renders the picker centred in `area`, ratada-style: a rounded box titled
+    /// `Pick path` with the current directory on a dim header row, the caret
+    /// filter, the scrollable entry list, and a compact footer; the `xx/yy`
+    /// position badge sits in the bottom-right border.
     pub fn render(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
         let colors = Colors::from_palette(&skin.palette);
         let rect =
             centered_rect(70, area.height.saturating_sub(4).max(8), area);
         frame.render_widget(Clear, rect);
-        let title = format!(
-            "Pick path - {}",
-            truncate(
-                &self.current_dir.to_string_lossy(),
-                rect.width.saturating_sub(16) as usize,
-            )
-        );
-        let block = ratada::chrome::modal_block(skin, &title);
+        let block = ratada::chrome::modal_block(skin, "Pick path");
         let inner = block.inner(rect);
         frame.render_widget(block, rect);
+        // The position badge reads as part of the bottom-right border.
+        let badge =
+            ratada::chrome::position_badge(self.cursor, self.visible.len());
+        ratada::chrome::render_badge(frame, rect, skin, &badge);
 
+        let width = inner.width as usize;
+        let footer = ratada::shortcut_hints::lines(
+            &[
+                ("\u{2190}\u{2192}", "browse"),
+                ("enter", "pick"),
+                ("^H", "hidden"),
+            ],
+            skin.palette.accent_dim,
+            width,
+        );
+        let footer_h = (footer.len() as u16).max(1);
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1),
-                Constraint::Min(1),
                 Constraint::Length(1),
+                Constraint::Min(1),
+                Constraint::Length(footer_h),
             ])
             .split(inner);
-        self.render_filter(frame, rows[0], &colors);
-        self.render_list(frame, rows[1], &colors);
+
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " \u{2191}\u{2193} move · \u{2192} open · \u{2190} up · \
-                 Enter choose · Esc cancel",
+                truncate(&self.current_dir.to_string_lossy(), width),
                 Style::default().fg(colors.dim),
             ))),
-            rows[2],
+            rows[0],
         );
+        self.render_filter(frame, rows[1], &colors);
+        self.render_list(frame, rows[2], skin);
+        frame.render_widget(Paragraph::new(footer), rows[3]);
     }
 
-    /// Renders the filter line.
+    /// Renders the filter line (with the block caret).
     fn render_filter(&self, frame: &mut Frame, area: Rect, colors: &Colors) {
         let mut spans =
             vec![Span::styled("filter: ", Style::default().fg(colors.dim))];
@@ -130,31 +158,38 @@ impl PathPicker {
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 
-    /// Renders the entry list.
-    fn render_list(&self, frame: &mut Frame, area: Rect, colors: &Colors) {
-        let items: Vec<ListItem> = self
+    /// Renders the entry list via `ratada::list` (cursor highlight + scrollbar);
+    /// directories keep the accent colour.
+    fn render_list(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
+        let accent = Colors::from_palette(&skin.palette).accent;
+        let width = area.width as usize;
+        let rows: Vec<Line<'static>> = self
             .visible
             .iter()
             .map(|&index| {
                 let entry = &self.entries[index];
-                let suffix = if entry.is_dir { "/" } else { "" };
-                let style = if entry.is_dir {
-                    Style::default().fg(colors.accent)
+                let marker = if entry.is_dir { "/" } else { " " };
+                let line = Line::from(truncate(
+                    &format!("{marker} {}", entry.name),
+                    width,
+                ));
+                if entry.is_dir {
+                    line.style(Style::default().fg(accent))
                 } else {
-                    Style::default()
-                };
-                ListItem::new(Span::styled(
-                    format!("{}{suffix}", entry.name),
-                    style,
-                ))
+                    line
+                }
             })
             .collect();
-        let list = List::new(items).highlight_style(colors.selection_style());
-        let mut state = ListState::default();
-        if !self.visible.is_empty() {
-            state.select(Some(self.cursor));
-        }
-        frame.render_stateful_widget(list, area, &mut state);
+        ratada::list::render(
+            frame,
+            area,
+            skin,
+            ratada::list::ListView {
+                rows,
+                selected: self.cursor,
+                offset: &self.offset,
+            },
+        );
     }
 
     /// Moves the cursor cyclically within the visible entries.
@@ -199,10 +234,28 @@ impl PathPicker {
             .map(|&index| &self.entries[index])
     }
 
-    /// Reloads the children of the current directory and resets the filter.
+    /// Reloads the children of the current directory and resets the cursor.
     fn reload(&mut self) {
-        self.entries = read_children(&self.current_dir, self.allow_files);
+        self.entries = read_children(
+            &self.current_dir,
+            self.allow_files,
+            self.show_hidden,
+        );
         self.cursor = 0;
+        self.offset.set(0);
+        self.apply_filter();
+    }
+
+    /// Toggles hidden (dot-prefixed) entries, keeping the current directory and
+    /// filter; re-reads the directory and re-applies the filter.
+    fn toggle_hidden(&mut self) {
+        self.show_hidden = !self.show_hidden;
+        self.entries = read_children(
+            &self.current_dir,
+            self.allow_files,
+            self.show_hidden,
+        );
+        self.offset.set(0);
         self.apply_filter();
     }
 
@@ -237,8 +290,13 @@ fn start_dir(start: &Path) -> PathBuf {
 }
 
 /// Reads the children of `dir`: directories first (sorted), then files (sorted)
-/// when `allow_files`. Unreadable directories yield an empty list.
-fn read_children(dir: &Path, allow_files: bool) -> Vec<Entry> {
+/// when `allow_files`. Dot-prefixed entries are skipped unless `show_hidden`.
+/// Unreadable directories yield an empty list.
+fn read_children(
+    dir: &Path,
+    allow_files: bool,
+    show_hidden: bool,
+) -> Vec<Entry> {
     let Ok(read_dir) = fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -247,6 +305,9 @@ fn read_children(dir: &Path, allow_files: bool) -> Vec<Entry> {
     for entry in read_dir.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
+        if !show_hidden && is_hidden(&name) {
+            continue;
+        }
         if path.is_dir() {
             dirs.push(Entry {
                 path,
@@ -264,4 +325,22 @@ fn read_children(dir: &Path, allow_files: bool) -> Vec<Entry> {
     dirs.sort_by_key(|entry| entry.name.to_lowercase());
     files.sort_by_key(|entry| entry.name.to_lowercase());
     dirs.into_iter().chain(files).collect()
+}
+
+/// Whether an entry name is hidden (dot-prefixed, the Unix convention).
+fn is_hidden(name: &str) -> bool {
+    name.starts_with('.')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_hidden;
+
+    #[test]
+    fn dot_prefixed_names_are_hidden() {
+        assert!(is_hidden(".git"));
+        assert!(is_hidden(".config"));
+        assert!(!is_hidden("src"));
+        assert!(!is_hidden("Cargo.toml"));
+    }
 }
