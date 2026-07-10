@@ -20,6 +20,7 @@ use crate::domain::error::{Error, Result};
 use crate::domain::stats::{
     CodeEntry, CodeStats, DiskStats, GitStats, LangCount,
 };
+use crate::util::fs::write_atomic;
 
 /// Code and size statistics keyed by entry path.
 pub type CodeCache = HashMap<PathBuf, CodeEntry>;
@@ -119,11 +120,7 @@ pub fn save(path: &Path, cache: &StatsCache) -> Result<()> {
     git.sort_by(|a, b| a.path.cmp(&b.path));
     let text = toml::to_string_pretty(&CacheDoc { code, git })
         .map_err(|e| Error::invalid(format!("serialise stats cache: {e}")))?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| Error::io("create state directory", e))?;
-    }
-    fs::write(path, text).map_err(|e| Error::io("write stats cache", e))
+    write_atomic(path, &text, "stats cache")
 }
 
 /// Rebuilds a cached [`CodeEntry`] from its on-disk row.

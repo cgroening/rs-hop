@@ -10,6 +10,10 @@ use ratatui::style::{Color, Modifier, Style};
 
 use crate::theme::Palette;
 
+/// `OKLab` lightness lift of the favourite star over the palette's `warning`,
+/// which the change count also uses. Keeps a monochrome theme monochrome.
+const FAVOURITE_LIGHTEN: f32 = 0.08;
+
 /// The resolved color roles used across the TUI, built from a [`Palette`].
 #[derive(Debug, Clone, Copy)]
 pub struct Colors {
@@ -19,7 +23,7 @@ pub struct Colors {
     pub tab_active: Color,
     /// Secondary text (footer hints, separators).
     pub dim: Color,
-    /// Slightly brighter grey for the header info line.
+    /// Slightly brighter grey for the status band's info line.
     pub muted: Color,
     /// Primary text colour.
     pub foreground: Color,
@@ -34,7 +38,8 @@ pub struct Colors {
     pub positive: Color,
     /// Git status with uncommitted changes.
     pub changes: Color,
-    /// Favourite star.
+    /// Favourite star. A brighter `warning`, so it reads as gold on the rose
+    /// theme without being the exact tone of the change count beside it.
     pub favourite: Color,
     /// Text-input block caret.
     pub cursor: Color,
@@ -63,7 +68,7 @@ impl Colors {
             danger: rat(palette.error),
             positive: rat(palette.success),
             changes: rat(palette.warning),
-            favourite: Color::Rgb(0xe5, 0xc0, 0x7b),
+            favourite: rat(palette.warning.lighten(FAVOURITE_LIGHTEN)),
             cursor: rat(palette.cursor),
             header_bg: rat(palette.header),
             footer_bg: rat(palette.footer),
@@ -120,5 +125,36 @@ mod tests {
             panic!("rgb");
         };
         assert!((rotated - (hue + 180.0).rem_euclid(360.0)).abs() < 1.0);
+    }
+
+    #[test]
+    fn a_monochrome_theme_leaves_no_colour_role_coloured() {
+        // Every role must resolve from the palette. A hardcoded colour would
+        // survive the theme switch - the favourite star used to be a fixed gold.
+        let mut config = Config::default();
+        config.appearance.theme = "monochrome".to_string();
+        let colors = Colors::from_palette(&config.palette());
+        for (role, color) in [
+            ("accent", colors.accent),
+            ("favourite", colors.favourite),
+            ("changes", colors.changes),
+            ("positive", colors.positive),
+            ("danger", colors.danger),
+            ("cursor", colors.cursor),
+        ] {
+            let Color::Rgb(red, green, blue) = color else {
+                panic!("{role} is not an rgb colour");
+            };
+            assert!(
+                red == green && green == blue,
+                "{role} is not grey under monochrome: {red},{green},{blue}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_favourite_star_stays_brighter_than_the_change_count() {
+        let colors = Colors::from_palette(&Config::default().palette());
+        assert_ne!(colors.favourite, colors.changes);
     }
 }

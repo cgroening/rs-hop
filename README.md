@@ -163,8 +163,18 @@ confirm_quit = false           # ask before quitting with `q` (Ctrl+Q never asks
 # zip_backup_folder = "~/Backups/repos"    # where z / Z write ZIP backups
 # zip_exclude_dirs = ["target", "node_modules"]  # omit for the built-in list
 
-[icons]
-variant = "unicode"            # unicode | ascii
+[appearance]
+theme = "default"              # default | monochrome | <your [themes.*] name>
+glyphs = "unicode"             # unicode | ascii
+# colors = { accent = "#f7a3bd" }   # override individual palette colours
+
+# [themes.midnight]            # a custom theme, selected via [appearance].theme
+# accent = "#8899ff"
+# background = "#0b0b14"
+
+# [keys]                       # rebind an action; a value may be a list
+# add = "n"
+# delete = ["d", "backspace"]
 
 [column_widths]
 name = 30
@@ -206,6 +216,22 @@ hop config-path     print the resolved config file path
 --fetch             git fetch first (TUI: on start; hop <slug>: before the jump)
 --cached            TUI: show only cached status, run no git
 --demo              open the TUI with built-in demo data (for screenshots; no real git/config)
+```
+
+`hop scan` needs a terminal to show its picker; when its output is piped, use
+`--dry-run` to only list what it found.
+
+### Environment overrides
+
+Each takes precedence over `config.toml`:
+
+```
+HOP_CONFIG          the config file to use (same as -C / --config)
+HOP_GIT_PROGRAM     the tool launched for git repos
+HOP_EDITOR          the editor for text files
+HOP_THEME           the active theme name
+HOP_GLYPHS          unicode | ascii
+HOP_CONFIRM_QUIT    true | false: ask before quitting with `q`
 ```
 
 ## Keyboard shortcuts

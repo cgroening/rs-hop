@@ -7,15 +7,16 @@
 
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
+use ratada::input::InputField;
+use ratada::text::truncate;
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
-use unicode_width::UnicodeWidthStr;
 
 use crate::domain::repo::GitInfo;
-use crate::theme::GlyphVariant;
+use crate::theme::{GlyphVariant, Palette};
 use crate::tui::skin::Colors;
 
 /// The resolved glyph set for the active icon variant. Every glyph is a
@@ -45,18 +46,7 @@ pub struct IconSet {
     pub remote: &'static str,
     /// Marker shown when an entry is excluded from the "backup all" (`Z`) run.
     pub excluded: &'static str,
-    /// Animation frames for the "refreshing" spinner (single-cell each).
-    pub spinner: &'static [&'static str],
 }
-
-/// Braille spinner frames (single-cell, widely supported).
-const UNICODE_SPINNER: &[&str] = &[
-    "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}",
-    "\u{2826}", "\u{2827}", "\u{2807}", "\u{280f}",
-];
-
-/// ASCII spinner frames.
-const ASCII_SPINNER: &[&str] = &["|", "/", "-", "\\"];
 
 impl IconSet {
     /// Builds the glyph set for `variant`.
@@ -74,7 +64,6 @@ impl IconSet {
                 clock: "\u{21bb}",     // ↻
                 remote: "\u{21a7}",    // ↧
                 excluded: "\u{2298}",  // ⊘
-                spinner: UNICODE_SPINNER,
             },
             GlyphVariant::Ascii => IconSet {
                 missing: "!",
@@ -88,7 +77,6 @@ impl IconSet {
                 clock: "@",
                 remote: "v",
                 excluded: "x",
-                spinner: ASCII_SPINNER,
             },
         }
     }
@@ -124,28 +112,6 @@ pub fn status_text(info: &GitInfo, icons: &IconSet) -> String {
         return icons.clean.to_string();
     }
     parts.join(" ")
-}
-
-/// Truncates `text` to `width` display columns, adding `…` when cut.
-pub fn truncate(text: &str, width: usize) -> String {
-    if text.width() <= width {
-        return text.to_string();
-    }
-    if width == 0 {
-        return String::new();
-    }
-    let mut result = String::new();
-    let mut used = 0;
-    for ch in text.chars() {
-        let w = UnicodeWidthStr::width(ch.to_string().as_str());
-        if used + w > width.saturating_sub(1) {
-            break;
-        }
-        result.push(ch);
-        used += w;
-    }
-    result.push('…');
-    result
 }
 
 /// The style for an inline slug shown after an entry name: dim and italic.
@@ -270,12 +236,71 @@ pub fn render_empty_hint(
     );
 }
 
+/// One text field of a hop overlay, as it is about to be drawn.
+pub struct FieldView<'a> {
+    /// The field holding the text and its caret.
+    pub field: &'a InputField,
+    /// The active palette, which colours the caret and the scroll marker.
+    pub palette: &'a Palette,
+    /// The display columns the value may occupy, after any label.
+    pub width: usize,
+    /// Whether the field has the focus (only then is the caret drawn).
+    pub focused: bool,
+}
+
+/// The spans of a single-line text field: the toolkit's block caret over a
+/// horizontally scrolled value while focused, otherwise the plain value.
+///
+/// hop's overlays lay out their own lines, so they paint the field rather than
+/// render `InputField` as a widget - but the caret, the scrolling and the `…`
+/// marker still come from the toolkit rather than being drawn by hand.
+pub fn field_spans(view: FieldView) -> Vec<Span<'static>> {
+    if view.focused {
+        return view.field.caret_spans(view.palette, view.width);
+    }
+    vec![Span::raw(truncate(view.field.value(), view.width))]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
 
     fn unicode() -> IconSet {
         IconSet::new(GlyphVariant::Unicode)
+    }
+
+    /// The whole rendered text of a field, spans concatenated.
+    fn rendered(field: &InputField, width: usize, focused: bool) -> String {
+        let palette = Config::default().palette();
+        field_spans(FieldView {
+            field,
+            palette: &palette,
+            width,
+            focused,
+        })
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect()
+    }
+
+    #[test]
+    fn a_focused_field_scrolls_under_the_caret_and_marks_the_clipped_head() {
+        // The caret sits at the end, so the head scrolls out of view and is
+        // marked. The hand-rolled caret this replaced simply overflowed.
+        let field = InputField::new("/a/very/long/path/to/somewhere");
+        let text = rendered(&field, 10, true);
+        assert!(
+            text.starts_with('\u{2026}'),
+            "clipped head marked: {text:?}"
+        );
+        assert!(text.contains("where"), "the caret's end stays visible");
+    }
+
+    #[test]
+    fn an_unfocused_field_is_truncated_and_carries_no_caret() {
+        let field = InputField::new("/a/very/long/path");
+        assert_eq!(rendered(&field, 10, false), "/a/very/l\u{2026}");
     }
 
     #[test]
@@ -323,12 +348,6 @@ mod tests {
             ..GitInfo::default()
         };
         assert_eq!(status_text(&info, &unicode()), "-");
-    }
-
-    #[test]
-    fn truncate_adds_ellipsis_when_too_long() {
-        assert_eq!(truncate("hello", 3), "he…");
-        assert_eq!(truncate("hi", 5), "hi");
     }
 
     #[test]

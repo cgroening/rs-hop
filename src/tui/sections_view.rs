@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use chrono::{DateTime, Local};
+use ratada::text::truncate;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -25,7 +26,7 @@ use crate::theme::Skin;
 use crate::tui::columns::{
     CellSource, ColumnSet, StatColumn, cell_text, stat_columns,
 };
-use crate::tui::presentation::{IconSet, name_plain, slug_style, truncate};
+use crate::tui::presentation::{IconSet, name_plain, slug_style};
 use crate::tui::skin::Colors;
 
 /// The lower and upper bound for the auto-sized name column.

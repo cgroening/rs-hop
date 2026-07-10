@@ -16,8 +16,8 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use sparcli::{
-    Alert, Cell, Color as UiColor, Column, Renderable, Style as SpStyle, Table,
-    Theme, set_theme,
+    Alert, Cell, Color as UiColor, Column, Renderable, Select, SparcliError,
+    Style as SpStyle, Table, Theme, set_theme,
 };
 
 use crate::config::Config;
@@ -160,7 +160,6 @@ fn run_with_service(cli: Cli, config_path: PathBuf) -> ExitCode {
             dry_run,
         }) => cmd_scan(
             service,
-            &config,
             ScanRequest {
                 dir: dir.clone(),
                 depth: *depth,
@@ -468,11 +467,7 @@ struct ScanRequest {
     dry_run: bool,
 }
 
-fn cmd_scan(
-    mut service: RepoService,
-    config: &Config,
-    request: ScanRequest,
-) -> ExitCode {
+fn cmd_scan(mut service: RepoService, request: ScanRequest) -> ExitCode {
     let raw = request.dir.unwrap_or_else(|| PathBuf::from("."));
     let expanded = paths::expand_tilde(&raw.to_string_lossy());
     let root = std::path::absolute(&expanded).unwrap_or(expanded);
@@ -504,12 +499,21 @@ fn cmd_scan(
         return ExitCode::SUCCESS;
     }
 
-    let colors = crate::tui::skin::Colors::from_palette(&config.palette());
-    let chosen = match tui::scan_picker::run(&new, &duplicates, &colors) {
+    if !duplicates.is_empty() {
+        let _ = Alert::info(format!("{} already in hop.", duplicates.len()))
+            .print();
+    }
+    let chosen = match pick_repos_to_import(&new, &root) {
         Ok(Some(chosen)) => chosen,
         Ok(None) => {
             let _ = Alert::info("Cancelled.").print();
             return ExitCode::SUCCESS;
+        }
+        Err(SparcliError::NoTerminal) => {
+            return output::fail(
+                "`hop scan` needs a terminal to choose the repos; \
+                 pass --dry-run to only list them",
+            );
         }
         Err(error) => return output::fail(&format!("terminal: {error}")),
     };
@@ -531,6 +535,47 @@ fn cmd_scan(
     }
     let _ = Alert::success(format!("Added {count} git repo(s).")).print();
     ExitCode::SUCCESS
+}
+
+/// Asks which of the discovered `found` repos to import, all pre-checked.
+/// Returns `None` when the user cancels.
+///
+/// # Errors
+/// Returns [`SparcliError::NoTerminal`] off a terminal, or an I/O error when the
+/// prompt cannot run.
+fn pick_repos_to_import(
+    found: &[PathBuf],
+    root: &Path,
+) -> Result<Option<Vec<PathBuf>>, SparcliError> {
+    let prompt =
+        format!("{} new git repo(s) under {}", found.len(), root.display());
+    let options = found.iter().map(|path| scan_option_label(path));
+    let outcome = Select::new(prompt)
+        .options(options)
+        .checked(0..found.len())
+        .multi()
+        .run_multi()?;
+    let Some(indices) = outcome.submitted() else {
+        return Ok(None);
+    };
+    Ok(Some(
+        indices
+            .into_iter()
+            .map(|index| found[index].clone())
+            .collect(),
+    ))
+}
+
+/// One picker row: the repo's directory name, then its full path.
+fn scan_option_label(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if name.is_empty() {
+        return path.display().to_string();
+    }
+    format!("{name}  {}", path.display())
 }
 
 /// Handles `hop doctor`: reports entry problems and exits non-zero when any are

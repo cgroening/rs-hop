@@ -26,6 +26,9 @@ const THEME_ENV: &str = "HOP_THEME";
 /// Environment override for the glyph variant (`unicode`/`ascii`).
 const GLYPHS_ENV: &str = "HOP_GLYPHS";
 
+/// Environment override for the quit confirmation.
+const CONFIRM_QUIT_ENV: &str = "HOP_CONFIRM_QUIT";
+
 /// Raw settings as read from TOML; the `repos` array is intentionally ignored.
 #[derive(Debug, Default, Deserialize)]
 struct RawConfig {
@@ -288,7 +291,8 @@ fn resolve_column_widths(
     }
 }
 
-/// Applies environment overrides (git tool, editor, theme, glyphs).
+/// Applies environment overrides (git tool, editor, theme, glyphs, quit
+/// confirmation).
 fn apply_env(config: &mut Config) {
     if let Ok(value) = env::var(GIT_PROGRAM_ENV)
         && !value.trim().is_empty()
@@ -309,6 +313,21 @@ fn apply_env(config: &mut Config) {
         && !value.trim().is_empty()
     {
         config.appearance.glyphs = parse_glyph_variant(&value);
+    }
+    if let Ok(value) = env::var(CONFIRM_QUIT_ENV)
+        && let Some(flag) = parse_bool(&value)
+    {
+        config.confirm_quit = flag;
+    }
+}
+
+/// Parses a boolean environment value. Anything else leaves the setting alone,
+/// so a typo cannot silently turn the quit confirmation off.
+fn parse_bool(value: &str) -> Option<bool> {
+    match value.trim().to_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
     }
 }
 
@@ -491,5 +510,22 @@ delete = ["d", "backspace"]
         let legacy = "[icons]\nvariant = \"ascii\"\n";
         let config = build(toml::from_str(legacy).unwrap());
         assert_eq!(config.appearance.glyphs, GlyphVariant::Ascii);
+    }
+
+    #[test]
+    fn a_bool_env_value_reads_the_usual_spellings() {
+        for on in ["1", "true", "TRUE", " yes ", "on"] {
+            assert_eq!(parse_bool(on), Some(true), "{on:?}");
+        }
+        for off in ["0", "false", "no", "OFF"] {
+            assert_eq!(parse_bool(off), Some(false), "{off:?}");
+        }
+    }
+
+    #[test]
+    fn a_misspelt_bool_env_value_leaves_the_setting_alone() {
+        // Returning `false` here would silently disable the quit confirmation.
+        assert_eq!(parse_bool("ja"), None);
+        assert_eq!(parse_bool(""), None);
     }
 }

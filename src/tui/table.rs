@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use chrono::{DateTime, Local};
+use ratada::text::truncate;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
@@ -24,7 +25,7 @@ use crate::tui::columns::{
     CellSource, ColumnSet, StatColumn, cell_text, stat_columns,
 };
 use crate::tui::presentation::{
-    IconSet, highlight_name, name_plain, slug_style, status_text, truncate,
+    IconSet, highlight_name, name_plain, slug_style, status_text,
 };
 use crate::tui::skin::Colors;
 

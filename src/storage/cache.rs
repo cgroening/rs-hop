@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::error::{Error, Result};
 use crate::domain::repo::GitInfo;
+use crate::util::fs::write_atomic;
 
 /// The on-disk cache document.
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -93,11 +94,7 @@ pub fn save(
     };
     let text = toml::to_string_pretty(&doc)
         .map_err(|e| Error::invalid(format!("serialise cache: {e}")))?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| Error::io("create state directory", e))?;
-    }
-    fs::write(path, text).map_err(|e| Error::io("write git-info cache", e))
+    write_atomic(path, &text, "git-info cache")
 }
 
 /// Parses an RFC 3339 timestamp into local time.

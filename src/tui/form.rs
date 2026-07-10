@@ -10,6 +10,7 @@
 //! when the name field is focused).
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratada::input::InputField;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -20,9 +21,23 @@ use crate::domain::repo::{Repo, RepoKind};
 use crate::domain::sections::UNGROUPED;
 use crate::domain::slug::slugify;
 use crate::theme::Skin;
+use crate::tui::presentation::{FieldView, field_spans};
 use crate::tui::skin::Colors;
-use crate::tui::text_input::TextInput;
 use crate::tui::widgets::centered_rect;
+
+/// Display columns reserved for a field's label, before its value.
+const LABEL_WIDTH: usize = 8;
+
+/// What a field line needs to draw itself, bundled to keep the parameter count
+/// low.
+struct LineCtx<'a> {
+    /// The colour roles resolved from the active theme.
+    colors: &'a Colors,
+    /// The active theme, whose palette colours the caret of a text field.
+    skin: &'a Skin,
+    /// The display columns a field's value may occupy, after its label.
+    value_width: usize,
+}
 
 /// One editable field of the form.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -69,9 +84,9 @@ pub enum FormResult {
 /// Add/edit form state.
 pub struct RepoForm {
     title: String,
-    name: TextInput,
-    path: TextInput,
-    slug: TextInput,
+    name: InputField,
+    path: InputField,
+    slug: InputField,
     kind: RepoKind,
     fav: bool,
     include_in_backup: bool,
@@ -136,9 +151,9 @@ impl RepoForm {
             section_choice(&section_options, section.as_deref());
         RepoForm {
             title: title.to_string(),
-            name: TextInput::new(name),
-            path: TextInput::new(path),
-            slug: TextInput::new(slug),
+            name: InputField::new(name),
+            path: InputField::new(path),
+            slug: InputField::new(slug),
             kind,
             fav,
             include_in_backup,
@@ -273,13 +288,13 @@ impl RepoForm {
 
     /// The path field's current value (used to seed the path picker).
     pub fn path_value(&self) -> String {
-        self.path.value()
+        self.path.value().to_string()
     }
 
     /// Replaces the path field (after picking a path) and auto-fills the name
     /// from its basename when the name is still blank.
     pub fn set_path(&mut self, path: &str) {
-        self.path = TextInput::new(path);
+        self.path = InputField::new(path);
         self.autofill_name();
         self.focus = 0;
     }
@@ -289,15 +304,15 @@ impl RepoForm {
         if !self.name.value().trim().is_empty() {
             return;
         }
-        if let Some(base) = basename(&self.path.value()) {
-            self.name = TextInput::new(&base);
+        if let Some(base) = basename(self.path.value()) {
+            self.name = InputField::new(&base);
         }
     }
 
     /// Builds the draft from the current field values.
     fn draft(&self) -> RepoDraft {
-        let name = non_empty(self.name.value());
-        let slug = non_empty(slugify(&self.slug.value()));
+        let name = non_empty(self.name.value().to_string());
+        let slug = non_empty(slugify(self.slug.value()));
         let section = if self.fields().contains(&Field::Section) {
             self.section_options
                 .get(self.section_choice)
@@ -308,7 +323,7 @@ impl RepoForm {
         };
         RepoDraft {
             name,
-            path: self.path.value(),
+            path: self.path.value().to_string(),
             slug,
             section,
             kind: self.kind,
@@ -325,10 +340,16 @@ impl RepoForm {
         let rect = centered_rect(70, height, area);
         frame.render_widget(Clear, rect);
         let block = ratada::chrome::modal_block(skin, &self.title);
+        let inner_width = block.inner(rect).width as usize;
+        let ctx = LineCtx {
+            colors: &colors,
+            skin,
+            value_width: inner_width.saturating_sub(LABEL_WIDTH),
+        };
         let mut lines: Vec<Line> = fields
             .iter()
             .enumerate()
-            .map(|(index, field)| self.field_line(*field, index, &colors))
+            .map(|(index, field)| self.field_line(*field, index, &ctx))
             .collect();
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
@@ -344,12 +365,13 @@ impl RepoForm {
         &self,
         field: Field,
         index: usize,
-        colors: &Colors,
+        ctx: &LineCtx,
     ) -> Line<'static> {
+        let colors = ctx.colors;
         match field {
-            Field::Path => self.text_line("Path", &self.path, index, colors),
-            Field::Name => self.text_line("Name", &self.name, index, colors),
-            Field::Slug => self.text_line("Slug", &self.slug, index, colors),
+            Field::Path => self.text_line("Path", &self.path, index, ctx),
+            Field::Name => self.text_line("Name", &self.name, index, ctx),
+            Field::Slug => self.text_line("Slug", &self.slug, index, ctx),
             Field::Section => {
                 let label = self.section_label();
                 self.choice_line("Section", label, index, colors)
@@ -362,22 +384,24 @@ impl RepoForm {
         }
     }
 
-    /// A labelled text field line, highlighting it when focused.
+    /// A labelled text field line, highlighting it when focused. The value is
+    /// drawn by the toolkit, so a long path scrolls under the caret instead of
+    /// spilling out of the box.
     fn text_line(
         &self,
         label: &str,
-        input: &TextInput,
+        input: &InputField,
         index: usize,
-        colors: &Colors,
+        ctx: &LineCtx,
     ) -> Line<'static> {
-        let mut spans = vec![self.label_span(label, index, colors)];
-        let focused = index == self.focus;
-        spans.extend(
-            input
-                .render_line(Style::default(), colors.cursor, focused)
-                .spans,
-        );
-        self.styled(spans, index, colors)
+        let mut spans = vec![self.label_span(label, index, ctx.colors)];
+        spans.extend(field_spans(FieldView {
+            field: input,
+            palette: &ctx.skin.palette,
+            width: ctx.value_width,
+            focused: index == self.focus,
+        }));
+        self.styled(spans, index, ctx.colors)
     }
 
     /// A `< value >` selector line (section, kind).
@@ -440,7 +464,7 @@ impl RepoForm {
         } else {
             Style::default().fg(colors.dim)
         };
-        Span::styled(format!("{label:<8}"), style)
+        Span::styled(format!("{label:<LABEL_WIDTH$}"), style)
     }
 
     /// Applies the focus background tint to a field line.

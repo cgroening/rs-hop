@@ -13,6 +13,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::error::{Error, Result};
+use crate::util::fs::write_atomic;
 
 /// Usage counters for one entry.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -88,11 +89,7 @@ fn save(path: &Path, usage: &HashMap<PathBuf, Usage>) -> Result<()> {
     let doc = UsageDoc { entries };
     let text = toml::to_string_pretty(&doc)
         .map_err(|e| Error::invalid(format!("serialise usage: {e}")))?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| Error::io("create state directory", e))?;
-    }
-    fs::write(path, text).map_err(|e| Error::io("write usage state", e))
+    write_atomic(path, &text, "usage state")
 }
 
 /// Writes `repo_path` as the single-line selected-repo handoff at `dest`.
@@ -100,12 +97,8 @@ fn save(path: &Path, usage: &HashMap<PathBuf, Usage>) -> Result<()> {
 /// # Errors
 /// Returns an error if the file cannot be written.
 pub fn write_selected_repo(dest: &Path, repo_path: &Path) -> Result<()> {
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| Error::io("create state directory", e))?;
-    }
     let line = format!("{}\n", repo_path.to_string_lossy());
-    fs::write(dest, line).map_err(|e| Error::io("write selected-repo file", e))
+    write_atomic(dest, &line, "selected-repo file")
 }
 
 #[cfg(test)]

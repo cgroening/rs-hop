@@ -11,17 +11,39 @@
 //!
 //! Each worker stops as soon as its receiver is dropped, so switching column
 //! sets mid-run simply abandons the old pass.
+//!
+//! The service also owns the on-disk statistics cache, which is a display
+//! accelerator: it seeds the columns at once and a finished worker overwrites
+//! it. There is no invalidation.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
 use tokei::{Config as TokeiConfig, Languages};
 
+use crate::domain::error::Result;
 use crate::domain::stats::{CodeEntry, CodeStats, GitStats, LangCount};
 use crate::storage::git_client::GitClient;
+use crate::storage::stats_cache;
 use crate::util::diskusage;
+
+pub use crate::storage::stats_cache::StatsCache;
+
+/// Loads the cached statistics from `path`, so the columns show numbers before
+/// a worker reports. A missing or corrupt cache yields an empty one.
+pub fn load_cache(path: &Path) -> StatsCache {
+    stats_cache::load(path)
+}
+
+/// Writes the gathered statistics to the cache at `path`.
+///
+/// # Errors
+/// Returns an error if the cache file cannot be written.
+pub fn save_cache(path: &Path, cache: &StatsCache) -> Result<()> {
+    stats_cache::save(path, cache)
+}
 
 /// A message from the code-statistics worker.
 pub enum CodeUpdate {

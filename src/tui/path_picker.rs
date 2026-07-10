@@ -13,6 +13,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratada::input::InputField;
+use ratada::nav::cycle;
+use ratada::text::truncate;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
@@ -20,11 +23,12 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
 use crate::theme::Skin;
-use crate::tui::navigation::cycle;
-use crate::tui::presentation::truncate;
+use crate::tui::presentation::{FieldView, field_spans};
 use crate::tui::skin::Colors;
-use crate::tui::text_input::TextInput;
 use crate::tui::widgets::centered_rect;
+
+/// The label in front of the picker's filter line.
+const FILTER_LABEL: &str = "filter: ";
 
 /// Outcome of feeding a key to the picker.
 pub enum PickerResult {
@@ -51,7 +55,7 @@ pub struct PathPicker {
     show_hidden: bool,
     entries: Vec<Entry>,
     visible: Vec<usize>,
-    filter: TextInput,
+    filter: InputField,
     cursor: usize,
     /// The list scroll offset, carried across frames by `ratada::list`.
     offset: Cell<usize>,
@@ -68,7 +72,7 @@ impl PathPicker {
             show_hidden: false,
             entries: Vec::new(),
             visible: Vec::new(),
-            filter: TextInput::new(""),
+            filter: InputField::new(""),
             cursor: 0,
             offset: Cell::new(0),
         };
@@ -84,7 +88,9 @@ impl PathPicker {
             KeyCode::Down => self.move_cursor(1),
             KeyCode::Right => self.descend(),
             KeyCode::Left => self.ascend(),
-            KeyCode::Backspace if self.filter.is_empty() => self.ascend(),
+            KeyCode::Backspace if self.filter.value().is_empty() => {
+                self.ascend();
+            }
             KeyCode::Char('h')
                 if key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
@@ -145,20 +151,23 @@ impl PathPicker {
             ))),
             rows[0],
         );
-        self.render_filter(frame, rows[1], &colors);
+        self.render_filter(frame, rows[1], skin);
         self.render_list(frame, rows[2], skin);
         frame.render_widget(Paragraph::new(footer), rows[3]);
     }
 
-    /// Renders the filter line (with the block caret).
-    fn render_filter(&self, frame: &mut Frame, area: Rect, colors: &Colors) {
+    /// Renders the filter line (the toolkit's block caret, scrolling with `…`).
+    fn render_filter(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
+        let colors = Colors::from_palette(&skin.palette);
         let mut spans =
-            vec![Span::styled("filter: ", Style::default().fg(colors.dim))];
-        spans.extend(
-            self.filter
-                .render_line(Style::default(), colors.cursor, true)
-                .spans,
-        );
+            vec![Span::styled(FILTER_LABEL, Style::default().fg(colors.dim))];
+        spans.extend(field_spans(FieldView {
+            field: &self.filter,
+            palette: &skin.palette,
+            width: (area.width as usize)
+                .saturating_sub(FILTER_LABEL.chars().count()),
+            focused: true,
+        }));
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 
@@ -207,7 +216,7 @@ impl PathPicker {
             && entry.is_dir
         {
             self.current_dir = entry.path.clone();
-            self.filter = TextInput::new("");
+            self.filter = InputField::new("");
             self.reload();
         }
     }
@@ -216,7 +225,7 @@ impl PathPicker {
     fn ascend(&mut self) {
         if let Some(parent) = self.current_dir.parent() {
             self.current_dir = parent.to_path_buf();
-            self.filter = TextInput::new("");
+            self.filter = InputField::new("");
             self.reload();
         }
     }

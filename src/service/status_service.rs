@@ -1,18 +1,24 @@
 //! Gathers git status, synchronously for the CLI or in the background for the
-//! TUI.
+//! TUI, and owns the on-disk status cache that seeds the list on start.
 //!
 //! The background refresh runs on one worker thread that walks the paths and
 //! streams a [`StatusUpdate`] per entry, so the list stays responsive while
 //! `git` runs. The synchronous variant is used by `hop list` and to seed the
 //! cache.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
+use chrono::{DateTime, Local};
+
+use crate::domain::error::Result;
 use crate::domain::repo::GitInfo;
+use crate::storage::cache;
 use crate::storage::git_client::GitClient;
+
+pub use crate::storage::cache::GitInfoCache;
 
 /// A message from the background refresh: a path's work either started or
 /// finished. `Started` lets the progress bar name the entry while git runs.
@@ -29,6 +35,26 @@ pub enum StatusUpdate {
         /// The gathered git info.
         info: GitInfo,
     },
+}
+
+/// Loads the last gathered status from the cache at `path`, so the list can be
+/// drawn before the background refresh reports. A missing or corrupt cache
+/// yields an empty one.
+pub fn load_cache(path: &Path) -> GitInfoCache {
+    cache::load(path)
+}
+
+/// Writes the gathered `infos` to the cache at `path`, recording when the remote
+/// was last fetched.
+///
+/// # Errors
+/// Returns an error if the cache file cannot be written.
+pub fn save_cache(
+    path: &Path,
+    infos: &[(PathBuf, GitInfo)],
+    fetched_at: Option<DateTime<Local>>,
+) -> Result<()> {
+    cache::save(path, infos, fetched_at)
 }
 
 /// Gathers status for every path in order, optionally fetching first. Used by

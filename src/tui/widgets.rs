@@ -5,6 +5,8 @@
 //! `handle_key` and `render`, so call sites never rebuild the dialog.
 
 use crossterm::event::{KeyCode, KeyEvent};
+use ratada::input::InputField;
+use ratada::nav::cycle;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -12,9 +14,13 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
 use crate::theme::Skin;
-use crate::tui::navigation::cycle;
+use crate::tui::presentation::{FieldView, field_spans};
 use crate::tui::skin::Colors;
-use crate::tui::text_input::TextInput;
+
+/// The width of hop's small confirm/prompt dialogs, in percent of the screen.
+const DIALOG_WIDTH_PCT: u16 = 60;
+/// The height of hop's small confirm/prompt dialogs, in rows.
+const DIALOG_HEIGHT: u16 = 7;
 
 /// Outcome of feeding a key to a confirm dialog.
 pub enum ConfirmResult {
@@ -66,7 +72,17 @@ impl ConfirmModal {
                 Span::styled(" cancel", Style::default().fg(colors.dim)),
             ]),
         ];
-        render_modal(frame, area, skin, &self.title, body, 60, 7);
+        render_modal(frame, area, dialog_box(skin, &self.title), |_| body);
+    }
+}
+
+/// The shared geometry of hop's small confirm/prompt dialogs.
+fn dialog_box<'a>(skin: &'a Skin, title: &'a str) -> ModalBox<'a> {
+    ModalBox {
+        skin,
+        title,
+        width_percent: DIALOG_WIDTH_PCT,
+        height: DIALOG_HEIGHT,
     }
 }
 
@@ -84,7 +100,7 @@ pub enum PromptResult {
 pub struct TextPrompt {
     title: String,
     label: String,
-    input: TextInput,
+    input: InputField,
 }
 
 impl TextPrompt {
@@ -97,14 +113,14 @@ impl TextPrompt {
         TextPrompt {
             title: title.into(),
             label: label.into(),
-            input: TextInput::new(initial),
+            input: InputField::new(initial),
         }
     }
 
     /// Handles a key: Enter submits, Esc cancels, the rest edits the value.
     pub fn handle_key(&mut self, key: KeyEvent) -> PromptResult {
         match key.code {
-            KeyCode::Enter => PromptResult::Submit(self.input.value()),
+            KeyCode::Enter => PromptResult::Submit(self.input.value().into()),
             KeyCode::Esc => PromptResult::Cancel,
             _ => {
                 self.input.handle_key(key);
@@ -116,24 +132,28 @@ impl TextPrompt {
     /// Renders the prompt centred in `area`.
     pub fn render(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
         let colors = Colors::from_palette(&skin.palette);
-        let mut field = vec![Span::styled(
-            format!("{}: ", self.label),
-            Style::default().fg(colors.dim),
-        )];
-        field.extend(
-            self.input
-                .render_line(Style::default(), colors.cursor, true)
-                .spans,
-        );
-        let body = vec![
-            Line::from(field),
-            Line::raw(""),
-            Line::from(Span::styled(
-                "Enter save · Esc cancel",
+        let label = format!("{}: ", self.label);
+        let body = |inner_width: usize| {
+            let mut field = vec![Span::styled(
+                label.clone(),
                 Style::default().fg(colors.dim),
-            )),
-        ];
-        render_modal(frame, area, skin, &self.title, body, 60, 7);
+            )];
+            field.extend(field_spans(FieldView {
+                field: &self.input,
+                palette: &skin.palette,
+                width: inner_width.saturating_sub(label.chars().count()),
+                focused: true,
+            }));
+            vec![
+                Line::from(field),
+                Line::raw(""),
+                Line::from(Span::styled(
+                    "Enter save · Esc cancel",
+                    Style::default().fg(colors.dim),
+                )),
+            ]
+        };
+        render_modal(frame, area, dialog_box(skin, &self.title), body);
     }
 }
 
@@ -247,21 +267,32 @@ pub fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect {
     centered_box(width as u16, height, area)
 }
 
-/// Renders a rounded, accent-titled modal (clibase `modal_block`) with `title`
-/// and `body` lines over a lifted fill, centred in `area`.
+/// The chrome of a centred modal: what it is titled and how big it is.
+struct ModalBox<'a> {
+    /// The active theme.
+    skin: &'a Skin,
+    /// The title drawn into the top border.
+    title: &'a str,
+    /// The box width, as a percentage of the area.
+    width_percent: u16,
+    /// The box height, in rows.
+    height: u16,
+}
+
+/// Renders a rounded, accent-titled modal (clibase `modal_block`) over a lifted
+/// fill, centred in `area`. `body` is built from the box's inner width, so a
+/// text field inside can scroll its value to fit.
 fn render_modal(
     frame: &mut Frame,
     area: Rect,
-    skin: &Skin,
-    title: &str,
-    body: Vec<Line<'static>>,
-    width_percent: u16,
-    height: u16,
+    modal: ModalBox<'_>,
+    body: impl FnOnce(usize) -> Vec<Line<'static>>,
 ) {
-    let rect = centered_rect(width_percent, height, area);
+    let rect = centered_rect(modal.width_percent, modal.height, area);
     frame.render_widget(Clear, rect);
-    let block = ratada::chrome::modal_block(skin, title);
-    frame.render_widget(Paragraph::new(body).block(block), rect);
+    let block = ratada::chrome::modal_block(modal.skin, modal.title);
+    let inner_width = block.inner(rect).width as usize;
+    frame.render_widget(Paragraph::new(body(inner_width)).block(block), rect);
 }
 
 #[cfg(test)]

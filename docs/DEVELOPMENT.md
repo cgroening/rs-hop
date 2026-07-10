@@ -33,9 +33,10 @@ src/
     zip_cache.rs          ZIP-backup fingerprint cache (skip iCloud re-download)
   service/                use cases over the ports
     repo_service.rs       CRUD, fav/archive, slug, path repair, usage, undo
-    status_service.rs     collect_all (sync) + spawn_refresh (background)
-    stats_service.rs      spawn_code_stats (tokei) + spawn_git_stats
+    status_service.rs     collect_all (sync) + spawn_refresh (bg) + its cache
+    stats_service.rs      spawn_code_stats (tokei) + spawn_git_stats + its cache
     preview_service.rs    spawn_logs: background git log for the preview panel
+    ui_state_service.rs   the TUI's persisted view state, over storage::ui_state
     zip_service.rs        spawn_zip: ZIP backups in the background (ZipUpdate)
   config/
     mod.rs                Config + palette()/skin()/theme_registry()/keymap()
@@ -52,7 +53,7 @@ src/
     bindings.rs           per-tab footer hint groups (Action lists -> keymap.hints)
     skin.rs               Colors::from_palette: hop colour roles from the palette
     terminal.rs           re-export of ratada::{Tui, TuiEvent}
-    presentation.rs       IconSet (glyphs), status_text, truncate, name/slug spans
+    presentation.rs       IconSet (glyphs), status_text, name/slug + field spans
     columns.rs            column sets, the columns bar and the totals row
     detail.rs             shared typography (section header, field, bar)
     scroll.rs             scroll offset shared by help and the detail panel
@@ -62,15 +63,13 @@ src/
     form.rs               add/edit form (RepoForm)
     widgets.rs            confirm / text prompt / single-select modals
     path_picker.rs        filesystem picker (repair / form path)
-    scan_picker.rs        standalone multi-select picker for `hop scan`
     sections_modal.rs     manage-sections overlay
     help.rs               non-blocking help overlay (?), styled like ratada::help
-    navigation.rs         cyclic cursor helper
-    text_input.rs         single-line input with a block caret
   util/
     paths.rs              XDG (Unix) / %APPDATA% (Windows) + ~ expansion
+    fs.rs                 write_atomic: temp file + rename for config and state
     logging.rs            file-only log backend (never stderr)
-    clipboard.rs          copy via pbcopy / clip / wl-copy|xclip|xsel
+    clipboard.rs          copy over ratada::clipboard, as a domain Result
     opener.rs             launch git tool / editor / default app / url
     scan.rs               recursive git-repo discovery for `hop scan`
     archive.rs            collect_files (excl. build dirs) + write_zip
@@ -81,7 +80,13 @@ tests/                    integration tests driving the public library API
 
 ## Layered architecture
 
-Dependencies point inward to `domain`: `domain` ← `storage` ← `service` ← (`cli`, `tui`); `config` and `util` are leaf utilities. `main.rs` is a thin binary; the real composition root is `cli::run_with_service`, which resolves the config path, wires a `TomlRepoRepository` into a `RepoService`, constructs the `SubprocessGitClient`, and dispatches to a CLI handler or the TUI. DIP is via the `RepoRepository` and `GitClient` traits, injected as `Box<dyn …>` / `Arc<dyn …>`; the `InMemoryRepoRepository` is the test/`--demo` backend. Storage errors are surfaced through the single domain `Error` enum (`domain/error.rs`) at the service boundary – the domain never names I/O or TOML types. A library crate (`src/lib.rs`) holds all logic so the integration tests in `tests/` drive the public API.
+Dependencies point inward to `domain`: `domain` ← `storage` ← `service` ← (`cli`, `tui`); `config` and `util` are leaf utilities. `main.rs` is a thin binary; the real composition root is `cli::run_with_service`, which resolves the config path, wires a `TomlRepoRepository` into a `RepoService`, constructs the `SubprocessGitClient`, and dispatches to a CLI handler or the TUI. DIP is via the `RepoRepository` and `GitClient` traits, injected as `Box<dyn …>` / `Arc<dyn …>`; the `InMemoryRepoRepository` is the test/`--demo` backend. A library crate (`src/lib.rs`) holds all logic so the integration tests in `tests/` drive the public API.
+
+**The TUI never names a storage adapter.** Only `cli` does, because it is the composition root. The state files the TUI reads and writes reach it through the service that owns the work producing them: the git-status cache through `status_service::{load_cache, save_cache}`, the statistics cache through `stats_service::{load_cache, save_cache}`, and the persisted view state through `ui_state_service`. Each re-exports the state type it hands out, so `use crate::storage::…` in `src/tui/` is limited to the `GitClient` **port** – a trait, injected, which is dependency inversion rather than a storage dependency.
+
+**One error type, no funnel.** Unlike the `clibase` template, hop has no `storage/errors.rs` and no `From` conversion at the service boundary: `domain::error::Error` is the single enum the domain, storage and service layers all produce (`Error::io`, `Error::config`, `Error::invalid` carry the context). The domain still never names an I/O or TOML type – it names its own variants. For an app this size a second error enum plus its conversions would be ceremony, not safety; `anyhow` remains available at the binary edge.
+
+**Config and state are written atomically.** Every write goes through `util::fs::write_atomic` (sibling temp file + rename), never `fs::write`. hop keeps its settings *and* every `[[repos]]` entry in one `config.toml`, so a crash midway through a truncating write would lose the user's entries.
 
 ## The panel app-frame (`tui/appframe.rs`)
 
@@ -89,13 +94,15 @@ The whole TUI renders through one helper, `appframe::render_frame`, so every vie
 
 ## The `ratada` toolkit (external crate)
 
-The reusable ratatui toolkit and the framework-agnostic theming layer live in the external `ratada` crate, consumed as a path dependency (`ratada = { path = "../../libs/ratada", version = "0.2" }`). hop uses it for: the terminal guard and event model (`Tui`, `TuiEvent`, re-exported by `tui/terminal.rs`), theming (`ratada::theme::{Color, Palette, Skin, Glyphs, GlyphVariant, ThemeColors, ThemeRegistry}`, re-exported as `crate::theme` in `src/lib.rs`), the panel-frame building blocks (`tabs`, `shortcut_hints`, `overlay::dim`, `style`, `chrome::{modal_block, border_title}`) and the fuzzy-highlight helper. It is the single source of truth for the look; build new screens on it rather than reimplementing navigation, scrollbars or theming. `nucleo-matcher` stays a **direct** dependency (not routed through `ratada`) because the pure `domain::filter` must not depend on a UI toolkit.
+The reusable ratatui toolkit and the framework-agnostic theming layer live in the external `ratada` crate, consumed as a path dependency (`ratada = { path = "../../libs/ratada", version = "0.2" }`). hop uses it for: the terminal guard and event model (`Tui`, `TuiEvent`, re-exported by `tui/terminal.rs`), theming (`ratada::theme::{Color, Palette, Skin, Glyphs, GlyphVariant, ThemeColors, ThemeRegistry}`, re-exported as `crate::theme` in `src/lib.rs`), the panel-frame building blocks (`tabs`, `shortcut_hints`, `overlay::dim`, `style`, `chrome::{modal_block, border_title}`), text editing and its block caret (`input::InputField`), and the small shared primitives (`nav::cycle`, `text::truncate`, `list`, `scroll`, `gauge`, `spinner`, `clipboard`, `quit`). It is the single source of truth for the look; build new screens on it rather than reimplementing navigation, scrollbars or theming. `nucleo-matcher` stays a **direct** dependency (not routed through `ratada`) because the pure `domain::filter` must not depend on a UI toolkit; `tui/presentation.rs::highlight_name` uses it directly too, so the table's match highlighting and the filter agree on what matched.
+
+**Text fields.** Every single-line field – the live filter, the slug prompt, the add/edit form's path/name/slug – is a `ratada::input::InputField`. `tui/presentation.rs::field_spans` paints one into a hop-laid-out line: the toolkit's block caret over a horizontally scrolled value while focused (marking a clipped head with `…`), the plain truncated value otherwise. hop lays out its own lines, so it paints the field rather than rendering `InputField` as a widget – but the caret, the scrolling and the editing keys are the toolkit's, not a copy.
 
 Note: hop deliberately does **not** use `ratada`'s blocking dialog widgets (`modal::*`, `form::Form`, `path_picker`). Its overlays stay non-blocking and are only restyled with `ratada::chrome` – see [Architecture decisions](#architecture-decisions).
 
 ## The `sparcli` toolkit (external crate)
 
-The CLI presentation layer uses the external `sparcli` crate (path dependency, feature `fuzzy`) the way `ratada` serves the TUI: styled output (`Table`, `Alert`) themed from the same config palette. `cli::apply_sparcli_theme` builds a `sparcli::Theme` from `config.palette()` (accent, semantic colours, unicode/ascii) and installs it globally with `sparcli::set_theme`, so CLI and TUI share one look from one source. sparcli detects `NO_COLOR` and non-terminal output itself. To keep `hop list` script-safe, its output is **TTY-gated**: on a terminal it renders a styled `sparcli::Table`, but when piped it falls back to the original plain, tab-separated lines (unchanged for scripts). Status and error messages go through `sparcli::Alert` (`cli/output.rs` prints error alerts to stderr). The interactive `hop scan` picker is still hop's own `scan_picker` (its own `ratada::Tui` loop); off a terminal it fails early instead of hanging.
+The CLI presentation layer uses the external `sparcli` crate (path dependency, feature `fuzzy`) the way `ratada` serves the TUI: styled output (`Table`, `Alert`) themed from the same config palette. `cli::apply_sparcli_theme` builds a `sparcli::Theme` from `config.palette()` (accent, semantic colours, unicode/ascii) and installs it globally with `sparcli::set_theme`, so CLI and TUI share one look from one source. sparcli detects `NO_COLOR` and non-terminal output itself. To keep `hop list` script-safe, its output is **TTY-gated**: on a terminal it renders a styled `sparcli::Table`, but when piped it falls back to the original plain, tab-separated lines (unchanged for scripts). Status and error messages go through `sparcli::Alert` (`cli/output.rs` prints error alerts to stderr). The interactive `hop scan` picker is `sparcli::Select` in multi mode, pre-checking every discovered repo; off a terminal `run_multi` returns `SparcliError::NoTerminal` before any prompt, and hop turns that into an actionable message pointing at `--dry-run` rather than hanging or leaking a raw OS error. Repos already known to hop are reported as a count beforehand instead of filling the picker with unselectable rows.
 
 ## Keys, theming and glyphs
 
@@ -125,7 +132,17 @@ hop keeps the list responsive by doing git and archive work off the main thread.
 
 **One deliberate exception: the quit confirmation.** `install_quit_confirmation` registers a `ratada::quit` guard that opens the **blocking** `ratada::modal::confirm`. That is safe precisely because it runs at quit time: nothing needs to keep draining afterwards. `Ctrl+Q` never asks and stays the unconditional escape hatch; only the soft `q` is questioned, and only when `confirm_quit = true`.
 
-**Consequences.** Background refresh/zip/preview stay responsive while a dialog is open – the main behavioural reason hop wants this model. In return hop keeps a small amount of its own modal/picker/form code that a pure clibase app would delegate to `ratada`; this is a deliberate trade-off, and the migration rule "use `ratada` widgets, don't reimplement" is knowingly relaxed here. The look is still unified (dimmed backdrop + `chrome::modal_block`), so the deviation is under the hood, not on screen.
+**Consequences.** Background refresh/zip/preview stay responsive while a dialog is open – the main behavioural reason hop wants this model. In return hop keeps a small amount of its own modal/picker/form code that a pure clibase app would delegate to `ratada`; this is a deliberate trade-off, and the migration rule "use `ratada` widgets, don't reimplement" is knowingly relaxed here. The look is still unified (dimmed backdrop + `chrome::modal_block`), so the deviation is under the hood, not on screen. The relaxation is scoped to the *dialog shells*: what those shells contain is still the toolkit's – the fields are `ratada::input::InputField`, the lists `ratada::list`, the badges `ratada::chrome`.
+
+### Forms stay modal rather than rendering inline in the content panel
+
+**Status:** accepted (during the `clibase` migration).
+
+**Context.** The clibase layout guide asks for a form to render **inside the content panel**, with the header and tab bar live above it, so the app tabs stay switchable from within a form: leaving tab A for tab B and returning to A reopens A's form. That design presumes a **blocking** form loop, which clibase unwinds with a tab-switch signal (an `io::Error`) that the caller catches, switches the tab, and later re-enters. hop's `RepoForm` is one of eleven variants of a non-blocking `Overlay` state machine (see the decision above), which has no loop to unwind and no signal to raise.
+
+**Decision.** Keep `RepoForm` a centred modal (`centered_rect(70, …)` in `tui/form.rs`) drawn over the dimmed app frame. The header and tab bar remain visible behind it – dimmed, not replaced – and tabs are not switchable while the form is open; `Esc` cancels, `Enter`/`Ctrl+S` saves. So hop deviates from the layout guide on the **placement** of forms, not only on their blocking model.
+
+**Consequences.** The form cannot be left open across a tab switch, and there is no per-tab "reopen the form I had" state to carry. What hop keeps is one uniform overlay mechanism for all eleven dialogs and the background workers running behind every one of them. Adopting the inline form would mean either giving up the non-blocking overlays or reimplementing clibase's tab-switch signal without a loop to raise it from; both are larger changes than the layout gain justifies, and both belong in their own step.
 
 **How to adopt the blocking `ratada` widgets later, if wanted.** The precedent exists: the inline git tool (`l`) suspends the TUI with `tui.suspend(…)`, runs an external program, and resumes (`App::run_git_inline`). A blocking `ratada` widget fits the same shape: (1) the key handler returns an outcome instead of setting `self.overlay`; (2) the run loop (which holds `&mut Tui`) calls the blocking widget – e.g. `ratada::path_picker::path_picker(tui, …)` – and applies the result; (3) accept that the background workers pause while the widget is open. This could be done for the path picker alone (the `p` repair flow and the form's `^O` path pick) or for all dialogs at once; either is a conscious behaviour change and belongs in its own step.
 
@@ -139,7 +156,7 @@ cargo run -- list                             # a CLI command
 HOP_CONFIG=examples/config.toml cargo run     # try the TUI with the sample config
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test                                    # unit + integration + doctests
+cargo test                                    # unit + integration tests
 ```
 
 When changing widget or theming behaviour that lives in `ratada`/`sparcli`, work in those repos and re-run their checks too; hop picks up the path dependency automatically.
@@ -148,13 +165,14 @@ When changing widget or theming behaviour that lives in `ratada`/`sparcli`, work
 
 **Logging** (`util/logging.rs`). hop logs to a **file only** (`<state_dir>/hop/hop.log`) and never to stderr, because the TUI owns the terminal and stray stderr would corrupt the alternate screen. Diagnostics use the `log` facade (`log::{info, debug, warn, error}`) at the layer where the event happens – never `println!`, which is reserved for user-facing CLI output.
 
-**Configuration.** Settings resolve as defaults → `config.toml` → `HOP_*` env vars (`config/loader.rs`). The same `config.toml` holds both the settings and the `[[repos]]` entries, read by two layers (the loader for settings, `storage::toml_repo_repository` for entries) and written back comment-preservingly through `config::writer` (`toml_edit`) so the settings block and its comments survive. On-disk formats stay backward compatible: new fields are `#[serde(default)]`, and old files (including the legacy `[icons]` block) load unchanged – there are loader tests for this. `examples/config.toml` documents every setting, including the new `[appearance]`/`[themes.*]`/`[keys]` sections.
+**Configuration.** Settings resolve as defaults → `config.toml` → `HOP_*` env vars (`config/loader.rs`: `HOP_GIT_PROGRAM`, `HOP_EDITOR`, `HOP_THEME`, `HOP_GLYPHS`, `HOP_CONFIRM_QUIT`; `HOP_CONFIG` picks the file itself). A boolean env value must spell out a yes or a no – a typo leaves the setting alone rather than silently reading as `false`. The same `config.toml` holds both the settings and the `[[repos]]` entries, read by two layers (the loader for settings, `storage::toml_repo_repository` for entries) and written back comment-preservingly through `config::writer` (`toml_edit`) so the settings block and its comments survive, always through `util::fs::write_atomic`. On-disk formats stay backward compatible: new fields are `#[serde(default)]`, and old files (including the legacy `[icons]` block) load unchanged – there are loader tests for this. `examples/config.toml` documents every setting, including the `[appearance]`/`[themes.*]`/`[keys]` sections.
 
-**Tests.** Unit tests sit beside their code under `#[cfg(test)]`; integration tests live in `tests/` and drive the public library API. The pure layers (domain, config, storage, service) carry the automated coverage; the TUI is verified with headless `ratatui::TestBackend` render checks (assert on the rendered buffer) for structure, and **manually in a real terminal** for the visual result – there are no snapshot fixtures. After any change, run the full check list above and keep it green; a pure refactor must not change behaviour.
+**Tests.** Unit tests sit beside their code under `#[cfg(test)]`; integration tests live in `tests/` and drive the public library API. There are no doctests. The pure layers (domain, config, storage, service) carry the automated coverage; the TUI is verified with headless `ratatui::TestBackend` render checks (assert on the rendered buffer) for structure, and **manually in a real terminal** for the visual result – there are no snapshot fixtures. After any change, run the full check list above and keep it green; a pure refactor must not change behaviour.
 
 ## Known follow-ups
 
-These are documented, deliberate gaps from the clibase migration, not bugs:
+These are documented, deliberate gaps, not bugs:
 
-- **`scan_picker` keeps the pre-migration bordered style** (it is a standalone CLI picker with its own loop); it could be restyled or moved to a sparcli/`ratada` picker.
-- **Config writes are not atomic** (`config::writer` uses `toml_edit` + `fs::write`); a `util/fs::write_atomic` (temp file + rename) would harden against a crash mid-write.
+- **Forms render as modals, not inline in the content panel**, and tabs cannot be switched from within one – see the architecture decision above.
+- **hop has no `completions` or `man` subcommand**, which the `clibase` template ships (`clap_complete`/`clap_mangen`). Adding them would mean two new dependencies.
+- **The help overlay has no fuzzy filter or section navigation**, which `ratada::help` would give – the price of keeping it non-blocking.

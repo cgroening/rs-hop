@@ -13,18 +13,15 @@ pub mod columns;
 pub mod detail;
 pub mod form;
 pub mod help;
-pub mod navigation;
 pub mod path_picker;
 pub mod presentation;
 pub mod preview;
-pub mod scan_picker;
 pub mod scroll;
 pub mod sections_modal;
 pub mod sections_view;
 pub mod skin;
 pub mod table;
 pub mod terminal;
-pub mod text_input;
 pub mod widgets;
 
 use std::collections::{HashMap, HashSet};
@@ -38,14 +35,17 @@ use chrono::{DateTime, Local};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
 pub use terminal::{Tui, TuiEvent};
 
+use ratada::input::InputField;
+use ratada::nav::cycle;
 use ratada::quit::{self, QuitConfirm, QuitKind};
 use ratada::shortcut_hints;
+use ratada::spinner::Spinner;
 
 use crate::config::Config;
 use crate::domain::backup;
@@ -60,19 +60,20 @@ use crate::keymap::{Action, Keymap};
 use crate::service::preview_service::{self, PreviewLog};
 use crate::service::repo_service::RepoService;
 use crate::service::stats_service::{
-    CodeUpdate, GitStatsUpdate, spawn_code_stats, spawn_git_stats,
+    self, CodeUpdate, GitStatsUpdate, StatsCache, spawn_code_stats,
+    spawn_git_stats,
 };
-use crate::service::status_service::{StatusUpdate, spawn_refresh};
+use crate::service::status_service::{self, StatusUpdate, spawn_refresh};
+use crate::service::ui_state_service::{self, UiState};
 use crate::service::zip_service::{ZipJob, ZipUpdate, spawn_zip};
-use crate::storage::cache;
 use crate::storage::git_client::GitClient;
-use crate::storage::stats_cache::{self, StatsCache};
-use crate::storage::ui_state;
 use crate::theme::Skin;
 use crate::tui::columns::ColumnSet;
 use crate::tui::form::{FormResult, RepoDraft, RepoForm};
 use crate::tui::path_picker::{PathPicker, PickerResult};
-use crate::tui::presentation::{IconSet, github_url, render_empty_hint};
+use crate::tui::presentation::{
+    FieldView, IconSet, field_spans, github_url, render_empty_hint,
+};
 use crate::tui::preview::PreviewLayout;
 use crate::tui::sections_modal::{SectionsAction, SectionsModal};
 use crate::tui::skin::Colors;
@@ -85,6 +86,27 @@ use crate::util::paths::expand_tilde;
 
 /// How long a transient status message stays visible.
 const STATUS_TTL: Duration = Duration::from_secs(4);
+
+/// How long one refresh-spinner frame is shown.
+const SPINNER_INTERVAL: Duration = Duration::from_millis(120);
+
+/// The label in front of the live filter in the status band.
+const FILTER_LABEL: &str = "filter: ";
+/// The hint after the live filter in the status band.
+const FILTER_HINT: &str = "   Enter open · Esc clear";
+/// Cells the status band loses to `appframe`'s horizontal padding.
+const STATUS_PADDING: usize = 2;
+
+/// The columns the live filter's value may occupy on a `width`-wide terminal:
+/// the status band minus its padding, its label and its trailing hint. At least
+/// one column, so the caret always has somewhere to sit.
+fn filter_value_width(width: u16) -> usize {
+    (width as usize)
+        .saturating_sub(STATUS_PADDING)
+        .saturating_sub(FILTER_LABEL.chars().count())
+        .saturating_sub(FILTER_HINT.chars().count())
+        .max(1)
+}
 
 /// Progress-bar label while a background status refresh runs.
 const REFRESH_LABEL: &str = "refreshing";
@@ -130,7 +152,9 @@ enum Overlay {
     Help,
     Confirm(ConfirmModal, Vec<usize>),
     Prompt(TextPrompt, usize),
-    Form(RepoForm, Option<usize>),
+    /// Boxed: the form's three text fields make it far larger than any other
+    /// overlay, and `Overlay` is held by value in `App`.
+    Form(Box<RepoForm>, Option<usize>),
     Picker(PathPicker, PickerIntent),
     /// The list of errored entries; the vec maps rows to service indices.
     Errors(SelectModal, Vec<usize>),
@@ -186,7 +210,7 @@ pub struct App {
     sort: SortMode,
     sort_dir: SortDir,
     filtering: bool,
-    filter: text_input::TextInput,
+    filter: InputField,
     overlay: Overlay,
     /// The help overlay's scroll position, kept across frames.
     help_scroll: scroll::Scroll,
@@ -212,8 +236,11 @@ pub struct App {
     /// Paths in the active refresh that have not been updated yet (drive the
     /// per-row spinner). Empty when no refresh is running.
     refreshing: HashSet<PathBuf>,
-    /// When the active refresh started, for animating the spinner frame.
-    refresh_started: Instant,
+    /// The per-row refresh spinner, stepped by [`App::tick`].
+    spinner: Spinner,
+    /// When the spinner last stepped, so it animates at a steady rate rather
+    /// than at whatever rate the run loop happens to wake up.
+    spinner_at: Instant,
     /// Multi-selection by service index (survives sort/filter). Empty = none.
     selected: HashSet<usize>,
     /// Anchor display row for `Shift`-range selection.
@@ -298,15 +325,15 @@ impl App {
         let skin = config.skin();
         let colors = Colors::from_palette(&skin.palette);
         let keymap = config.keymap();
-        let cached = cache::load(&cache_path);
-        let ui = ui_state::load(&ui_state_path);
+        let cached = status_service::load_cache(&cache_path);
+        let ui = ui_state_service::load(&ui_state_path);
         shortcut_hints::set_visible(ui.hints_visible);
         install_quit_confirmation(config.confirm_quit, skin);
         // The ZIP cache lives next to the git-info cache in the state directory.
         let state_dir = cache_path.parent().unwrap_or_else(|| Path::new("."));
         let zip_cache_path = state_dir.join("zip-manifests.toml");
         let stats_path = state_dir.join("stats-cache.toml");
-        let stats = stats_cache::load(&stats_path);
+        let stats = stats_service::load_cache(&stats_path);
         let mut service = service;
         service.apply_git_infos(&cached.infos);
         let (preview_tx, preview_rx) = mpsc::channel();
@@ -326,7 +353,7 @@ impl App {
             sort: ui.sort,
             sort_dir: ui.sort_dir,
             filtering: false,
-            filter: text_input::TextInput::new(""),
+            filter: InputField::new(""),
             overlay: Overlay::None,
             help_scroll: scroll::Scroll::default(),
             status_msg: None,
@@ -341,7 +368,8 @@ impl App {
             refresh_fetched: false,
             status_rx: None,
             refreshing: HashSet::new(),
-            refresh_started: Instant::now(),
+            spinner: Spinner::new(),
+            spinner_at: Instant::now(),
             selected: HashSet::new(),
             anchor: None,
             list_offset: std::cell::Cell::new(0),
@@ -407,7 +435,7 @@ impl App {
         let mut indices = if self.filtering_active() {
             let subset: Vec<Repo> =
                 tab_indices.iter().map(|&i| repos[i].clone()).collect();
-            fuzzy_indices(&subset, &query)
+            fuzzy_indices(&subset, query)
                 .into_iter()
                 .map(|pos| tab_indices[pos])
                 .collect()
@@ -565,12 +593,18 @@ impl App {
         self.status_msg = Some((message.into(), Instant::now()));
     }
 
-    /// Expires the status message once its TTL passes.
+    /// Expires the status message once its TTL passes and steps the spinner.
     fn tick(&mut self) {
         if let Some((_, at)) = &self.status_msg
             && at.elapsed() > STATUS_TTL
         {
             self.status_msg = None;
+        }
+        if !self.refreshing.is_empty()
+            && self.spinner_at.elapsed() >= SPINNER_INTERVAL
+        {
+            self.spinner.advance();
+            self.spinner_at = Instant::now();
         }
     }
 
@@ -599,7 +633,8 @@ impl App {
             return;
         }
         self.refreshing = paths.iter().cloned().collect();
-        self.refresh_started = Instant::now();
+        self.spinner = Spinner::new();
+        self.spinner_at = Instant::now();
         self.loading_detail = None;
         self.loading_name_width = self.max_name_width(&paths);
         self.loading = if show_bar {
@@ -654,7 +689,11 @@ impl App {
                     repo.git_info.clone().map(|info| (repo.path.clone(), info))
                 })
                 .collect();
-            let _ = cache::save(&self.cache_path, &infos, self.last_fetched);
+            let _ = status_service::save_cache(
+                &self.cache_path,
+                &infos,
+                self.last_fetched,
+            );
             self.loading = None;
             self.loading_detail = None;
             self.refreshing.clear();
@@ -697,9 +736,7 @@ impl App {
         if self.refreshing.is_empty() {
             return None;
         }
-        let frames = self.icons.spinner;
-        let index = (self.refresh_started.elapsed().as_millis() / 120) as usize;
-        Some(frames[index % frames.len()])
+        Some(self.spinner.frame(self.config.appearance.glyphs))
     }
 }
 
@@ -842,7 +879,7 @@ impl App {
                 FormResult::PickPath => self.open_form_path_picker(form, index),
                 FormResult::Cancel => {}
                 FormResult::Pending => {
-                    self.overlay = Overlay::Form(form, index)
+                    self.overlay = Overlay::Form(form, index);
                 }
             },
             Overlay::Picker(mut picker, intent) => {
@@ -1056,7 +1093,7 @@ impl App {
         match key.code {
             KeyCode::Esc => {
                 self.filtering = false;
-                self.filter = text_input::TextInput::new("");
+                self.filter = InputField::new("");
                 self.cursor = 0;
             }
             KeyCode::Up => self.move_cursor(-1),
@@ -1094,7 +1131,7 @@ impl App {
     /// Cycles to the next/previous tab (`Tab`/`Shift+Tab`).
     fn cycle_tab(&mut self, delta: isize) {
         let current = Tab::ALL.iter().position(|t| *t == self.tab).unwrap_or(0);
-        let next = navigation::cycle(current, Tab::ALL.len(), delta);
+        let next = cycle(current, Tab::ALL.len(), delta);
         self.switch_tab(Tab::ALL[next]);
     }
 
@@ -1262,9 +1299,9 @@ impl App {
     /// Persists the sort mode, active tab, slug display, preview mode and
     /// whether the hint footer is shown.
     fn save_ui_state(&self) {
-        let _ = ui_state::save(
+        let _ = ui_state_service::save(
             &self.ui_state_path,
-            &ui_state::UiState {
+            &UiState {
                 sort: self.sort,
                 sort_dir: self.sort_dir,
                 tab: self.tab,
@@ -1282,7 +1319,7 @@ impl App {
     /// the range anchor so the next `Shift`-move re-anchors at the cursor.
     fn move_cursor(&mut self, delta: isize) {
         let len = self.ordered_view().len();
-        self.cursor = navigation::cycle(self.cursor, len, delta);
+        self.cursor = cycle(self.cursor, len, delta);
         self.anchor = None;
     }
 
@@ -1437,12 +1474,16 @@ impl App {
             _ => RepoKind::Path,
         };
         let form = RepoForm::for_add("", kind, self.service.sections());
-        self.overlay = Overlay::Form(form, None);
+        self.overlay = Overlay::Form(Box::new(form), None);
     }
 
     /// Opens the path picker to fill the path field of `form`, seeded near the
     /// path typed so far.
-    fn open_form_path_picker(&mut self, form: RepoForm, index: Option<usize>) {
+    fn open_form_path_picker(
+        &mut self,
+        form: Box<RepoForm>,
+        index: Option<usize>,
+    ) {
         let typed = form.path_value();
         let start = if typed.trim().is_empty() {
             crate::util::paths::home_dir().unwrap_or_else(|| PathBuf::from("/"))
@@ -1451,7 +1492,7 @@ impl App {
         };
         self.overlay = Overlay::Picker(
             PathPicker::new(&start, true),
-            PickerIntent::FormPath(Box::new(form), index),
+            PickerIntent::FormPath(form, index),
         );
     }
 
@@ -1468,7 +1509,7 @@ impl App {
             return;
         };
         let form = RepoForm::for_edit(repo, self.service.sections());
-        self.overlay = Overlay::Form(form, Some(index));
+        self.overlay = Overlay::Form(Box::new(form), Some(index));
     }
 
     /// Opens the delete confirmation for the target entries (selection/cursor).
@@ -1864,7 +1905,9 @@ impl App {
     /// Persists the statistics cache once a worker has finished.
     fn finish_stats(&mut self) {
         self.computing.clear();
-        if let Err(error) = stats_cache::save(&self.stats_path, &self.stats) {
+        if let Err(error) =
+            stats_service::save_cache(&self.stats_path, &self.stats)
+        {
             log::warn!("could not write the stats cache: {error}");
         }
     }
@@ -2255,7 +2298,7 @@ impl App {
             }
             PickerIntent::FormPath(mut form, index) => {
                 form.set_path(&path.to_string_lossy());
-                self.overlay = Overlay::Form(*form, index);
+                self.overlay = Overlay::Form(form, index);
             }
         }
     }
@@ -2298,7 +2341,7 @@ impl App {
             frame,
             &self.skin,
             active,
-            self.status_lines(),
+            self.status_lines(area.width),
             &self.hint_groups(),
             self.loading.is_some(),
         );
@@ -2335,7 +2378,7 @@ impl App {
         render_progress(
             frame,
             area,
-            &self.colors,
+            &self.skin,
             ProgressText {
                 prefix: &prefix,
                 name: self.loading_detail.as_deref().unwrap_or(""),
@@ -2347,21 +2390,23 @@ impl App {
 
     /// The status-band lines: the info line (or the progress line while a
     /// refresh/backup runs), plus the live-filter input or a transient status
-    /// message when either is active.
-    fn status_lines(&self) -> Vec<Line<'_>> {
+    /// message when either is active. `width` is the terminal width, from which
+    /// the columns left for the filter's value are measured.
+    fn status_lines(&self, width: u16) -> Vec<Line<'_>> {
         let mut lines = vec![self.info_line()];
         if self.filtering {
             let mut spans = vec![Span::styled(
-                "filter: ",
+                FILTER_LABEL,
                 Style::default().fg(self.colors.accent),
             )];
-            spans.extend(
-                self.filter
-                    .render_line(Style::default(), self.colors.cursor, true)
-                    .spans,
-            );
+            spans.extend(field_spans(FieldView {
+                field: &self.filter,
+                palette: &self.skin.palette,
+                width: filter_value_width(width),
+                focused: true,
+            }));
             spans.push(Span::styled(
-                "   Enter open · Esc clear",
+                FILTER_HINT,
                 Style::default().fg(self.colors.dim),
             ));
             lines.push(Line::from(spans));
@@ -2805,7 +2850,7 @@ impl App {
             has_selection: !self.selected.is_empty(),
             missing: &self.files_missing,
             show_slugs: self.show_slugs,
-            query: self.filtering_active().then_some(query.as_str()),
+            query: self.filtering_active().then_some(query),
             zip_backups: &self.zip_backups,
             offset: &self.table_offset,
         };
@@ -2915,76 +2960,47 @@ struct ProgressText<'a> {
     name_width: usize,
 }
 
+impl ProgressText<'_> {
+    /// The bar's label, `prefix - name`, with the name padded to the widest name
+    /// of the run. The gauge centres the label, so a constant label width pins
+    /// the `XX %` column even as names of different lengths come and go. The
+    /// name column is reserved before the first name arrives; the separator
+    /// appears only once there is a name to separate.
+    fn label(&self) -> String {
+        let separator = if self.name.is_empty() {
+            " ".repeat(PROGRESS_SEPARATOR.chars().count())
+        } else {
+            PROGRESS_SEPARATOR.to_string()
+        };
+        format!(
+            "{}{separator}{:<width$}",
+            self.prefix,
+            self.name,
+            width = self.name_width
+        )
+    }
+}
+
 /// Renders a solid progress bar for an in-flight operation (status refresh or
-/// ZIP backup), filling the whole `area`. The text is `prefix - name`, drawn
-/// over a fixed-width block (prefix + separator + the widest name) that is
-/// centred and pinned, so the percentage never shifts column as the name
-/// changes. The text colour is chosen per cell from whether it sits over the
-/// filled or unfilled part, so it never ends up dark text on the dark
-/// (unfilled) background.
+/// ZIP backup) across `area`, leaving one blank cell of padding on each side.
 fn render_progress(
     frame: &mut Frame,
     area: Rect,
-    colors: &Colors,
+    skin: &Skin,
     text: ProgressText,
 ) {
-    // Leave one blank cell of padding on each side of the bar.
     let area = Rect {
         x: area.x.saturating_add(1),
         width: area.width.saturating_sub(2),
         ..area
     };
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-    let filled = (f64::from(area.width) * text.ratio).round() as u16;
-    let line: Vec<char> = if text.name.is_empty() {
-        text.prefix.chars().collect()
-    } else {
-        format!("{}{PROGRESS_SEPARATOR}{}", text.prefix, text.name)
-            .chars()
-            .collect()
-    };
-    let label_width = line.len() as u16;
-    // Reserve room for the widest possible line and centre that block, so the
-    // left edge - and thus the `XX %` column - is fixed for the whole run.
-    let block_width = (UnicodeWidthStr::width(text.prefix)
-        + UnicodeWidthStr::width(PROGRESS_SEPARATOR)
-        + text.name_width) as u16;
-    let start = area.x + area.width.saturating_sub(block_width) / 2;
-    let label_row = area.y + area.height / 2;
-
-    let buf = frame.buffer_mut();
-    for y in area.y..area.bottom() {
-        for x in area.x..area.right() {
-            let over_filled = (x - area.x) < filled;
-            let bg = if over_filled {
-                colors.accent
-            } else {
-                colors.selection_bg
-            };
-            let is_label =
-                y == label_row && x >= start && x < start + label_width;
-            let (symbol, fg) = if is_label {
-                let ch = line[(x - start) as usize];
-                // Dark text on the light filled bar, light text on the rest.
-                let fg = if over_filled {
-                    Color::Black
-                } else {
-                    colors.accent
-                };
-                (ch.to_string(), fg)
-            } else {
-                (" ".to_string(), bg)
-            };
-            if let Some(cell) = buf.cell_mut((x, y)) {
-                cell.set_symbol(&symbol);
-                cell.set_style(
-                    Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
-                );
-            }
-        }
-    }
+    ratada::gauge::render(
+        frame,
+        area,
+        &skin.palette,
+        text.ratio,
+        &text.label(),
+    );
 }
 
 /// A short relative age like `2d`, `5h` or `3m` for the remote line.
@@ -3197,11 +3213,27 @@ mod tests {
         press(&mut app, KeyCode::Char('c'));
         let code = screen(&app, 120, 30);
         assert!(code.contains('-'), "an uncomputable cell reads as a dash");
-        for frame in app.icons.spinner {
+        for frame in spinner_frames(GlyphVariant::Unicode) {
             assert!(
                 !code.contains(frame),
                 "example mode must never spin: found {frame:?}"
             );
+        }
+    }
+
+    /// Every distinct frame of the toolkit spinner, gathered by stepping it
+    /// until it wraps back to where it started.
+    fn spinner_frames(variant: GlyphVariant) -> Vec<&'static str> {
+        let mut spinner = Spinner::new();
+        let first = spinner.frame(variant);
+        let mut frames = vec![first];
+        loop {
+            spinner.advance();
+            let frame = spinner.frame(variant);
+            if frame == first {
+                return frames;
+            }
+            frames.push(frame);
         }
     }
 
@@ -3291,17 +3323,94 @@ mod tests {
     }
 
     #[test]
+    fn every_overlay_renders_at_a_normal_and_a_cramped_size() {
+        // The form, the slug prompt and the path picker size their fields from
+        // the box's inner width; on a terminal too small to hold the box that
+        // width goes to zero, which must clamp rather than underflow.
+        // Each case is the keys that open the overlay; `M` is Files-tab only.
+        // The error list is left out: it needs a failing entry, and it is the
+        // same `SelectModal` the sort picker already covers.
+        let openers = [
+            ("n", "add form"),
+            ("e", "edit form"),
+            ("d", "delete confirm"),
+            ("S", "slug prompt"),
+            ("p", "path picker"),
+            ("2M", "manage sections"),
+            ("t", "sort picker"),
+            ("?", "help"),
+        ];
+        for (keys, what) in openers {
+            let mut app = sample_app();
+            for key in keys.chars() {
+                press(&mut app, KeyCode::Char(key));
+            }
+            assert!(
+                !matches!(app.overlay, Overlay::None),
+                "{what} did not open on {keys:?}"
+            );
+            for (width, height) in [(100, 30), (20, 6)] {
+                let _ = screen(&app, width, height);
+            }
+        }
+    }
+
+    #[test]
+    fn a_long_filter_query_scrolls_inside_the_status_band() {
+        // The status band is one row wide; the toolkit's field scrolls the query
+        // under the caret and marks the hidden head, rather than overrunning the
+        // trailing hint. A hand-drawn caret used to just overflow.
+        let mut app = sample_app();
+        press(&mut app, KeyCode::Char('f'));
+        for ch in "abcdefghijklmnopqrstuvwxyz0123456789".chars() {
+            press(&mut app, KeyCode::Char(ch));
+        }
+        let narrow = screen(&app, 60, 20);
+        assert!(narrow.contains('\u{2026}'), "the clipped head is marked");
+        assert!(narrow.contains("Esc clear"), "the trailing hint survives");
+        assert!(narrow.contains('9'), "the caret's end stays visible");
+        // Given room, the whole query fits and nothing is marked as clipped.
+        let wide = screen(&app, 120, 20);
+        assert!(wide.contains("abcdefghijklmnopqrstuvwxyz0123456789"));
+    }
+
+    #[test]
+    fn the_progress_label_keeps_its_width_as_the_name_changes() {
+        // The gauge centres the label, so a constant label width is what pins
+        // the `XX %` column while entry names of different lengths come and go.
+        let label_for = |name: &str| {
+            ProgressText {
+                prefix: " 50 %",
+                name,
+                ratio: 0.5,
+                name_width: 6,
+            }
+            .label()
+        };
+        let widths: Vec<usize> = ["", "hop", "mdtask"]
+            .iter()
+            .map(|n| label_for(n).len())
+            .collect();
+        assert_eq!(widths, vec![widths[0]; 3]);
+        assert!(label_for("hop").starts_with(" 50 % - hop"));
+        // Without a name the separator is blanked out rather than dangling.
+        assert!(!label_for("").contains('-'));
+    }
+
+    #[test]
     fn progress_bar_paints_accent_fill_and_label() {
         // A half-filled bar: the left cells carry the accent background and the
         // centred percentage label is present.
-        let colors = Colors::from_palette(&Config::default().palette());
+        let config = Config::default();
+        let colors = Colors::from_palette(&config.palette());
+        let skin = config.skin();
         let mut terminal = Terminal::new(TestBackend::new(40, 2)).unwrap();
         terminal
             .draw(|frame| {
                 render_progress(
                     frame,
                     frame.area(),
-                    &colors,
+                    &skin,
                     ProgressText {
                         prefix: " 50 %",
                         name: "repo",

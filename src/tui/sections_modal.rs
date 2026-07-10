@@ -3,6 +3,7 @@
 //! as a locked trailing row that cannot be edited or moved.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratada::nav::cycle;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -11,7 +12,6 @@ use ratatui::widgets::{Clear, List, ListItem, ListState};
 
 use crate::domain::sections::UNGROUPED;
 use crate::theme::Skin;
-use crate::tui::navigation::cycle;
 use crate::tui::skin::Colors;
 use crate::tui::widgets::centered_rect;
 

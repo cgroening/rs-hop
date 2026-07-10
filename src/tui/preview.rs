@@ -8,6 +8,7 @@
 //! it down to the terminal's default background - which is what used to make
 //! the panel look like it had a background of its own.
 
+use ratada::text::truncate;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -21,7 +22,7 @@ use crate::domain::stats::{
 };
 use crate::theme::Skin;
 use crate::tui::detail::{bar, field, log_line, section_header};
-use crate::tui::presentation::{IconSet, status_text, truncate};
+use crate::tui::presentation::{IconSet, status_text};
 use crate::tui::scroll::Scroll;
 use crate::tui::skin::Colors;
 

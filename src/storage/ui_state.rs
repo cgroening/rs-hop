@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::domain::error::{Error, Result};
 use crate::domain::filter::Tab;
 use crate::domain::sort::{SortDir, SortMode};
+use crate::util::fs::write_atomic;
 
 /// Default width of the panel when it sits to the right of the list, in percent.
 pub const DEFAULT_PREVIEW_WIDTH_PCT: u16 = 40;
@@ -128,11 +129,7 @@ pub fn save(path: &Path, state: &UiState) -> Result<()> {
     };
     let text = toml::to_string_pretty(&doc)
         .map_err(|e| Error::invalid(format!("serialise ui state: {e}")))?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| Error::io("create state directory", e))?;
-    }
-    fs::write(path, text).map_err(|e| Error::io("write ui state", e))
+    write_atomic(path, &text, "ui state")
 }
 
 #[cfg(test)]

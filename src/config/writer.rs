@@ -13,6 +13,7 @@ use toml_edit::{ArrayOfTables, DocumentMut, InlineTable, Item, Table, Value};
 
 use crate::domain::error::{Error, Result};
 use crate::domain::repo::{GitInfo, Repo, RepoKind};
+use crate::util::fs::write_atomic;
 
 /// Writes `repos` into the `config.toml` at `path`, preserving the settings
 /// block and creating the file (and parent directory) when absent.
@@ -29,11 +30,7 @@ pub fn save_repos(path: &Path, repos: &[Repo]) -> Result<()> {
         String::new()
     };
     let updated = repos_to_toml(&existing, repos)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| Error::io("create config directory", e))?;
-    }
-    fs::write(path, updated).map_err(|e| Error::io("write config.toml", e))
+    write_atomic(path, &updated, "config.toml")
 }
 
 /// Returns `existing` with its `[[repos]]` array replaced by `repos`, leaving
@@ -68,11 +65,7 @@ pub fn save_sections(path: &Path, sections: &[String]) -> Result<()> {
         String::new()
     };
     let updated = sections_to_toml(&existing, sections)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| Error::io("create config directory", e))?;
-    }
-    fs::write(path, updated).map_err(|e| Error::io("write config.toml", e))
+    write_atomic(path, &updated, "config.toml")
 }
 
 /// Returns `existing` with its top-level `sections` array set to `sections`

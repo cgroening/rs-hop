@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::error::{Error, Result};
+use crate::util::fs::write_atomic;
 
 /// The recorded fingerprint of one written archive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,11 +91,7 @@ pub fn save(path: &Path, cache: &ZipCache) -> Result<()> {
     let doc = CacheDoc { entries };
     let text = toml::to_string_pretty(&doc)
         .map_err(|e| Error::invalid(format!("serialise zip cache: {e}")))?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| Error::io("create state directory", e))?;
-    }
-    fs::write(path, text).map_err(|e| Error::io("write zip cache", e))
+    write_atomic(path, &text, "zip cache")
 }
 
 #[cfg(test)]
