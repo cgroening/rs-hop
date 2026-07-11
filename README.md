@@ -1,17 +1,10 @@
 # hop
 
-[![Crates.io](https://img.shields.io/crates/v/rs-hop.svg)](https://crates.io/crates/rs-hop)
-[![docs.rs](https://img.shields.io/docsrs/rs-hop)](https://docs.rs/rs-hop)
-[![MSRV](https://img.shields.io/badge/MSRV-1.88-blue.svg)](https://www.rust-lang.org)
-[![License: MIT](https://img.shields.io/crates/l/rs-hop.svg)](LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/rs-hop.svg)](https://crates.io/crates/rs-hop) [![docs.rs](https://img.shields.io/docsrs/rs-hop)](https://docs.rs/rs-hop) [![MSRV](https://img.shields.io/badge/MSRV-1.88-blue.svg)](https://www.rust-lang.org) [![License: MIT](https://img.shields.io/crates/l/rs-hop.svg)](LICENSE)
 
-A fast, fuzzy-finder TUI to jump between your git repositories and folders -
-a Rust port of [git-repo-jumper](https://github.com/cgroening/py-git-repo-jumper), built on [ratatui](https://ratatui.rs).
+A fast, fuzzy-finder TUI to jump between your git repositories and folders - a Rust port of [git-repo-jumper](https://github.com/cgroening/py-git-repo-jumper), built on [ratatui](https://ratatui.rs).
 
-Pick an entry and hop writes its path to a handoff file your shell reads to
-`cd` into it; for git repos it also launches your git tool (lazygit by
-default). On top of the original it adds in-app management, three tabs, slugs
-for a one-word jump, sort modes and repair for paths that have moved.
+Pick an entry and hop writes its path to a handoff file your shell reads to `cd` into it; for git repos it also launches your git tool (lazygit by default). On top of the original it adds in-app management, three tabs, slugs for a one-word jump, sort modes and repair for paths that have moved.
 
 ## Screenshots
 
@@ -21,49 +14,19 @@ for a one-word jump, sort modes and repair for paths that have moved.
 
 ## Features
 
-- **Fuzzy finder** over all visible columns (name, branch, status, GitHub
-  name, path).
-- **Live git status** (branch, uncommitted changes, ahead/behind, GitHub repo
-  name), gathered in the background and cached so the list shows instantly.
+- **Fuzzy finder** over all visible columns (name, branch, status, GitHub name, path).
+- **Live git status** (branch, uncommitted changes, ahead/behind, GitHub repo name), gathered in the background and cached so the list shows instantly.
 - **Three tabs**: Git Repos, Files and Folders, Archive.
-- **Sections** on the Files and Folders tab: group folders/files under named,
-  reorderable section headers; `s` jumps to a section and `M` manages them.
-- **In-app management**: add, edit, delete, favourite, archive/restore, set a
-  slug - the config is written back preserving its comments.
-- **Content-aware open**: a file/folder entry auto-detects its target – a
-  folder `cd`s, a text file (by extension; configurable via `editor_extensions`)
-  opens in the editor, and any other file (image, PDF, …) opens with the
-  system's default app.
-- **Slugs**: `hop <slug>` jumps straight to an entry from the shell;
-  `hop add [PATH]` registers one without opening the TUI.
-- **Bulk import**: `hop scan [DIR]` finds git repos recursively and offers them
-  in a multi-select picker (`--dry-run` to preview, `--nested` for repos inside
-  repos).
-- **Sort modes**: by name, most recently used, frecency (frequency weighted by
-  recency), or a custom drag order; favourites are pinned to the top (except in
-  the recent view).
-- **ZIP backups**: `z` zips the selected/cursor entry (git repo or folder) and
-  `Z` zips every entry opted into the backup into `zip_backup_folder`, excluding
-  build artefacts (`zip_exclude_dirs`, matched as a name prefix so `target` also
-  covers `target.nosync`) but keeping `.git`. The backup membership is the
-  `Backup` toggle in the add/edit form: git repos are included by default,
-  file/folder entries excluded by default; `z` ignores it (an explicit target is
-  always backed up). Excluded entries show a `⊘` marker in the `ZIP Backup`
-  column. The archive is named after the entry (the slugified name, e.g.
-  `(rs) mdtask` → `rs-mdtask.zip`); two entries with the same name each get a
-  short path-hash suffix so neither is overwritten (`hop doctor` reports such
-  name clashes). A repo is only (re)written when its content changed since the
-  last backup (name + size + CRC32 comparison), so unchanged archives are left
-  untouched and not re-uploaded by cloud sync. Progress shows in the header bar;
-  all three tabs show a `ZIP Backup` column with each entry's last-backup date.
-- **Detail panel** (`v`): an optional pane (right or bottom) with the entry's
-  details and a recent `git log`.
-- **Missing-path marker** (a red `!`) with a picker that opens at the closest
-  existing ancestor to repair the path, plus an error list (`!`) to repair /
-  edit / delete all broken entries.
-- **Status bar**: a local status line (entry count, sort, last status time) and
-  a remote line showing the last `git fetch` (warns when over a day old); a
-  progress bar replaces it while a refresh runs.
+- **Sections** on the Files and Folders tab: group folders/files under named, reorderable section headers; `s` jumps to a section and `M` manages them.
+- **In-app management**: add, edit, delete, favourite, archive/restore, set a slug - the config is written back preserving its comments.
+- **Content-aware open**: a file/folder entry auto-detects its target – a folder `cd`s, a text file (by extension; configurable via `editor_extensions`) opens in the editor, and any other file (image, PDF, …) opens with the system's default app.
+- **Slugs**: `hop <slug>` jumps straight to an entry from the shell; `hop add [PATH]` registers one without opening the TUI.
+- **Bulk import**: `hop scan [DIR]` finds git repos recursively and offers them in a multi-select picker (`--dry-run` to preview, `--nested` for repos inside repos).
+- **Sort modes**: by name, most recently used, frecency (frequency weighted by recency), or a custom drag order; favourites are pinned to the top (except in the recent view).
+- **ZIP backups**: `z` zips the selected/cursor entry (git repo or folder) and `Z` zips every entry opted into the backup into `zip_backup_folder`, excluding build artefacts (`zip_exclude_dirs`, matched as a name prefix so `target` also covers `target.nosync`) but keeping `.git`. The backup membership is the `Backup` toggle in the add/edit form: git repos are included by default, file/folder entries excluded by default; `z` ignores it (an explicit target is always backed up). Excluded entries show a `⊘` marker in the `ZIP Backup` column. The archive is named after the entry (the slugified name, e.g. `(rs) mdtask` → `rs-mdtask.zip`); two entries with the same name each get a short path-hash suffix so neither is overwritten (`hop doctor` reports such name clashes). A repo is only (re)written when its content changed since the last backup (name + size + CRC32 comparison), so unchanged archives are left untouched and not re-uploaded by cloud sync. Progress shows in the header bar; all three tabs show a `ZIP Backup` column with each entry's last-backup date.
+- **Detail panel** (`v`): an optional pane (right or bottom) with the entry's details and a recent `git log`.
+- **Missing-path marker** (a red `!`) with a picker that opens at the closest existing ancestor to repair the path, plus an error list (`!`) to repair / edit / delete all broken entries.
+- **Status bar**: a local status line (entry count, sort, last status time) and a remote line showing the last `git fetch` (warns when over a day old); a progress bar replaces it while a refresh runs.
 - **Two icon tiers** (Unicode by default, or ASCII), selectable in the config.
 
 ## Install
@@ -76,33 +39,25 @@ From crates.io (the crate is `rs-hop`; the installed binary is `hop`):
 cargo install rs-hop
 ```
 
-Or from the project directory (puts `hop` in `~/.cargo/bin`, which is on your
-`PATH`):
+Or from the project directory (puts `hop` in `~/.cargo/bin`, which is on your `PATH`):
 
 ```
 cargo install --path .
 ```
 
-To update after code changes, re-run the install with `--force` (plain
-`cargo install` refuses to overwrite an existing binary):
+To update after code changes, re-run the install with `--force` (plain `cargo install` refuses to overwrite an existing binary):
 
 ```
 cargo install --path . --force
 ```
 
-`cargo uninstall rs-hop` removes it. (For a local build without installing, use
-`cargo build --release`; the binary is then at `target.nosync/release/hop`.)
+`cargo uninstall rs-hop` removes it. (For a local build without installing, use `cargo build --release`; the binary is then at `target.nosync/release/hop`.)
 
 ## Shell integration (zsh)
 
-The binary alone writes the chosen path and exits - it cannot change your
-shell's directory. Wrap it in a shell function so your shell `cd`s into the
-selected entry after hop exits. hop writes that path to
-`$XDG_STATE_HOME/hop/selected-repo.txt` (default
-`~/.local/state/hop/selected-repo.txt`).
+The binary alone writes the chosen path and exits - it cannot change your shell's directory. Wrap it in a shell function so your shell `cd`s into the selected entry after hop exits. hop writes that path to `$XDG_STATE_HOME/hop/selected-repo.txt` (default `~/.local/state/hop/selected-repo.txt`).
 
-Add this to a sourced zsh file (e.g. `~/.zshrc`, or a functions file it
-sources):
+Add this to a sourced zsh file (e.g. `~/.zshrc`, or a functions file it sources):
 
 ```zsh
 # Run hop, then cd into the selected entry after it exits.
@@ -120,22 +75,15 @@ hop() {
 alias hp='hop'
 ```
 
-Clearing the file right after reading matters: commands that do not pick an
-entry (`hop scan`/`add`/`list`/`doctor`) leave it untouched, so without the
-reset a stale path from an earlier jump would `cd` you around unexpectedly.
+Clearing the file right after reading matters: commands that do not pick an entry (`hop scan`/`add`/`list`/`doctor`) leave it untouched, so without the reset a stale path from an earlier jump would `cd` you around unexpectedly.
 
-The function is named `hop` and shadows the binary; it runs the real binary via
-`command hop`, so there is no conflict. Reload with `source ~/.zshrc` (or open a
-new shell).
+The function is named `hop` and shadows the binary; it runs the real binary via `command hop`, so there is no conflict. Reload with `source ~/.zshrc` (or open a new shell).
 
-Now `hop` (or `hp`) opens the TUI and drops you into the selected directory, and
-`hop <slug>` jumps directly.
+Now `hop` (or `hp`) opens the TUI and drops you into the selected directory, and `hop <slug>` jumps directly.
 
 ### Windows (PowerShell)
 
-The handoff file is shell-agnostic; on Windows it lives under
-`%LOCALAPPDATA%\hop\selected-repo.txt`. Add this to your PowerShell profile
-(`$PROFILE`):
+The handoff file is shell-agnostic; on Windows it lives under `%LOCALAPPDATA%\hop\selected-repo.txt`. Add this to your PowerShell profile (`$PROFILE`):
 
 ```powershell
 function hop {
@@ -155,9 +103,7 @@ Set-Alias hp hop
 
 ## Configuration
 
-hop reads `$XDG_CONFIG_HOME/hop/config.toml` (default
-`~/.config/hop/config.toml`). It is created on first use; add entries from the
-TUI (`n`) or with `hop add <path>`.
+hop reads `$XDG_CONFIG_HOME/hop/config.toml` (default `~/.config/hop/config.toml`). It is created on first use; add entries from the TUI (`n`) or with `hop add <path>`.
 
 ```toml
 git_program = "lazygit"        # tool launched for git repos; omit to disable
@@ -201,8 +147,7 @@ fav = true                     # favourites sort first
 # archived = false             # archived entries live in the Archive tab
 ```
 
-See [`examples/config.toml`](examples/config.toml) for a fuller sample. Try it
-without touching your real config:
+See [`examples/config.toml`](examples/config.toml) for a fuller sample. Try it without touching your real config:
 
 ```
 HOP_CONFIG=examples/config.toml cargo run
@@ -225,8 +170,7 @@ hop config-path     print the resolved config file path
 --demo              open the TUI with built-in demo data (for screenshots; no real git/config)
 ```
 
-`hop scan` needs a terminal to show its picker; when its output is piped, use
-`--dry-run` to only list what it found.
+`hop scan` needs a terminal to show its picker; when its output is piped, use `--dry-run` to only list what it found.
 
 ### Environment overrides
 
@@ -296,8 +240,7 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-See [`CLAUDE.md`](CLAUDE.md) for the architecture and coding rules, and
-[`CONTRIBUTING.md`](CONTRIBUTING.md) for the contribution workflow.
+See [`CLAUDE.md`](CLAUDE.md) for the architecture and coding rules, and [`CONTRIBUTING.md`](CONTRIBUTING.md) for the contribution workflow.
 
 ## License
 
