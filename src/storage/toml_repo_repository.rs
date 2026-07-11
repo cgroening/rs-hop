@@ -1,5 +1,5 @@
 //! TOML-backed [`RepoRepository`]: reads the `[[repos]]` array and writes it
-//! back through the comment-preserving [`config::writer`].
+//! back through the comment-preserving [`crate::config::writer`].
 
 use std::fs;
 use std::path::PathBuf;

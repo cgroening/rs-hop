@@ -16,7 +16,7 @@ const MAX_LEN: usize = 40;
 
 /// Turns arbitrary text into a slug: lowercased, German umlauts transliterated,
 /// every run of non-alphanumeric characters collapsed to a single hyphen, and
-/// trimmed of leading/trailing hyphens. Capped at [`MAX_LEN`].
+/// trimmed of leading/trailing hyphens. Capped at `MAX_LEN`.
 pub fn slugify(input: &str) -> String {
     let mut out = String::new();
     let mut last_was_hyphen = true; // suppress a leading hyphen

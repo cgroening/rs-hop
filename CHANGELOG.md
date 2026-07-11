@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-10
+
 ### Added
 
 - **Project statistics, as swappable columns of the main table.** `c` cycles the columns between `Standard` (what hop always showed), `Code` (lines of code, top language, source files, size on disk) and `Activity` (commits, last commit, authors, branches, opens, last used). Outside `Standard` a totals row and a tinted bar naming the sets appear below the list; both follow the live filter and both step aside on a short terminal. The numbers are gathered in the background, cached in `stats-cache.toml`, and shown from the cache at once on the next start. `Standard` starts no worker at all, and switching to `Activity` never triggers a source walk – the two families are computed independently. Lines are counted with `tokei`, honouring each repository's `.gitignore` plus the configured `zip_exclude_dirs`.
@@ -76,5 +78,6 @@ First public release. A fuzzy-finder TUI to jump between git repositories and fo
 - **Cross-platform paths** (XDG on Unix, `%APPDATA%`/`%LOCALAPPDATA%` on Windows) and openers/clipboard.
 - Unicode and ASCII icon tiers (`config.icons.variant`).
 
-[Unreleased]: https://github.com/cgroening/rs-hop/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/cgroening/rs-hop/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/cgroening/rs-hop/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/cgroening/rs-hop/releases/tag/v0.1.0

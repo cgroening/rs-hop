@@ -2,6 +2,8 @@
 
 Planned, not yet implemented (roughly in priority order):
 
+- [ ] **Refresh the README screenshots.** `images/screenshot-1.png` and `images/screenshot-2.png` still show the pre-clibase UI (captured 2026-06-14); they predate the panel layout, the statistics columns, the sort picker and the reworked detail panel. Recapture the Git Repos and Files and Folders tabs from the current build (`HOP_CONFIG=examples/config.toml cargo run -- --demo`) in a real terminal and overwrite both files.
+
 - [x] Show the name of the repository currently being refreshed (after r/R was pressed or an program startup). Also show percentage during the creation of ZIP archives (z/Z). Text of the progress bar: `XX % - <Repository Name>` for refresh; `XX % (<file>/<number_of_files>) - <Name of Repo/Folder/File>` for zipping. Center the text as much as possible but find a smart place for it so the horizontal position / column number of `XX %` stays the same while the progress bar is running.
 
 - [x] **Repo scan / discovery.** A `hop scan <dir>` command that walks `<dir>` recursively, finds git work trees (a `.git` entry) and offers a bulk import into `config.toml` (skipping entries that already exist). The biggest time-saver for building the list initially. Reuse `RepoService::add` and the comment-preserving `config::writer`; keep the walk bounded and skip `node_modules`/hidden dirs.

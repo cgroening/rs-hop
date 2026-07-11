@@ -1,5 +1,10 @@
 # hop
 
+[![Crates.io](https://img.shields.io/crates/v/rs-hop.svg)](https://crates.io/crates/rs-hop)
+[![docs.rs](https://img.shields.io/docsrs/rs-hop)](https://docs.rs/rs-hop)
+[![MSRV](https://img.shields.io/badge/MSRV-1.88-blue.svg)](https://www.rust-lang.org)
+[![License: MIT](https://img.shields.io/crates/l/rs-hop.svg)](LICENSE)
+
 A fast, fuzzy-finder TUI to jump between your git repositories and folders -
 a Rust port of [git-repo-jumper](https://github.com/cgroening/py-git-repo-jumper), built on [ratatui](https://ratatui.rs).
 
@@ -62,6 +67,8 @@ for a one-word jump, sort modes and repair for paths that have moved.
 - **Two icon tiers** (Unicode by default, or ASCII), selectable in the config.
 
 ## Install
+
+hop requires **Rust 1.88 or newer** (edition 2024).
 
 From crates.io (the crate is `rs-hop`; the installed binary is `hop`):
 
@@ -289,4 +296,9 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-See [`CLAUDE.md`](CLAUDE.md) for the architecture and coding rules.
+See [`CLAUDE.md`](CLAUDE.md) for the architecture and coding rules, and
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for the contribution workflow.
+
+## License
+
+Licensed under the [MIT License](LICENSE).

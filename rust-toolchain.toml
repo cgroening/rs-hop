@@ -1,0 +1,6 @@
+# Pin the toolchain to hop's declared MSRV so local builds catch any accidental
+# use of newer std or language features. rustfmt's nightly-only knobs in
+# rustfmt.toml are harmless on stable, so `cargo fmt` still works here.
+[toolchain]
+channel = "1.88"
+components = ["rustfmt", "clippy"]

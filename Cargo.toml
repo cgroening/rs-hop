@@ -1,6 +1,6 @@
 [package]
 name = "rs-hop"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Fuzzy-finder TUI to jump between git repositories and folders"
 license = "MIT"
@@ -8,10 +8,28 @@ rust-version = "1.88"
 authors = ["Corvin Gröning"]
 repository = "https://github.com/cgroening/rs-hop"
 homepage = "https://github.com/cgroening/rs-hop"
+documentation = "https://docs.rs/rs-hop"
 readme = "README.md"
 keywords = ["tui", "git", "fuzzy-finder", "cli", "navigation"]
 categories = ["command-line-utilities", "development-tools"]
-exclude = ["images/", "CLAUDE.md", "TODO.md"]
+exclude = [
+    "images/",
+    "docs/",
+    "CLAUDE.md",
+    "TODO.md",
+    "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md",
+    "SECURITY.md",
+    "deny.toml",
+    "rust-toolchain.toml",
+    "rustfmt.toml",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints.rust]
+missing_docs = "deny"
 
 [lib]
 name = "hop"
