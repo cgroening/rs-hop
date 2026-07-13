@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **Refreshing an entry no longer cancels a running refresh.** `x`/`X` (and `r`/`R`) previously replaced the single in-flight refresh, so refreshing one repo while the startup or a full refresh was still running silently aborted it. Refreshes now run in parallel: the one already running keeps going and the new one runs alongside it.
+
 ## [0.2.0] - 2026-07-10
 
 ### Added

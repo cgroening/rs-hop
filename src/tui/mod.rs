@@ -231,10 +231,11 @@ pub struct App {
     zip_backups: HashMap<PathBuf, DateTime<Local>>,
     cache_generated_at: Option<DateTime<Local>>,
     last_fetched: Option<DateTime<Local>>,
-    refresh_fetched: bool,
-    status_rx: Option<Receiver<crate::service::status_service::StatusUpdate>>,
-    /// Paths in the active refresh that have not been updated yet (drive the
-    /// per-row spinner). Empty when no refresh is running.
+    /// All in-flight background status refreshes, drained each loop. Several may
+    /// run at once, so starting one never cancels another.
+    status_jobs: Vec<RefreshJob>,
+    /// Paths across all active refreshes that have not been updated yet (drive
+    /// the per-row spinner). Empty when no refresh is running.
     refreshing: HashSet<PathBuf>,
     /// The per-row refresh spinner, stepped by [`App::tick`].
     spinner: Spinner,
@@ -297,6 +298,21 @@ pub struct App {
     preview_target: Option<PathBuf>,
     /// When `preview_target` last changed, for the debounce window.
     preview_target_at: Instant,
+}
+
+/// One in-flight background status refresh. Several may run concurrently, so a
+/// new refresh never cancels one already running.
+struct RefreshJob {
+    /// Receives this worker's `StatusUpdate`s.
+    rx: Receiver<StatusUpdate>,
+    /// Whether this job's completion updates the global `fetched_at` time (a
+    /// full refresh with `fetch`; a subset refresh never does).
+    fetched: bool,
+    /// Whether this job feeds the full-width progress bar.
+    bar: bool,
+    /// Paths of this job not yet reported, so its spinners can be cleared if the
+    /// job ends before every path is done.
+    remaining: HashSet<PathBuf>,
 }
 
 /// How the status is sourced on start.
@@ -365,8 +381,7 @@ impl App {
             zip_backups: HashMap::new(),
             cache_generated_at: cached.generated_at,
             last_fetched: cached.fetched_at,
-            refresh_fetched: false,
-            status_rx: None,
+            status_jobs: Vec::new(),
             refreshing: HashSet::new(),
             spinner: Spinner::new(),
             spinner_at: Instant::now(),
@@ -632,82 +647,116 @@ impl App {
         if paths.is_empty() {
             return;
         }
-        self.refreshing = paths.iter().cloned().collect();
-        self.spinner = Spinner::new();
-        self.spinner_at = Instant::now();
-        self.loading_detail = None;
-        self.loading_name_width = self.max_name_width(&paths);
-        self.loading = if show_bar {
-            Some((0, paths.len()))
-        } else {
-            None
-        };
-        // Only a full refresh updates the global "remote: fetched …" time.
-        self.refresh_fetched = fetch && show_bar;
-        self.status_rx =
-            Some(spawn_refresh(Arc::clone(&self.git_client), paths, fetch));
+        // Start the spinner only when nothing is already animating, so a running
+        // refresh keeps its rhythm rather than jumping back to frame zero.
+        if self.refreshing.is_empty() {
+            self.spinner = Spinner::new();
+            self.spinner_at = Instant::now();
+        }
+        self.refreshing.extend(paths.iter().cloned());
+        if show_bar {
+            self.loading_label = REFRESH_LABEL;
+            self.loading_detail = None;
+            self.loading = Some(match self.loading {
+                Some((done, total)) => (done, total + paths.len()),
+                None => (0, paths.len()),
+            });
+            self.loading_name_width =
+                self.loading_name_width.max(self.max_name_width(&paths));
+        }
+        let remaining: HashSet<PathBuf> = paths.iter().cloned().collect();
+        self.status_jobs.push(RefreshJob {
+            rx: spawn_refresh(Arc::clone(&self.git_client), paths, fetch),
+            // Only a full refresh updates the global "remote: fetched …" time.
+            fetched: fetch && show_bar,
+            bar: show_bar,
+            remaining,
+        });
     }
 
-    /// Applies any pending background status updates without blocking.
+    /// Applies any pending background status updates without blocking. Drains
+    /// every concurrent refresh job and drops the ones whose worker has ended.
     fn drain_status(&mut self) {
-        let Some(rx) = self.status_rx.take() else {
+        if self.status_jobs.is_empty() {
             return;
-        };
-        let mut finished = false;
-        loop {
-            match rx.try_recv() {
-                Ok(StatusUpdate::Started { path }) => {
-                    self.loading_detail = Some(self.name_for_path(&path));
-                }
-                Ok(StatusUpdate::Done { path, info }) => {
-                    self.service.set_git_info(&path, info);
-                    self.refreshing.remove(&path);
-                    if let Some((done, _)) = &mut self.loading {
-                        *done += 1;
+        }
+        let mut jobs = std::mem::take(&mut self.status_jobs);
+        let mut any_finished = false;
+        let mut fetched_finished = false;
+        jobs.retain_mut(|job| {
+            loop {
+                match job.rx.try_recv() {
+                    Ok(StatusUpdate::Started { path }) => {
+                        self.loading_detail = Some(self.name_for_path(&path));
+                    }
+                    Ok(StatusUpdate::Done { path, info }) => {
+                        self.service.set_git_info(&path, info);
+                        self.refreshing.remove(&path);
+                        job.remaining.remove(&path);
+                        if job.bar
+                            && let Some((done, _)) = &mut self.loading
+                        {
+                            *done += 1;
+                        }
+                    }
+                    Err(TryRecvError::Empty) => return true,
+                    Err(TryRecvError::Disconnected) => {
+                        // Clear any spinners the worker never reported on.
+                        for path in job.remaining.drain() {
+                            self.refreshing.remove(&path);
+                        }
+                        any_finished = true;
+                        fetched_finished |= job.fetched;
+                        return false;
                     }
                 }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    finished = true;
-                    break;
-                }
             }
+        });
+        self.status_jobs = jobs;
+        if any_finished {
+            self.finish_refresh(fetched_finished);
         }
-        if finished {
-            let now = Local::now();
-            self.cache_generated_at = Some(now);
-            if self.refresh_fetched {
-                self.last_fetched = Some(now);
-            }
-            // Persist the full current state (not just this pass's `collected`),
-            // so a single-entry refresh never drops the other entries' cache.
-            let infos: Vec<(PathBuf, crate::domain::repo::GitInfo)> = self
-                .service
-                .repos()
-                .iter()
-                .filter_map(|repo| {
-                    repo.git_info.clone().map(|info| (repo.path.clone(), info))
-                })
-                .collect();
-            let _ = status_service::save_cache(
-                &self.cache_path,
-                &infos,
-                self.last_fetched,
-            );
+        // The bar lives as long as any bar-owning job runs.
+        if !self.status_jobs.iter().any(|job| job.bar) {
             self.loading = None;
             self.loading_detail = None;
+            self.loading_name_width = 0;
+        }
+        if self.status_jobs.is_empty() {
             self.refreshing.clear();
             // A tab switched to mid-refresh deferred its first-visit refresh;
-            // run it now that the channel is free.
+            // run it now that every refresh has drained.
             self.refresh_tab_on_first_visit();
-        } else {
-            self.status_rx = Some(rx);
         }
     }
 
-    /// Whether a background status refresh is currently running.
+    /// Persists the full status cache after a refresh job finishes.
+    fn finish_refresh(&mut self, fetched: bool) {
+        let now = Local::now();
+        self.cache_generated_at = Some(now);
+        if fetched {
+            self.last_fetched = Some(now);
+        }
+        // Persist the full current state (not just the finished job's paths),
+        // so a single-entry refresh never drops the other entries' cache.
+        let infos: Vec<(PathBuf, crate::domain::repo::GitInfo)> = self
+            .service
+            .repos()
+            .iter()
+            .filter_map(|repo| {
+                repo.git_info.clone().map(|info| (repo.path.clone(), info))
+            })
+            .collect();
+        let _ = status_service::save_cache(
+            &self.cache_path,
+            &infos,
+            self.last_fetched,
+        );
+    }
+
+    /// Whether any background status refresh is currently running.
     fn is_refreshing(&self) -> bool {
-        self.status_rx.is_some()
+        !self.status_jobs.is_empty()
     }
 
     /// The display name of the entry at `path`, or its basename as a fallback.
