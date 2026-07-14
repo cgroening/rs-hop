@@ -8,8 +8,48 @@
 //! hint bar; keep them in sync with the help overlay (`tui::help`) and the
 //! README.
 
-use crate::domain::filter::Tab;
+use crate::domain::filter::{Tab, TabKind};
 use crate::keymap::Action;
+
+/// The section-management group, shared by both kinds (sections now work on git
+/// and files alike).
+const SECTIONS_GROUP: (&str, &[Action]) = (
+    "Sections",
+    &[
+        Action::ManageSections,
+        Action::SectionJump,
+        Action::ToggleGrouping,
+        Action::ReorderUp,
+        Action::ReorderDown,
+    ],
+);
+
+/// The view group, shared by both kinds.
+const VIEW_GROUP: (&str, &[Action]) = (
+    "View",
+    &[
+        Action::ToggleSelect,
+        Action::Filter,
+        Action::ChangesFilter,
+        Action::Columns,
+        Action::Sort,
+        Action::ToggleFavFloat,
+        Action::ToggleSlugs,
+        Action::CopyPath,
+        Action::Github,
+    ],
+);
+
+/// The detail-panel group, shared by both kinds.
+const PANEL_GROUP: (&str, &[Action]) = (
+    "Panel",
+    &[
+        Action::Preview,
+        Action::PreviewPosition,
+        Action::PreviewScrollUp,
+        Action::PreviewGrow,
+    ],
+);
 
 /// The Git Repos tab's footer hints, grouped and ordered.
 const GIT_HINT_GROUPS: &[(&str, &[Action])] = &[
@@ -36,28 +76,9 @@ const GIT_HINT_GROUPS: &[(&str, &[Action])] = &[
         ],
     ),
     ("Backup", &[Action::Zip, Action::ZipAll]),
-    (
-        "View",
-        &[
-            Action::ToggleSelect,
-            Action::Filter,
-            Action::ChangesFilter,
-            Action::Columns,
-            Action::Sort,
-            Action::ToggleSlugs,
-            Action::CopyPath,
-            Action::Github,
-        ],
-    ),
-    (
-        "Panel",
-        &[
-            Action::Preview,
-            Action::PreviewPosition,
-            Action::PreviewScrollUp,
-            Action::PreviewGrow,
-        ],
-    ),
+    VIEW_GROUP,
+    PANEL_GROUP,
+    SECTIONS_GROUP,
     (
         "Git",
         &[
@@ -71,14 +92,8 @@ const GIT_HINT_GROUPS: &[(&str, &[Action])] = &[
     ),
 ];
 
-/// The Archive tab's footer hints. Archived entries are git repos, so the tab
-/// shares the Git Repos groups (the neutral "archive/restore" description
-/// covers the restore action).
-const ARCHIVE_HINT_GROUPS: &[(&str, &[Action])] = GIT_HINT_GROUPS;
-
 /// The Files and Folders tab's footer hints. Like the git tabs but without the
-/// git tool, and with section management and path checks instead of the git
-/// refresh group.
+/// git tool, and with path checks instead of the git refresh group.
 const FILES_HINT_GROUPS: &[(&str, &[Action])] = &[
     (
         "Open",
@@ -97,37 +112,9 @@ const FILES_HINT_GROUPS: &[(&str, &[Action])] = &[
         ],
     ),
     ("Backup", &[Action::Zip, Action::ZipAll]),
-    (
-        "View",
-        &[
-            Action::ToggleSelect,
-            Action::Filter,
-            Action::ChangesFilter,
-            Action::Columns,
-            Action::Sort,
-            Action::ToggleSlugs,
-            Action::CopyPath,
-            Action::Github,
-        ],
-    ),
-    (
-        "Panel",
-        &[
-            Action::Preview,
-            Action::PreviewPosition,
-            Action::PreviewScrollUp,
-            Action::PreviewGrow,
-        ],
-    ),
-    (
-        "Sections",
-        &[
-            Action::ManageSections,
-            Action::SectionJump,
-            Action::ReorderUp,
-            Action::ReorderDown,
-        ],
-    ),
+    VIEW_GROUP,
+    PANEL_GROUP,
+    SECTIONS_GROUP,
     (
         "Paths",
         &[Action::Reload, Action::RepairPath, Action::Errors],
@@ -135,11 +122,10 @@ const FILES_HINT_GROUPS: &[(&str, &[Action])] = &[
 ];
 
 /// The footer hint groups for `tab`, as `(label, actions)` pairs in display
-/// order.
+/// order. Both a kind's active and archive views share the kind's groups.
 pub fn hint_groups(tab: Tab) -> &'static [(&'static str, &'static [Action])] {
-    match tab {
-        Tab::GitRepos => GIT_HINT_GROUPS,
-        Tab::FilesAndFolders => FILES_HINT_GROUPS,
-        Tab::Archive => ARCHIVE_HINT_GROUPS,
+    match tab.kind() {
+        TabKind::Git => GIT_HINT_GROUPS,
+        TabKind::Files => FILES_HINT_GROUPS,
     }
 }

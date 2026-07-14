@@ -10,7 +10,7 @@ use std::path::Path;
 use crate::domain::error::Result;
 use crate::storage::ui_state;
 
-pub use crate::storage::ui_state::UiState;
+pub use crate::storage::ui_state::{TabView, UiState};
 
 /// Loads the stored view state from `path`, falling back to the defaults when
 /// the file is missing or unreadable.

@@ -50,13 +50,18 @@ pub fn repos_to_toml(existing: &str, repos: &[Repo]) -> Result<String> {
     Ok(doc.to_string())
 }
 
-/// Writes the ordered section names into the `config.toml` at `path`,
-/// preserving the rest of the document and creating the file when absent.
+/// Writes the ordered section names into the top-level `key` array of the
+/// `config.toml` at `path`, preserving the rest of the document and creating the
+/// file when absent.
 ///
 /// # Errors
 /// Returns an error if the file cannot be read, is not valid TOML, or cannot be
 /// written.
-pub fn save_sections(path: &Path, sections: &[String]) -> Result<()> {
+pub fn save_sections(
+    path: &Path,
+    key: &str,
+    sections: &[String],
+) -> Result<()> {
     let existing = if path.exists() {
         fs::read_to_string(path).map_err(|e| {
             Error::config(path.display().to_string(), e.to_string())
@@ -64,28 +69,32 @@ pub fn save_sections(path: &Path, sections: &[String]) -> Result<()> {
     } else {
         String::new()
     };
-    let updated = sections_to_toml(&existing, sections)?;
+    let updated = sections_to_toml(&existing, key, sections)?;
     write_atomic(path, &updated, "config.toml")
 }
 
-/// Returns `existing` with its top-level `sections` array set to `sections`
-/// (removed when empty), leaving the rest of the document untouched.
+/// Returns `existing` with its top-level `key` array set to `sections` (removed
+/// when empty), leaving the rest of the document untouched.
 ///
 /// # Errors
 /// Returns [`Error::Config`] when `existing` is not valid TOML.
-pub fn sections_to_toml(existing: &str, sections: &[String]) -> Result<String> {
+pub fn sections_to_toml(
+    existing: &str,
+    key: &str,
+    sections: &[String],
+) -> Result<String> {
     let mut doc = existing
         .parse::<DocumentMut>()
         .map_err(|e| Error::config("config.toml", e.to_string()))?;
     if sections.is_empty() {
-        doc.as_table_mut().remove("sections");
+        doc.as_table_mut().remove(key);
         return Ok(doc.to_string());
     }
     let mut array = toml_edit::Array::new();
     for name in sections {
         array.push(name.clone());
     }
-    doc["sections"] = Item::Value(Value::Array(array));
+    doc[key] = Item::Value(Value::Array(array));
     Ok(doc.to_string())
 }
 
@@ -223,6 +232,7 @@ path = "/old"
     fn sections_array_is_written_and_cleared() {
         let with = sections_to_toml(
             EXISTING,
+            "sections",
             &["Work".to_string(), "Personal".to_string()],
         )
         .unwrap();
@@ -230,7 +240,17 @@ path = "/old"
         // Settings survive the rewrite.
         assert!(with.contains("git_program = \"lazygit\"  # the tool"));
         // An empty list removes the key.
-        let cleared = sections_to_toml(&with, &[]).unwrap();
+        let cleared = sections_to_toml(&with, "sections", &[]).unwrap();
         assert!(!cleared.contains("sections ="));
+    }
+
+    #[test]
+    fn git_sections_use_their_own_key() {
+        let out =
+            sections_to_toml("", "git_sections", &["Backend".to_string()])
+                .unwrap();
+        assert!(out.contains("git_sections = [\"Backend\"]"));
+        let cleared = sections_to_toml(&out, "git_sections", &[]).unwrap();
+        assert!(!cleared.contains("git_sections"));
     }
 }

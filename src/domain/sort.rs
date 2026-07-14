@@ -181,6 +181,9 @@ pub struct SortContext<'a> {
     pub mode: SortMode,
     /// Which way round.
     pub dir: SortDir,
+    /// Whether favourites float to the top (and are then ordered among
+    /// themselves by the mode); off orders every entry purely by the mode.
+    pub float_favs: bool,
     /// The reference time for frecency, in unix seconds.
     pub now: i64,
     /// The statistics the column modes read.
@@ -193,43 +196,52 @@ pub fn sort_indices(repos: &[Repo], indices: &mut [usize], ctx: &SortContext) {
     indices.sort_by(|a, b| compare(&repos[*a], &repos[*b], ctx));
 }
 
-/// Compares two entries under `ctx`.
+/// Compares two entries under `ctx`. Favourites float to the top in every mode
+/// when `float_favs` is on (and are then ordered among themselves by the mode);
+/// the float sits outside the direction reversal, so favourites stay on top in
+/// both directions.
 fn compare(a: &Repo, b: &Repo, ctx: &SortContext) -> std::cmp::Ordering {
-    if ctx.mode.is_statistic() {
-        return compare_statistic(a, b, ctx);
+    let base = if ctx.mode.is_statistic() {
+        compare_statistic(a, b, ctx)
+    } else {
+        apply_dir(compare_identity(a, b, ctx), ctx.dir)
+    };
+    if ctx.float_favs {
+        b.fav.cmp(&a.fav).then(base)
+    } else {
+        base
     }
-    let ordering = compare_identity(a, b, ctx);
-    match ctx.dir {
+}
+
+/// Applies the sort direction to an ascending-oriented ordering.
+fn apply_dir(ordering: std::cmp::Ordering, dir: SortDir) -> std::cmp::Ordering {
+    match dir {
         SortDir::Asc => ordering,
         SortDir::Desc => ordering.reverse(),
     }
 }
 
 /// Compares by what an entry is: name, recency, frecency or the stored order.
+/// Favourite floating is applied by [`compare`], not here.
 fn compare_identity(
     a: &Repo,
     b: &Repo,
     ctx: &SortContext,
 ) -> std::cmp::Ordering {
     match ctx.mode {
-        // Favourites on top, each group case-insensitive by name.
-        SortMode::Name => b.fav.cmp(&a.fav).then_with(|| name_cmp(a, b)),
-        // Pure recency (favourites not pinned), name as tiebreak.
+        // Case-insensitive by name.
+        SortMode::Name => name_cmp(a, b),
+        // Recency, name as tiebreak.
         SortMode::Recent => recency_key(b)
             .cmp(&recency_key(a))
             .then_with(|| name_cmp(a, b)),
-        // Favourites on top, then highest frecency, name as tiebreak.
-        SortMode::Frecency => b
-            .fav
-            .cmp(&a.fav)
-            .then_with(|| {
-                frecency(b, ctx.now)
-                    .partial_cmp(&frecency(a, ctx.now))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
+        // Highest frecency, name as tiebreak.
+        SortMode::Frecency => frecency(b, ctx.now)
+            .partial_cmp(&frecency(a, ctx.now))
+            .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| name_cmp(a, b)),
-        // Stable on the index order, only favourites floated to the top.
-        _ => b.fav.cmp(&a.fav),
+        // Stable on the stored index order.
+        _ => std::cmp::Ordering::Equal,
     }
 }
 
@@ -332,9 +344,19 @@ mod tests {
         dir: SortDir,
         maps: &'a (HashMap<PathBuf, CodeEntry>, HashMap<PathBuf, GitStats>),
     ) -> SortContext<'a> {
+        floated(mode, dir, maps, true)
+    }
+
+    fn floated<'a>(
+        mode: SortMode,
+        dir: SortDir,
+        maps: &'a (HashMap<PathBuf, CodeEntry>, HashMap<PathBuf, GitStats>),
+        float_favs: bool,
+    ) -> SortContext<'a> {
         SortContext {
             mode,
             dir,
+            float_favs,
             now: NOW,
             stats: StatsLookup {
                 code: &maps.0,
@@ -404,16 +426,52 @@ mod tests {
     }
 
     #[test]
-    fn recent_ignores_favourites() {
+    fn recent_without_float_ignores_favourites() {
         let repos = vec![
             repo("old-fav", true, Some(100)),
             repo("fresh", false, Some(900)),
             repo("never", false, None),
         ];
         let maps = no_stats();
-        let names =
-            ordered(&repos, &context(SortMode::Recent, SortDir::Asc, &maps));
-        assert_eq!(names, vec!["fresh", "old-fav", "never"]);
+        let ctx = floated(SortMode::Recent, SortDir::Asc, &maps, false);
+        assert_eq!(ordered(&repos, &ctx), vec!["fresh", "old-fav", "never"]);
+    }
+
+    #[test]
+    fn float_favs_pins_favourites_in_every_mode() {
+        let repos = vec![
+            repo("old-fav", true, Some(100)),
+            repo("fresh", false, Some(900)),
+            repo("never", false, None),
+        ];
+        let maps = no_stats();
+        // Recency would rank "fresh" first, but the favourite floats on top
+        // and non-favourites keep their recency order below it.
+        let ctx = floated(SortMode::Recent, SortDir::Asc, &maps, true);
+        assert_eq!(ordered(&repos, &ctx), vec!["old-fav", "fresh", "never"]);
+    }
+
+    #[test]
+    fn float_favs_off_gives_pure_order() {
+        let repos = vec![repo("zebra", true, None), repo("alpha", false, None)];
+        let maps = no_stats();
+        let ctx = floated(SortMode::Name, SortDir::Asc, &maps, false);
+        // The favourite is not pinned; pure alphabetical order.
+        assert_eq!(ordered(&repos, &ctx), vec!["alpha", "zebra"]);
+    }
+
+    #[test]
+    fn float_favs_pins_in_a_statistics_mode() {
+        let repos =
+            vec![repo("small-fav", true, None), repo("big", false, None)];
+        let code = HashMap::from([
+            (repos[0].path.clone(), code_entry(10, 100)),
+            (repos[1].path.clone(), code_entry(900, 5)),
+        ]);
+        let maps = (code, HashMap::new());
+        // Largest first would rank "big", but the favourite floats on top.
+        let ctx = floated(SortMode::Loc, SortDir::Desc, &maps, true);
+        assert_eq!(ordered(&repos, &ctx), vec!["small-fav", "big"]);
     }
 
     #[test]
@@ -445,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn loc_orders_by_lines_and_ignores_favourites() {
+    fn loc_orders_by_lines_without_float() {
         let repos = vec![
             repo("small-fav", true, None),
             repo("big", false, None),
@@ -457,19 +515,13 @@ mod tests {
             (repos[2].path.clone(), code_entry(100, 50)),
         ]);
         let maps = (code, HashMap::new());
-        assert_eq!(
-            ordered(&repos, &context(SortMode::Loc, SortDir::Desc, &maps)),
-            vec!["big", "mid", "small-fav"]
-        );
-        assert_eq!(
-            ordered(&repos, &context(SortMode::Loc, SortDir::Asc, &maps)),
-            vec!["small-fav", "mid", "big"]
-        );
+        let desc = floated(SortMode::Loc, SortDir::Desc, &maps, false);
+        assert_eq!(ordered(&repos, &desc), vec!["big", "mid", "small-fav"]);
+        let asc = floated(SortMode::Loc, SortDir::Asc, &maps, false);
+        assert_eq!(ordered(&repos, &asc), vec!["small-fav", "mid", "big"]);
         // Size orders independently of the line count.
-        assert_eq!(
-            ordered(&repos, &context(SortMode::Size, SortDir::Desc, &maps)),
-            vec!["small-fav", "mid", "big"]
-        );
+        let size = floated(SortMode::Size, SortDir::Desc, &maps, false);
+        assert_eq!(ordered(&repos, &size), vec!["small-fav", "mid", "big"]);
     }
 
     #[test]

@@ -90,10 +90,12 @@ pub struct RepoForm {
     kind: RepoKind,
     fav: bool,
     include_in_backup: bool,
-    /// The section options offered by the dropdown: `None` (Ungrouped) first,
-    /// then each known section.
-    section_options: Vec<Option<String>>,
-    /// The selected index into `section_options`.
+    /// The git-namespace section options: `None` (Ungrouped) first, then each
+    /// known section. Shown when the current kind is git.
+    git_section_options: Vec<Option<String>>,
+    /// The files-namespace section options, shown when the kind is a path.
+    path_section_options: Vec<Option<String>>,
+    /// The selected index into the current kind's section options.
     section_choice: usize,
     /// The original section, kept for entries whose Section field is hidden.
     seed_section: Option<String>,
@@ -104,7 +106,12 @@ pub struct RepoForm {
 impl RepoForm {
     /// A blank add form, seeded with a `path` and guessed `kind`. The backup
     /// toggle defaults per kind: on for git repos, off for file/folder entries.
-    pub fn for_add(path: &str, kind: RepoKind, sections: &[String]) -> Self {
+    pub fn for_add(
+        path: &str,
+        kind: RepoKind,
+        git_sections: &[String],
+        path_sections: &[String],
+    ) -> Self {
         Self::build(
             "Add entry",
             "",
@@ -114,12 +121,17 @@ impl RepoForm {
             false,
             kind == RepoKind::Git,
             None,
-            sections,
+            git_sections,
+            path_sections,
         )
     }
 
     /// An edit form seeded from an existing entry's fields.
-    pub fn for_edit(repo: &Repo, sections: &[String]) -> Self {
+    pub fn for_edit(
+        repo: &Repo,
+        git_sections: &[String],
+        path_sections: &[String],
+    ) -> Self {
         Self::build(
             "Edit entry",
             repo.name.as_deref().unwrap_or(""),
@@ -129,11 +141,12 @@ impl RepoForm {
             repo.fav,
             repo.include_in_backup,
             repo.section.clone(),
-            sections,
+            git_sections,
+            path_sections,
         )
     }
 
-    /// Builds a form from explicit seed values and the known section names.
+    /// Builds a form from explicit seed values and both kinds' section names.
     #[allow(clippy::too_many_arguments)]
     fn build(
         title: &str,
@@ -144,11 +157,16 @@ impl RepoForm {
         fav: bool,
         include_in_backup: bool,
         section: Option<String>,
-        sections: &[String],
+        git_sections: &[String],
+        path_sections: &[String],
     ) -> Self {
-        let section_options = section_options(sections);
-        let section_choice =
-            section_choice(&section_options, section.as_deref());
+        let git_section_options = section_options(git_sections);
+        let path_section_options = section_options(path_sections);
+        let current = match kind {
+            RepoKind::Git => &git_section_options,
+            RepoKind::Path => &path_section_options,
+        };
+        let section_choice = section_choice(current, section.as_deref());
         RepoForm {
             title: title.to_string(),
             name: InputField::new(name),
@@ -157,31 +175,34 @@ impl RepoForm {
             kind,
             fav,
             include_in_backup,
-            section_options,
+            git_section_options,
+            path_section_options,
             section_choice,
             seed_section: section,
             focus: 0,
         }
     }
 
-    /// The fields visible for the current kind, in focus order: a git entry
-    /// shows Fav, a folder/file shows Section.
+    /// The fields visible for the current kind, in focus order. Both kinds show
+    /// the Section dropdown (each namespace is per kind); only git shows Fav.
     fn fields(&self) -> Vec<Field> {
-        let mut fields = vec![Field::Path, Field::Name];
-        match self.kind {
-            RepoKind::Git => {
-                fields.push(Field::Slug);
-                fields.push(Field::Fav);
-            }
-            RepoKind::Path => {
-                fields.push(Field::Section);
-                fields.push(Field::Slug);
-            }
+        let mut fields =
+            vec![Field::Path, Field::Name, Field::Section, Field::Slug];
+        if self.kind == RepoKind::Git {
+            fields.push(Field::Fav);
         }
         // The backup toggle shows for both kinds; Kind sits at the very bottom.
         fields.push(Field::Backup);
         fields.push(Field::Kind);
         fields
+    }
+
+    /// The section dropdown options for the current kind.
+    fn section_options(&self) -> &[Option<String>] {
+        match self.kind {
+            RepoKind::Git => &self.git_section_options,
+            RepoKind::Path => &self.path_section_options,
+        }
     }
 
     /// Handles a key, returning a save draft, a cancel, or pending.
@@ -244,7 +265,8 @@ impl RepoForm {
     }
 
     /// Cycles the kind on `Left`/`Right`, keeping focus on the Kind field even
-    /// though the visible field set changes with the kind.
+    /// though the visible field set changes with the kind. The section choice is
+    /// re-resolved against the new kind's namespace, preserving it by name.
     fn edit_kind(&mut self, key: KeyEvent) {
         let changed = match key.code {
             KeyCode::Left => {
@@ -258,7 +280,18 @@ impl RepoForm {
             _ => false,
         };
         if changed {
+            let selected = self.selected_section().map(str::to_string);
+            self.section_choice =
+                section_choice(self.section_options(), selected.as_deref());
             self.focus = self.field_index(Field::Kind);
+        }
+    }
+
+    /// The currently selected section name, or `None` for Ungrouped.
+    fn selected_section(&self) -> Option<&str> {
+        match self.section_options().get(self.section_choice) {
+            Some(Some(name)) => Some(name),
+            _ => None,
         }
     }
 
@@ -277,7 +310,7 @@ impl RepoForm {
 
     /// Cycles the section choice by `delta` (wrapping).
     fn cycle_section(&mut self, delta: isize) {
-        let len = self.section_options.len();
+        let len = self.section_options().len();
         if len == 0 {
             return;
         }
@@ -314,7 +347,7 @@ impl RepoForm {
         let name = non_empty(self.name.value().to_string());
         let slug = non_empty(slugify(self.slug.value()));
         let section = if self.fields().contains(&Field::Section) {
-            self.section_options
+            self.section_options()
                 .get(self.section_choice)
                 .cloned()
                 .flatten()
@@ -444,10 +477,7 @@ impl RepoForm {
 
     /// The label of the currently selected section option.
     fn section_label(&self) -> &str {
-        match self.section_options.get(self.section_choice) {
-            Some(Some(name)) => name,
-            _ => UNGROUPED,
-        }
+        self.selected_section().unwrap_or(UNGROUPED)
     }
 
     /// The fixed-width field label, accented when focused.
@@ -571,12 +601,12 @@ mod tests {
     }
 
     #[test]
-    fn visible_fields_follow_the_kind() {
-        let git = RepoForm::for_add("/p", RepoKind::Git, &[]);
+    fn both_kinds_show_section_and_only_git_shows_fav() {
+        let git = RepoForm::for_add("/p", RepoKind::Git, &[], &[]);
         assert!(git.fields().contains(&Field::Fav));
-        assert!(!git.fields().contains(&Field::Section));
+        assert!(git.fields().contains(&Field::Section));
 
-        let folder = RepoForm::for_add("/p", RepoKind::Path, &[]);
+        let folder = RepoForm::for_add("/p", RepoKind::Path, &[], &[]);
         assert!(folder.fields().contains(&Field::Section));
         assert!(!folder.fields().contains(&Field::Fav));
 
@@ -586,11 +616,29 @@ mod tests {
     }
 
     #[test]
+    fn switching_kind_shows_that_kinds_sections() {
+        let git_sections = ["Backend".to_string()];
+        let path_sections = ["Notes".to_string()];
+        let mut form = RepoForm::for_add(
+            "/p",
+            RepoKind::Git,
+            &git_sections,
+            &path_sections,
+        );
+        assert_eq!(form.section_options().len(), 2); // Ungrouped + Backend
+        assert_eq!(form.section_options()[1].as_deref(), Some("Backend"));
+        // Switch to a path: the files namespace's sections show instead.
+        form.edit_kind(KeyEvent::from(KeyCode::Right));
+        assert_eq!(form.kind, RepoKind::Path);
+        assert_eq!(form.section_options()[1].as_deref(), Some("Notes"));
+    }
+
+    #[test]
     fn for_add_seeds_backup_toggle_per_kind() {
         // Git repos default to included, file/folder entries to excluded.
-        let git = RepoForm::for_add("/p", RepoKind::Git, &[]);
+        let git = RepoForm::for_add("/p", RepoKind::Git, &[], &[]);
         assert!(git.draft().include_in_backup);
-        let folder = RepoForm::for_add("/p", RepoKind::Path, &[]);
+        let folder = RepoForm::for_add("/p", RepoKind::Path, &[], &[]);
         assert!(!folder.draft().include_in_backup);
     }
 }

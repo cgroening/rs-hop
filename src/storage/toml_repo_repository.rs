@@ -24,13 +24,25 @@ impl TomlRepoRepository {
     }
 }
 
-/// The `[[repos]]` array and `sections` order wrapper for reading.
+/// The `[[repos]]` array plus the two per-kind section orders for reading.
 #[derive(Debug, Default, Deserialize)]
 struct RawFile {
     #[serde(default)]
     repos: Vec<RawRepo>,
+    /// The Files (path) section order (legacy key: sections were Files-only).
     #[serde(default)]
     sections: Vec<String>,
+    /// The Git section order.
+    #[serde(default)]
+    git_sections: Vec<String>,
+}
+
+/// The top-level config key holding the section order for `kind`.
+fn sections_key(kind: RepoKind) -> &'static str {
+    match kind {
+        RepoKind::Git => "git_sections",
+        RepoKind::Path => "sections",
+    }
 }
 
 /// One stored entry as read from TOML.
@@ -106,12 +118,16 @@ impl RepoRepository for TomlRepoRepository {
         writer::save_repos(&self.path, repos)
     }
 
-    fn find_sections(&self) -> Result<Vec<String>> {
-        Ok(self.read_raw()?.sections)
+    fn find_sections(&self, kind: RepoKind) -> Result<Vec<String>> {
+        let raw = self.read_raw()?;
+        Ok(match kind {
+            RepoKind::Git => raw.git_sections,
+            RepoKind::Path => raw.sections,
+        })
     }
 
-    fn save_sections(&self, sections: &[String]) -> Result<()> {
-        writer::save_sections(&self.path, sections)
+    fn save_sections(&self, kind: RepoKind, sections: &[String]) -> Result<()> {
+        writer::save_sections(&self.path, sections_key(kind), sections)
     }
 }
 
@@ -190,10 +206,11 @@ include_in_backup = true
     }
 
     #[test]
-    fn reads_section_field_and_sections_order() {
+    fn reads_section_field_and_per_kind_orders() {
         let raw: RawFile = toml::from_str(
             r#"
 sections = ["Work", "Personal"]
+git_sections = ["Backend", "Frontend"]
 
 [[repos]]
 path = "/notes"
@@ -208,10 +225,25 @@ section = "   "
         )
         .unwrap();
         assert_eq!(raw.sections, ["Work", "Personal"]);
+        assert_eq!(raw.git_sections, ["Backend", "Frontend"]);
         let repos: Vec<Repo> =
             raw.repos.into_iter().map(RawRepo::into_repo).collect();
         assert_eq!(repos[0].section.as_deref(), Some("Work"));
         // Blank sections normalise to None (Ungrouped).
         assert_eq!(repos[1].section, None);
+    }
+
+    #[test]
+    fn legacy_sections_map_to_the_files_namespace() {
+        // A pre-existing file has only the old unified `sections` key.
+        let raw: RawFile = toml::from_str("sections = [\"Notes\"]\n").unwrap();
+        assert_eq!(raw.sections, ["Notes"]);
+        assert!(raw.git_sections.is_empty());
+    }
+
+    #[test]
+    fn sections_key_maps_each_kind() {
+        assert_eq!(sections_key(RepoKind::Git), "git_sections");
+        assert_eq!(sections_key(RepoKind::Path), "sections");
     }
 }

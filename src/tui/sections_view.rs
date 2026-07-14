@@ -19,6 +19,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
+use crate::config::Config;
+use crate::domain::filter::{Tab, TabKind};
 use crate::domain::repo::{Repo, is_dir_target};
 use crate::domain::sections::SectionGroup;
 use crate::domain::stats::{CodeEntry, GitStats};
@@ -26,7 +28,11 @@ use crate::theme::Skin;
 use crate::tui::columns::{
     CellSource, ColumnSet, StatColumn, cell_text, stat_columns,
 };
-use crate::tui::presentation::{IconSet, name_plain, slug_style};
+use crate::tui::git_columns::{
+    branch_text, effective_info, git_marker_errored, github_text,
+    status_display, zip_date_text,
+};
+use crate::tui::presentation::{IconSet, name_plain, slug_style, status_span};
 use crate::tui::skin::Colors;
 
 /// The lower and upper bound for the auto-sized name column.
@@ -36,14 +42,26 @@ const NAME_MAX: usize = 30;
 const TYPE_WIDTH: usize = 6;
 /// Fixed width of the ZIP Backup column (fits a `YYYY-MM-DD` date).
 const ZIP_WIDTH: usize = 10;
+/// Lower and upper bounds for the git branch column.
+const BRANCH_MIN: usize = 6;
+const BRANCH_MAX: usize = 20;
+/// Lower and upper bounds for the git status column.
+const STATUS_MIN: usize = 4;
+const STATUS_MAX: usize = 12;
 
 /// The styling context for a sectioned render, bundled to keep the parameter
 /// count low.
 pub struct SectionedView<'a> {
+    /// The active tab (decides the git vs files column layout).
+    pub tab: Tab,
     /// The display-ordered sections with their entry service indices.
     pub groups: &'a [SectionGroup],
     /// All service entries (indexed by the groups' items).
     pub repos: &'a [Repo],
+    /// The resolved settings (branch column cap).
+    pub config: &'a Config,
+    /// Whether to show example git info instead of live status.
+    pub example_mode: bool,
     /// The glyph set.
     pub icons: &'a IconSet,
     /// The active theme, for the scrollbar.
@@ -70,8 +88,10 @@ pub struct SectionedView<'a> {
     pub git: &'a HashMap<PathBuf, GitStats>,
     /// Paths a statistics worker has not reported yet.
     pub computing: &'a HashSet<PathBuf>,
-    /// The current spinner glyph while a worker runs.
-    pub spinner: Option<&'a str>,
+    /// While a refresh runs: the still-in-flight paths and the current spinner
+    /// glyph. Rows whose path is in the set show the spinner. `None` outside a
+    /// run.
+    pub spinner: Option<(&'a HashSet<PathBuf>, &'a str)>,
     /// The reference time for ages, in unix seconds.
     pub now: i64,
 }
@@ -88,7 +108,18 @@ impl SectionedView<'_> {
             now: self.now,
         };
         cell_text(column, source)
-            .unwrap_or_else(|| self.spinner.unwrap_or("-").to_string())
+            .unwrap_or_else(|| self.spinner_glyph().to_string())
+    }
+
+    /// The current spinner glyph, or a dash outside a run.
+    fn spinner_glyph(&self) -> &str {
+        self.spinner.map_or("-", |(_, glyph)| glyph)
+    }
+
+    /// Whether `repo` is still in flight in the running refresh.
+    fn is_in_flight(&self, repo: &Repo) -> bool {
+        self.spinner
+            .is_some_and(|(in_flight, _)| in_flight.contains(&repo.path))
     }
 }
 
@@ -273,8 +304,8 @@ fn header_item<'a>(label: &str, width: usize, colors: &Colors) -> ListItem<'a> {
     ]))
 }
 
-/// One entry row: marker/fav prefix, the auto-sized name, the type and the dim
-/// path, tinted when part of the multi-selection.
+/// One entry row: a shared marker/fav/name prefix, then the git or files
+/// columns, tinted when part of the multi-selection.
 fn entry_item<'a>(
     view: &SectionedView,
     index: usize,
@@ -300,30 +331,6 @@ fn entry_item<'a>(
         name_width,
         view.colors,
     );
-    if view.columns.is_statistics() {
-        let mut spans = vec![
-            lead,
-            marker_span(repo, view),
-            fav_span(repo, view),
-            Span::raw(" "),
-        ];
-        spans.extend(name_field);
-        spans.extend(stat_spans(view, repo));
-        let item = ListItem::new(Line::from(spans));
-        return if selected {
-            item.style(Style::default().bg(view.colors.multi_select_bg))
-        } else {
-            item
-        };
-    }
-    let kind = pad(type_label(repo), TYPE_WIDTH);
-    // Cells before the path: lead(2) + marker(1) + fav(1) + space(1) + name
-    //  + gap(2) + type + gap(2); the path then fills up to the trailing
-    // gap(2) + ZIP-backup column at the right edge.
-    let used = 2 + 1 + 1 + 1 + name_width + 2 + TYPE_WIDTH + 2 + 2 + ZIP_WIDTH;
-    let path = pad(&repo.path.to_string_lossy(), width.saturating_sub(used));
-    let zip = format!("{:>ZIP_WIDTH$}", zip_cell_text(repo, view));
-
     let mut spans = vec![
         lead,
         marker_span(repo, view),
@@ -331,14 +338,18 @@ fn entry_item<'a>(
         Span::raw(" "),
     ];
     spans.extend(name_field);
-    spans.extend([
-        Span::raw("  "),
-        Span::raw(kind),
-        Span::raw("  "),
-        Span::styled(path, Style::default().fg(view.colors.dim)),
-        Span::raw("  "),
-        Span::styled(zip, Style::default().fg(view.colors.dim)),
-    ]);
+    if view.columns.is_statistics() {
+        spans.extend(stat_spans(view, repo));
+    } else {
+        match view.tab.kind() {
+            TabKind::Files => {
+                spans.extend(files_spans(repo, view, name_width, width))
+            }
+            TabKind::Git => {
+                spans.extend(git_spans(repo, view, name_width, width))
+            }
+        }
+    }
     let item = ListItem::new(Line::from(spans));
     if selected {
         item.style(Style::default().bg(view.colors.multi_select_bg))
@@ -347,10 +358,133 @@ fn entry_item<'a>(
     }
 }
 
-/// The error marker glyph (red) when the entry's path was flagged missing by
-/// the existence check, else blank.
+/// The Files-tab columns after the name: type, the dim path and the ZIP date.
+fn files_spans(
+    repo: &Repo,
+    view: &SectionedView,
+    name_width: usize,
+    width: usize,
+) -> Vec<Span<'static>> {
+    let kind = pad(type_label(repo), TYPE_WIDTH);
+    // lead(2) + marker(1) + fav(1) + space(1) + name + gap(2) + type + gap(2);
+    // the path then fills up to the trailing gap(2) + ZIP column at the edge.
+    let used = 2 + 1 + 1 + 1 + name_width + 2 + TYPE_WIDTH + 2 + 2 + ZIP_WIDTH;
+    let path = pad(&repo.path.to_string_lossy(), width.saturating_sub(used));
+    let zip = format!("{:>ZIP_WIDTH$}", zip_cell_text(repo, view));
+    vec![
+        Span::raw("  "),
+        Span::raw(kind),
+        Span::raw("  "),
+        Span::styled(path, Style::default().fg(view.colors.dim)),
+        Span::raw("  "),
+        Span::styled(zip, Style::default().fg(view.colors.dim)),
+    ]
+}
+
+/// The git-tab columns after the name: branch, coloured status, the dim GitHub
+/// name (flexing into the leftover width) and the ZIP date.
+fn git_spans(
+    repo: &Repo,
+    view: &SectionedView,
+    name_width: usize,
+    width: usize,
+) -> Vec<Span<'static>> {
+    let (branch_w, status_w, github_w) =
+        git_column_widths(view, name_width, width);
+    let info = effective_info(repo, view.example_mode);
+    let branch = pad(&branch_text(info), branch_w);
+    let github = pad(&github_text(info), github_w);
+    let zip = format!("{:>ZIP_WIDTH$}", zip_cell_text(repo, view));
+    let mut spans = vec![
+        Span::raw("  "),
+        Span::styled(branch, Style::default().fg(view.colors.dim)),
+        Span::raw("  "),
+    ];
+    spans.extend(git_status_spans(repo, view, info, status_w));
+    spans.extend([
+        Span::raw("  "),
+        Span::styled(github, Style::default().fg(view.colors.dim)),
+        Span::raw("  "),
+        Span::styled(zip, Style::default().fg(view.colors.dim)),
+    ]);
+    spans
+}
+
+/// The status spans padded to `width`: the spinner while the row is in flight,
+/// otherwise the shared coloured status followed by padding.
+fn git_status_spans(
+    repo: &Repo,
+    view: &SectionedView,
+    info: Option<&crate::domain::repo::GitInfo>,
+    width: usize,
+) -> Vec<Span<'static>> {
+    if view.is_in_flight(repo) {
+        return vec![Span::styled(
+            pad(view.spinner_glyph(), width),
+            Style::default().fg(view.colors.accent),
+        )];
+    }
+    let text = status_display(info, view.icons);
+    let used = UnicodeWidthStr::width(text.as_str()).min(width);
+    vec![
+        status_span(info, view.icons, view.colors),
+        Span::raw(" ".repeat(width.saturating_sub(used))),
+    ]
+}
+
+/// The git columns' widths: branch and status sized to their bounded content,
+/// GitHub taking the leftover width (so the row fills without overflowing).
+fn git_column_widths(
+    view: &SectionedView,
+    name_width: usize,
+    width: usize,
+) -> (usize, usize, usize) {
+    let branch = col_content(view, |r| {
+        branch_text(effective_info(r, view.example_mode))
+    })
+    .clamp(BRANCH_MIN, BRANCH_MAX);
+    let status = col_content(view, |r| {
+        status_display(effective_info(r, view.example_mode), view.icons)
+    })
+    .clamp(STATUS_MIN, STATUS_MAX);
+    // lead(2) + marker(1) + fav(1) + space(1) + name + gap(2) + branch + gap(2)
+    // + status + gap(2) + github + gap(2) + ZIP; GitHub flexes into the rest.
+    let used = 2
+        + 1
+        + 1
+        + 1
+        + name_width
+        + 2
+        + branch
+        + 2
+        + status
+        + 2
+        + 2
+        + ZIP_WIDTH;
+    let github = width.saturating_sub(used);
+    (branch, status, github)
+}
+
+/// The widest rendered cell (display columns) over every entry for one column.
+fn col_content<F>(view: &SectionedView, cell: F) -> usize
+where
+    F: Fn(&Repo) -> String,
+{
+    view.groups
+        .iter()
+        .flat_map(|group| group.items.iter())
+        .map(|&index| UnicodeWidthStr::width(cell(&view.repos[index]).as_str()))
+        .max()
+        .unwrap_or(0)
+}
+
+/// The error marker glyph (red) when the entry has a path/repo error, else
+/// blank: a git entry is flagged from its gathered info, a path entry once the
+/// existence check flagged it.
 fn marker_span(repo: &Repo, view: &SectionedView) -> Span<'static> {
-    if view.missing.contains(&repo.path) {
+    let errored = git_marker_errored(repo, view.example_mode)
+        || view.missing.contains(&repo.path);
+    if errored {
         Span::styled(
             view.icons.missing.to_string(),
             Style::default()
@@ -432,16 +566,9 @@ fn pad(text: &str, width: usize) -> String {
     }
 }
 
-/// The ZIP Backup cell text for `repo`: the excluded marker when the entry opts
-/// out of the "backup all" run, else the last-backup date (`YYYY-MM-DD`) or a
-/// dash when never backed up.
+/// The ZIP Backup cell text for `repo` (the shared git-columns helper).
 fn zip_cell_text(repo: &Repo, view: &SectionedView) -> String {
-    if !repo.include_in_backup {
-        return view.icons.excluded.to_string();
-    }
-    view.zip_backups
-        .get(&repo.path)
-        .map_or_else(|| "-".to_string(), |dt| dt.format("%Y-%m-%d").to_string())
+    zip_date_text(repo, view.icons, view.zip_backups)
 }
 
 /// The detected type label for an entry on the Files tab.

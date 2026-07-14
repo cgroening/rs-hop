@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Sections on git repos and archives, not just files.** Each kind (git, files) keeps its own independent, reorderable section list; an entry keeps its group when archived. `.` toggles the grouped view for the current tab; with grouping off the list is a flat, globally sorted table with a leading `Section` column. Inside a group, entries follow the active sort mode. Sections are managed with `M` and jumped to with `s` on both kinds now (the add/edit form shows the `Section` dropdown for git entries too). Git and files section orders are stored in separate `git_sections` / `sections` arrays in `config.toml`.
+- **A toggle to float favourites (`,`).** By default favourites float to the top of each group and are sorted among themselves by the active sort mode; `,` turns the floating off for a pure sort. This applies in both the grouped and the flat view, and now in every sort mode (including the statistics columns).
+- **Per-kind view settings.** Git and Files each remember their own sort mode, sort direction, column set, grouping and fav-float across runs (a kind's active and archive views share its settings).
+
+### Changed
+
+- **Each kind now has its own archive, reached by a second key press.** The single shared Archive tab (and its `3` key) is gone. Pressing `1` again while on Git Repos shows the git archive, `2` again shows the files archive, and a further press toggles back; the active tab's header gains a ` · Archiv` suffix. `Tab`/`Shift+Tab` cycle only the two active tabs. A persisted `tab = "archive"` from an older version opens the git archive; a pre-existing `sections = [...]` list maps to the files namespace.
+
 ### Fixed
 
 - **Refreshing an entry no longer cancels a running refresh.** `x`/`X` (and `r`/`R`) previously replaced the single in-flight refresh, so refreshing one repo while the startup or a full refresh was still running silently aborted it. Refreshes now run in parallel: the one already running keeps going and the new one runs alongside it.

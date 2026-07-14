@@ -236,7 +236,8 @@ fn run_demo(mut config: Config) -> ExitCode {
     config.example_mode = true;
     let dir = std::env::temp_dir().join("hop-demo");
     let repository = InMemoryRepoRepository::new(demo::repos());
-    let _ = repository.save_sections(&demo::sections());
+    let _ = repository.save_sections(RepoKind::Git, &demo::git_sections());
+    let _ = repository.save_sections(RepoKind::Path, &demo::sections());
     let service = match RepoService::new(
         Box::new(repository),
         dir.join("usage.toml"),
@@ -432,7 +433,7 @@ fn cmd_add(
         return output::report_error(&error);
     }
     if let Some(section) = section {
-        let _ = service.ensure_section(section);
+        let _ = service.ensure_section(kind, section);
     }
     let _ = Alert::success(format!(
         "Added {} ({})",

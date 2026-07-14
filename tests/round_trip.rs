@@ -76,6 +76,70 @@ fn toml_backend_round_trips_and_preserves_settings() {
     fs::remove_dir_all(&dir).ok();
 }
 
+const SECTIONED_CONFIG: &str = r#"
+sections = ["Notes"]
+git_sections = ["Backend", "Frontend"]
+
+[[repos]]
+name = "api"
+path = "/code/api"
+kind = "git"
+section = "Backend"
+
+[[repos]]
+name = "old-api"
+path = "/code/old-api"
+kind = "git"
+archived = true
+section = "Backend"
+
+[[repos]]
+name = "diary"
+path = "/notes/diary"
+kind = "folder"
+section = "Notes"
+"#;
+
+#[test]
+fn per_kind_sections_stay_separate_and_survive_archiving() {
+    let dir = temp_dir("sections");
+    let config_path = dir.join("config.toml");
+    fs::write(&config_path, SECTIONED_CONFIG).unwrap();
+
+    let backend = TomlRepoRepository::new(config_path.clone());
+    // Each kind's section order is read from its own key.
+    assert_eq!(
+        backend.find_sections(RepoKind::Git).unwrap(),
+        vec!["Backend".to_string(), "Frontend".to_string()]
+    );
+    assert_eq!(
+        backend.find_sections(RepoKind::Path).unwrap(),
+        vec!["Notes".to_string()]
+    );
+
+    // The archived git repo keeps its section (grouping survives archiving).
+    let repos = backend.find_all().unwrap();
+    let archived = repos.iter().find(|r| r.archived).unwrap();
+    assert_eq!(archived.section.as_deref(), Some("Backend"));
+
+    // Rewriting the git order leaves the files order untouched, and both keys
+    // are present after the write.
+    backend
+        .save_sections(RepoKind::Git, &["Frontend".to_string()])
+        .unwrap();
+    let reloaded = TomlRepoRepository::new(config_path.clone());
+    assert_eq!(
+        reloaded.find_sections(RepoKind::Git).unwrap(),
+        vec!["Frontend".to_string()]
+    );
+    assert_eq!(
+        reloaded.find_sections(RepoKind::Path).unwrap(),
+        vec!["Notes".to_string()]
+    );
+
+    fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn service_persists_changes_to_disk() {
     let dir = temp_dir("service");

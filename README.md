@@ -4,7 +4,7 @@
 
 A fast, fuzzy-finder TUI to jump between your git repositories and folders - a Rust port of [git-repo-jumper](https://github.com/cgroening/py-git-repo-jumper), built on [ratatui](https://ratatui.rs).
 
-Pick an entry and hop writes its path to a handoff file your shell reads to `cd` into it; for git repos it also launches your git tool (lazygit by default). On top of the original it adds in-app management, three tabs, slugs for a one-word jump, sort modes and repair for paths that have moved.
+Pick an entry and hop writes its path to a handoff file your shell reads to `cd` into it; for git repos it also launches your git tool (lazygit by default). On top of the original it adds in-app management, two tabs each with its own archive, sections, slugs for a one-word jump, sort modes and repair for paths that have moved.
 
 ## Screenshots
 
@@ -16,14 +16,14 @@ Pick an entry and hop writes its path to a handoff file your shell reads to `cd`
 
 - **Fuzzy finder** over all visible columns (name, branch, status, GitHub name, path).
 - **Live git status** (branch, uncommitted changes, ahead/behind, GitHub repo name), gathered in the background and cached so the list shows instantly.
-- **Three tabs**: Git Repos, Files and Folders, Archive.
-- **Sections** on the Files and Folders tab: group folders/files under named, reorderable section headers; `s` jumps to a section and `M` manages them.
+- **Two tabs, each with its own archive**: Git Repos and Files and Folders. Press a tab's key (`1` / `2`) again to toggle into that kind's archive; `Tab`/`Shift+Tab` cycle the two active tabs. Each kind remembers its own sort, columns, grouping and fav-float across runs.
+- **Sections** on both kinds: group entries under named, reorderable section headers (Git and Files each keep their own section list; an archived entry keeps its group). `.` toggles the grouped view (off = a flat, globally sorted list with a Section column), `s` jumps to a section, `M` manages them, and inside a group entries follow the active sort mode.
 - **In-app management**: add, edit, delete, favourite, archive/restore, set a slug - the config is written back preserving its comments.
 - **Content-aware open**: a file/folder entry auto-detects its target – a folder `cd`s, a text file (by extension; configurable via `editor_extensions`) opens in the editor, and any other file (image, PDF, …) opens with the system's default app.
 - **Slugs**: `hop <slug>` jumps straight to an entry from the shell; `hop add [PATH]` registers one without opening the TUI.
 - **Bulk import**: `hop scan [DIR]` finds git repos recursively and offers them in a multi-select picker (`--dry-run` to preview, `--nested` for repos inside repos).
-- **Sort modes**: by name, most recently used, frecency (frequency weighted by recency), or a custom drag order; favourites are pinned to the top (except in the recent view).
-- **ZIP backups**: `z` zips the selected/cursor entry (git repo or folder) and `Z` zips every entry opted into the backup into `zip_backup_folder`, excluding build artefacts (`zip_exclude_dirs`, matched as a name prefix so `target` also covers `target.nosync`) but keeping `.git`. The backup membership is the `Backup` toggle in the add/edit form: git repos are included by default, file/folder entries excluded by default; `z` ignores it (an explicit target is always backed up). Excluded entries show a `⊘` marker in the `ZIP Backup` column. The archive is named after the entry (the slugified name, e.g. `(rs) mdtask` → `rs-mdtask.zip`); two entries with the same name each get a short path-hash suffix so neither is overwritten (`hop doctor` reports such name clashes). A repo is only (re)written when its content changed since the last backup (name + size + CRC32 comparison), so unchanged archives are left untouched and not re-uploaded by cloud sync. Progress shows in the header bar; all three tabs show a `ZIP Backup` column with each entry's last-backup date.
+- **Sort modes**: by name, most recently used, frecency (frequency weighted by recency), or a custom drag order; favourites float to the top by default (toggle with `,`) and are sorted among themselves. In the grouped view the sort applies within each section.
+- **ZIP backups**: `z` zips the selected/cursor entry (git repo or folder) and `Z` zips every entry opted into the backup into `zip_backup_folder`, excluding build artefacts (`zip_exclude_dirs`, matched as a name prefix so `target` also covers `target.nosync`) but keeping `.git`. The backup membership is the `Backup` toggle in the add/edit form: git repos are included by default, file/folder entries excluded by default; `z` ignores it (an explicit target is always backed up). Excluded entries show a `⊘` marker in the `ZIP Backup` column. The archive is named after the entry (the slugified name, e.g. `(rs) mdtask` → `rs-mdtask.zip`); two entries with the same name each get a short path-hash suffix so neither is overwritten (`hop doctor` reports such name clashes). A repo is only (re)written when its content changed since the last backup (name + size + CRC32 comparison), so unchanged archives are left untouched and not re-uploaded by cloud sync. Progress shows in the header bar; every tab shows a `ZIP Backup` column with each entry's last-backup date.
 - **Detail panel** (`v`): an optional pane (right or bottom) with the entry's details and a recent `git log`.
 - **Missing-path marker** (a red `!`) with a picker that opens at the closest existing ancestor to repair the path, plus an error list (`!`) to repair / edit / delete all broken entries.
 - **Status bar**: a local status line (entry count, sort, last status time) and a remote line showing the last `git fetch` (warns when over a day old); a progress bar replaces it while a refresh runs.
@@ -143,8 +143,8 @@ path = "/Users/you/Code/hop"
 kind = "git"                   # git | path (path = file or folder, auto-detected)
 slug = "hop"                   # optional; enables `hop hop`
 fav = true                     # favourites sort first
-# section = "Work"             # groups path entries on the Files tab
-# archived = false             # archived entries live in the Archive tab
+# section = "Work"             # groups the entry (per-kind section list)
+# archived = false             # archived entries move to their kind's archive
 ```
 
 See [`examples/config.toml`](examples/config.toml) for a fuller sample. Try it without touching your real config:
@@ -189,8 +189,8 @@ HOP_CONFIRM_QUIT    true | false: ask before quitting with `q`
 
 | Key | Action |
 |-----|--------|
-| `1` / `2` / `3` | switch tab (Git Repos / Files / Archive) |
-| `Tab` / `Shift+Tab` | cycle to the next / previous tab |
+| `1` / `2` | Git Repos / Files and Folders (press again for that kind's archive) |
+| `Tab` / `Shift+Tab` | cycle the two active tabs |
 | `↑` / `↓` | move cursor (wraps) |
 | `g` / `G` · `PgUp`/`PgDn` · `Ctrl+u`/`Ctrl+d` | top / bottom · page · half page |
 | `Space` | toggle selection · `Shift+↑/↓`: extend range · `Esc`: clear |
@@ -206,11 +206,13 @@ HOP_CONFIRM_QUIT    true | false: ask before quitting with `q`
 | `Ctrl+←/→` | make the detail panel smaller / bigger |
 | `c` | cycle the table's columns (Standard → Code → Activity) |
 | `t` | pick the column to sort by (picking the active one flips the direction) |
+| `,` | toggle floating favourites to the top |
+| `.` | toggle grouping into sections (off = flat, globally sorted, with a Section column) |
 | `f` | live fuzzy filter (`Esc` clears; matched characters are highlighted) |
 | `F` | toggle showing only git repos with a status change |
-| `s` | Files tab: jump to a section |
-| `M` | Files tab: manage sections (add / rename / delete / reorder) |
-| `Alt+↑/↓` | reorder the entry (custom sort, or within a Files section; favourites stay on top) |
+| `s` | jump to a section (in the grouped view) |
+| `M` | manage sections (add / rename / delete / reorder) |
+| `Alt+↑/↓` | reorder the entry within its group (custom sort; favourites stay on top) |
 | `n` | add an entry (fill the form; `^O` opens the path picker) |
 | `e` | edit the selected entry |
 | `d` / `Del` / `Backspace` | delete (acts on the selection, else the cursor; confirm) |

@@ -114,6 +114,32 @@ pub fn status_text(info: &GitInfo, icons: &IconSet) -> String {
     parts.join(" ")
 }
 
+/// A coloured status span for `info` (or a loading/missing marker for `None`),
+/// shared by the table and the sectioned view: dim while loading, green when
+/// clean, amber when there are uncommitted changes, default otherwise. The
+/// per-row refresh spinner is handled by the caller, not here.
+pub fn status_span(
+    info: Option<&GitInfo>,
+    icons: &IconSet,
+    colors: &Colors,
+) -> Span<'static> {
+    let Some(info) = info else {
+        return Span::styled("\u{2026}", Style::default().fg(colors.dim));
+    };
+    if info.is_path_missing() {
+        return Span::styled("-", Style::default().fg(colors.dim));
+    }
+    let text = status_text(info, icons);
+    let style = if info.is_clean() {
+        Style::default().fg(colors.positive)
+    } else if info.changes.unwrap_or(0) > 0 {
+        Style::default().fg(colors.changes)
+    } else {
+        Style::default()
+    };
+    Span::styled(text, style)
+}
+
 /// The style for an inline slug shown after an entry name: dim and italic.
 pub fn slug_style(colors: &Colors) -> Style {
     Style::default()

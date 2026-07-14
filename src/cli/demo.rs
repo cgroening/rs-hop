@@ -9,10 +9,10 @@ use std::path::PathBuf;
 
 use crate::domain::repo::{GitInfo, Repo, RepoKind};
 
-/// The demo entries, spanning the Git, Files and Archive tabs with a varied mix
-/// of statuses, favourites, slugs, sections and one deliberately broken repo.
+/// The demo entries, spanning both kinds' active and archive views with a varied
+/// mix of statuses, favourites, slugs, sections and one deliberately broken repo.
 pub fn repos() -> Vec<Repo> {
-    vec![
+    let mut repos = vec![
         git(
             "acme-api",
             "/Users/you/Code/acme-api",
@@ -80,12 +80,34 @@ pub fn repos() -> Vec<Repo> {
             "/Users/you/Code/deprecated-api",
             clean("main", "deprecated-api"),
         ),
-    ]
+        archived_folder("Old exports", "/Users/you/Archive/exports"),
+    ];
+    // Git sections; an archived repo keeps its group in the git archive.
+    set_section(&mut repos, "acme-api", "Services");
+    set_section(&mut repos, "payments-service", "Services");
+    set_section(&mut repos, "web-dashboard", "Frontend");
+    set_section(&mut repos, "design-system", "Frontend");
+    set_section(&mut repos, "old-prototype", "Services");
+    repos
 }
 
-/// The Files-tab section order for the demo.
+/// The Files (path) section order for the demo.
 pub fn sections() -> Vec<String> {
     vec!["Code".to_string(), "Docs".to_string()]
+}
+
+/// The Git section order for the demo.
+pub fn git_sections() -> Vec<String> {
+    vec!["Services".to_string(), "Frontend".to_string()]
+}
+
+/// Assigns the demo section `section` to the entry named `name`, if present.
+fn set_section(repos: &mut [Repo], name: &str, section: &str) {
+    if let Some(repo) =
+        repos.iter_mut().find(|r| r.name.as_deref() == Some(name))
+    {
+        repo.section = Some(section.to_string());
+    }
 }
 
 /// Builds a git entry with demo status, an optional slug and favourite flag.
@@ -108,6 +130,13 @@ fn git(
 /// Builds an archived git entry with demo status.
 fn archived_git(name: &str, path: &str, info: GitInfo) -> Repo {
     let mut repo = git(name, path, None, false, info);
+    repo.archived = true;
+    repo
+}
+
+/// Builds an archived folder entry (for the files archive view).
+fn archived_folder(name: &str, path: &str) -> Repo {
+    let mut repo = path_entry(name, path, None, None);
     repo.archived = true;
     repo
 }
@@ -209,7 +238,7 @@ mod tests {
     use crate::domain::slug;
 
     #[test]
-    fn demo_spans_all_three_tabs() {
+    fn demo_spans_all_four_tabs() {
         let repos = repos();
         for tab in Tab::ALL {
             assert!(
@@ -251,15 +280,23 @@ mod tests {
     }
 
     #[test]
-    fn path_entry_sections_are_declared() {
-        let declared: HashSet<String> = sections().into_iter().collect();
+    fn entry_sections_are_declared_per_kind() {
+        let path_declared: HashSet<String> = sections().into_iter().collect();
+        let git_declared: HashSet<String> =
+            git_sections().into_iter().collect();
         for repo in repos() {
-            if let Some(section) = repo.section {
-                assert!(
-                    declared.contains(&section),
-                    "section {section} not declared in sections()"
-                );
-            }
+            let Some(section) = repo.section else {
+                continue;
+            };
+            let declared = match repo.kind {
+                RepoKind::Git => &git_declared,
+                RepoKind::Path => &path_declared,
+            };
+            assert!(
+                declared.contains(&section),
+                "section {section} not declared for {:?}",
+                repo.kind
+            );
         }
     }
 }

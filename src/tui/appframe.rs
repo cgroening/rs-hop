@@ -21,12 +21,49 @@ use crate::theme::Skin;
 /// The brand shown at the start of the tab bar.
 pub const BRAND: &str = "hop";
 
-/// The tab bar labels (key, label) in view order.
-pub const TAB_LABELS: [(&str, &str); 3] = [
-    ("1", "Git Repos"),
-    ("2", "Files and Folders"),
-    ("3", "Archiv"),
-];
+/// The two primary tabs (key, base label) in view order. Each kind's archive is
+/// reached by a second press of its key, not shown as its own tab.
+const TAB_NAMES: [(&str, &str); 2] =
+    [("1", "Git Repos"), ("2", "Files and Folders")];
+
+/// Suffix added to the active tab's label when its archive is showing.
+const ARCHIVE_SUFFIX: &str = " \u{00b7} Archiv";
+
+/// Which tab the header bar highlights and whether its archive is showing.
+#[derive(Debug, Clone, Copy)]
+pub struct TabBar {
+    /// The active kind index (0 = git, 1 = files).
+    pub active: usize,
+    /// Whether the active kind's archive view is showing.
+    pub archived: bool,
+}
+
+/// The tab (key, label) pairs, suffixing the active label with `Archiv` when its
+/// archive is showing.
+fn tab_labels(bar: TabBar) -> Vec<(&'static str, String)> {
+    TAB_NAMES
+        .iter()
+        .enumerate()
+        .map(|(index, (key, name))| {
+            let label = if index == bar.active && bar.archived {
+                format!("{name}{ARCHIVE_SUFFIX}")
+            } else {
+                (*name).to_string()
+            };
+            (*key, label)
+        })
+        .collect()
+}
+
+/// Borrows the owned tab labels into the `(&str, &str)` pairs the toolkit takes.
+fn borrow_pairs<'a>(
+    labels: &'a [(&'static str, String)],
+) -> Vec<(&'static str, &'a str)> {
+    labels
+        .iter()
+        .map(|(key, label)| (*key, label.as_str()))
+        .collect()
+}
 
 /// How far a modal darkens the view behind it (`0.0` = black, `1.0` = as-is);
 /// mirrors `ratada::overlay`'s own scrim so hand-rolled and toolkit modals dim
@@ -103,7 +140,7 @@ pub struct FrameAreas {
 pub fn render_frame(
     frame: &mut Frame<'_>,
     skin: &Skin,
-    active: usize,
+    tabs: TabBar,
     status: Vec<Line>,
     hints: &[(String, Vec<(String, String)>)],
     show_progress: bool,
@@ -117,7 +154,9 @@ pub fn render_frame(
         area,
     );
     let width = area.width.saturating_sub(2) as usize;
-    let header_h = header_height(width);
+    let labels = tab_labels(tabs);
+    let pairs = borrow_pairs(&labels);
+    let header_h = header_height(&pairs, width);
     let status_h = status.len() as u16;
     let progress_h = if show_progress { PROGRESS_HEIGHT } else { 0 };
     let hints_h = if hints.is_empty() {
@@ -137,7 +176,7 @@ pub fn render_frame(
 
     fill(frame, chunks[1], skin.palette.surface);
     fill(frame, chunks[2], skin.palette.surface);
-    render_header(frame, chunks[0], skin, active);
+    render_header(frame, chunks[0], skin, &pairs, tabs.active);
     if status_h > 0 {
         fill(frame, chunks[4], skin.palette.footer);
         frame.render_widget(
@@ -160,8 +199,8 @@ pub fn render_frame(
 
 /// The header-panel height at `width`: the tab rows plus the 1-cell panel
 /// padding top and bottom.
-fn header_height(width: usize) -> u16 {
-    ratada::tabs::height(BRAND, &TAB_LABELS, width) + 2
+fn header_height(pairs: &[(&str, &str)], width: usize) -> u16 {
+    ratada::tabs::height(BRAND, pairs, width) + 2
 }
 
 /// Renders the tinted, borderless header panel with the tab bar.
@@ -169,6 +208,7 @@ fn render_header(
     frame: &mut Frame<'_>,
     area: Rect,
     skin: &Skin,
+    pairs: &[(&str, &str)],
     active: usize,
 ) {
     let block = Block::default()
@@ -176,13 +216,12 @@ fn render_header(
         .padding(Padding::uniform(1));
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let tab_height =
-        ratada::tabs::height(BRAND, &TAB_LABELS, inner.width as usize);
+    let tab_height = ratada::tabs::height(BRAND, pairs, inner.width as usize);
     let tab_area = Rect {
         height: tab_height.min(inner.height),
         ..inner
     };
-    ratada::tabs::render(frame, tab_area, skin, BRAND, &TAB_LABELS, active);
+    ratada::tabs::render(frame, tab_area, skin, BRAND, pairs, active);
 }
 
 /// Fills `area` with a solid background tint.
@@ -268,7 +307,10 @@ mod tests {
                 out = Some(render_frame(
                     frame,
                     &skin(),
-                    0,
+                    TabBar {
+                        active: 0,
+                        archived: false,
+                    },
                     vec![Line::raw("info")],
                     &[(
                         "App".to_string(),

@@ -36,12 +36,10 @@ pub enum Action {
     HalfPageUp,
     /// Move down half a page.
     HalfPageDown,
-    /// Switch to the Git Repos tab.
+    /// Switch to Git Repos (a second press toggles its archive).
     TabGit,
-    /// Switch to the Files and Folders tab.
+    /// Switch to Files and Folders (a second press toggles its archive).
     TabFiles,
-    /// Switch to the Archive tab.
-    TabArchive,
     /// Toggle the current row's multi-selection.
     ToggleSelect,
     /// Jump: write the cd path and exit.
@@ -76,9 +74,13 @@ pub enum Action {
     Columns,
     /// Open the sort picker.
     Sort,
-    /// Jump to a section (Files tab).
+    /// Toggle grouping entries into sections (off = flat global sort).
+    ToggleGrouping,
+    /// Toggle floating favourites to the top.
+    ToggleFavFloat,
+    /// Jump to a section.
     SectionJump,
-    /// Manage sections (Files tab).
+    /// Manage sections.
     ManageSections,
     /// Reorder the cursor entry up (custom sort / within a section).
     ReorderUp,
@@ -198,12 +200,6 @@ const ACTIONS: &[ActionSpec] = &[
         default_keys: &["2"],
     },
     ActionSpec {
-        action: Action::TabArchive,
-        config_name: "tab_archive",
-        description: "archive",
-        default_keys: &["3"],
-    },
-    ActionSpec {
         action: Action::ToggleSelect,
         config_name: "select",
         description: "select",
@@ -304,6 +300,18 @@ const ACTIONS: &[ActionSpec] = &[
         config_name: "sort",
         description: "sort",
         default_keys: &["t"],
+    },
+    ActionSpec {
+        action: Action::ToggleGrouping,
+        config_name: "grouping",
+        description: "group",
+        default_keys: &["."],
+    },
+    ActionSpec {
+        action: Action::ToggleFavFloat,
+        config_name: "fav_float",
+        description: "favs on top",
+        default_keys: &[","],
     },
     ActionSpec {
         action: Action::SectionJump,
@@ -883,7 +891,6 @@ mod tests {
                 | Action::HalfPageDown
                 | Action::TabGit
                 | Action::TabFiles
-                | Action::TabArchive
                 | Action::ToggleSelect
                 | Action::Jump
                 | Action::Open
@@ -901,6 +908,8 @@ mod tests {
                 | Action::PreviewGrow
                 | Action::Columns
                 | Action::Sort
+                | Action::ToggleGrouping
+                | Action::ToggleFavFloat
                 | Action::SectionJump
                 | Action::ManageSections
                 | Action::ReorderUp

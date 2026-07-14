@@ -4,13 +4,14 @@
 use std::cell::RefCell;
 
 use crate::domain::error::Result;
-use crate::domain::repo::Repo;
+use crate::domain::repo::{Repo, RepoKind};
 use crate::storage::repository::RepoRepository;
 
 /// Holds entries in memory; `save_all` replaces the whole list.
 pub struct InMemoryRepoRepository {
     repos: RefCell<Vec<Repo>>,
-    sections: RefCell<Vec<String>>,
+    git_sections: RefCell<Vec<String>>,
+    path_sections: RefCell<Vec<String>>,
 }
 
 impl InMemoryRepoRepository {
@@ -18,7 +19,16 @@ impl InMemoryRepoRepository {
     pub fn new(initial: Vec<Repo>) -> Self {
         InMemoryRepoRepository {
             repos: RefCell::new(initial),
-            sections: RefCell::new(Vec::new()),
+            git_sections: RefCell::new(Vec::new()),
+            path_sections: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// The section list for `kind`.
+    fn sections_for(&self, kind: RepoKind) -> &RefCell<Vec<String>> {
+        match kind {
+            RepoKind::Git => &self.git_sections,
+            RepoKind::Path => &self.path_sections,
         }
     }
 }
@@ -33,12 +43,12 @@ impl RepoRepository for InMemoryRepoRepository {
         Ok(())
     }
 
-    fn find_sections(&self) -> Result<Vec<String>> {
-        Ok(self.sections.borrow().clone())
+    fn find_sections(&self, kind: RepoKind) -> Result<Vec<String>> {
+        Ok(self.sections_for(kind).borrow().clone())
     }
 
-    fn save_sections(&self, sections: &[String]) -> Result<()> {
-        *self.sections.borrow_mut() = sections.to_vec();
+    fn save_sections(&self, kind: RepoKind, sections: &[String]) -> Result<()> {
+        *self.sections_for(kind).borrow_mut() = sections.to_vec();
         Ok(())
     }
 }

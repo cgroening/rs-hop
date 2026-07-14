@@ -12,6 +12,7 @@ pub mod bindings;
 pub mod columns;
 pub mod detail;
 pub mod form;
+pub mod git_columns;
 pub mod help;
 pub mod path_picker;
 pub mod presentation;
@@ -49,7 +50,7 @@ use ratada::spinner::Spinner;
 
 use crate::config::Config;
 use crate::domain::backup;
-use crate::domain::filter::{Tab, belongs_to_tab, fuzzy_indices};
+use crate::domain::filter::{Tab, TabKind, belongs_to_tab, fuzzy_indices};
 use crate::domain::path_repair::nearest_existing_on_disk;
 use crate::domain::repo::{self, Repo, RepoKind};
 use crate::domain::sections;
@@ -64,7 +65,7 @@ use crate::service::stats_service::{
     spawn_git_stats,
 };
 use crate::service::status_service::{self, StatusUpdate, spawn_refresh};
-use crate::service::ui_state_service::{self, UiState};
+use crate::service::ui_state_service::{self, TabView, UiState};
 use crate::service::zip_service::{ZipJob, ZipUpdate, spawn_zip};
 use crate::storage::git_client::GitClient;
 use crate::theme::Skin;
@@ -207,8 +208,9 @@ pub struct App {
     ui_state_path: PathBuf,
     tab: Tab,
     cursor: usize,
-    sort: SortMode,
-    sort_dir: SortDir,
+    /// Per-kind view settings (sort, columns, grouping, fav-float), indexed by
+    /// `tab.kind_index()`; a kind's active and archive views share its slot.
+    tab_state: [TabState; 2],
     filtering: bool,
     filter: InputField,
     overlay: Overlay,
@@ -273,8 +275,6 @@ pub struct App {
     preview: PreviewLayout,
     /// The detail panel's scroll position, kept across frames.
     preview_scroll: scroll::Scroll,
-    /// Which columns the table shows (persisted).
-    columns: ColumnSet,
     /// Path of the statistics cache in the state directory.
     stats_path: PathBuf,
     /// Cached code and history statistics, seeded from disk at start.
@@ -298,6 +298,35 @@ pub struct App {
     preview_target: Option<PathBuf>,
     /// When `preview_target` last changed, for the debounce window.
     preview_target_at: Instant,
+}
+
+/// The view settings a kind remembers, shared between its active and archive
+/// views (persisted per kind in the UI state).
+#[derive(Debug, Clone, Copy)]
+struct TabState {
+    /// The list sort mode.
+    sort: SortMode,
+    /// Which way the sort runs.
+    sort_dir: SortDir,
+    /// Which columns the table shows.
+    columns: ColumnSet,
+    /// Whether entries are grouped into sections (off = flat global sort).
+    grouped: bool,
+    /// Whether favourites float to the top of each group.
+    fav_float: bool,
+}
+
+/// Builds a [`TabState`] from a persisted per-kind [`TabView`], resolving the
+/// column-set key and clamping it to what `kind` supports.
+fn tab_state_from(view: &TabView, kind: TabKind) -> TabState {
+    TabState {
+        sort: view.sort,
+        sort_dir: view.sort_dir,
+        columns: ColumnSet::from_key(&view.columns)
+            .available_on(kind.active_tab()),
+        grouped: view.grouped,
+        fav_float: view.fav_float,
+    }
 }
 
 /// One in-flight background status refresh. Several may run concurrently, so a
@@ -353,6 +382,10 @@ impl App {
         let mut service = service;
         service.apply_git_infos(&cached.infos);
         let (preview_tx, preview_rx) = mpsc::channel();
+        let tab_state = [
+            tab_state_from(&ui.git, TabKind::Git),
+            tab_state_from(&ui.files, TabKind::Files),
+        ];
         let mut app = App {
             config,
             service,
@@ -366,8 +399,7 @@ impl App {
             ui_state_path,
             tab: ui.tab,
             cursor: 0,
-            sort: ui.sort,
-            sort_dir: ui.sort_dir,
+            tab_state,
             filtering: false,
             filter: InputField::new(""),
             overlay: Overlay::None,
@@ -402,7 +434,6 @@ impl App {
                 ui.preview_height_rows,
             ),
             preview_scroll: scroll::Scroll::default(),
-            columns: ColumnSet::from_key(&ui.columns).available_on(ui.tab),
             stats_path,
             stats,
             code_rx: None,
@@ -423,7 +454,7 @@ impl App {
             app.auto_refresh = true;
             // Honour fetch-on-start for a git tab; the Files tab does its
             // existence check via the first-visit hook below instead.
-            if app.tab != Tab::FilesAndFolders {
+            if app.tab.kind() == TabKind::Git {
                 app.start_refresh(fetch);
             }
         }
@@ -441,6 +472,41 @@ impl App {
             .collect()
     }
 
+    /// The current tab's kind's view settings.
+    fn view(&self) -> &TabState {
+        &self.tab_state[self.tab.kind_index()]
+    }
+
+    /// The current tab's kind's view settings, mutably.
+    fn view_mut(&mut self) -> &mut TabState {
+        &mut self.tab_state[self.tab.kind_index()]
+    }
+
+    /// The active sort mode for the current tab.
+    fn sort(&self) -> SortMode {
+        self.view().sort
+    }
+
+    /// The active sort direction for the current tab.
+    fn sort_dir(&self) -> SortDir {
+        self.view().sort_dir
+    }
+
+    /// The active column set for the current tab.
+    fn columns(&self) -> ColumnSet {
+        self.view().columns
+    }
+
+    /// Whether the current tab groups entries into sections.
+    fn grouped(&self) -> bool {
+        self.view().grouped
+    }
+
+    /// Whether the current tab floats favourites to the top.
+    fn fav_float(&self) -> bool {
+        self.view().fav_float
+    }
+
     /// The ordered service indices visible in the current tab, after the sort
     /// or live fuzzy filter.
     fn ordered_view(&self) -> Vec<usize> {
@@ -455,11 +521,11 @@ impl App {
                 .map(|pos| tab_indices[pos])
                 .collect()
         } else if self.is_sectioned() {
-            // The Files tab groups entries by section (favourites floated
-            // within each group).
+            // Grouped view: entries by section, sorted within each group by the
+            // active sort mode (favourites floated per the fav-float toggle).
             sections::flatten(&self.section_groups())
         } else {
-            // The git tabs apply the chosen sort mode.
+            // Flat view: the chosen sort mode over the whole tab.
             let mut indices = tab_indices;
             sort_indices(repos, &mut indices, &self.sort_context());
             indices
@@ -480,23 +546,25 @@ impl App {
         self.filtering && !self.filter.value().trim().is_empty()
     }
 
-    /// Whether the current view groups entries into sections (the Files tab,
-    /// when not live-filtering).
+    /// Whether the current view groups entries into sections (the grouping
+    /// toggle is on and no live filter is narrowing the list).
     fn is_sectioned(&self) -> bool {
-        self.tab == Tab::FilesAndFolders && !self.filtering_active()
+        self.grouped() && !self.filtering_active()
     }
 
-    /// The display-ordered sections for the Files tab: entries grouped by
-    /// section (in the stored section order), favourites first within each
-    /// group, the rest in stored order, with Ungrouped last.
+    /// The display-ordered sections for the current tab: entries grouped by
+    /// section (in the kind's stored section order), each group sorted by the
+    /// active sort mode, with Ungrouped last. Sorting the flat index list first
+    /// carries the order into each bucket (grouping keeps input order).
     fn section_groups(&self) -> Vec<sections::SectionGroup> {
         let repos = self.service.repos();
         let mut indices = self.tab_indices();
-        // Stable: favourites float to the top of their section.
-        indices.sort_by_key(|&i| !repos[i].fav);
-        sections::group(self.service.sections(), &indices, |i| {
-            repos[i].section.clone()
-        })
+        sort_indices(repos, &mut indices, &self.sort_context());
+        sections::group(
+            self.service.sections(self.tab.repo_kind()),
+            &indices,
+            |i| repos[i].section.clone(),
+        )
     }
 
     /// Opens the jump-to-section picker for the Files tab.
@@ -517,9 +585,10 @@ impl App {
         );
     }
 
-    /// Opens the manage-sections overlay at `cursor` over the current sections.
+    /// Opens the manage-sections overlay at `cursor` over the current kind's
+    /// sections.
     fn open_sections_manager_at(&mut self, cursor: usize) {
-        let names = self.service.sections().to_vec();
+        let names = self.service.sections(self.tab.repo_kind()).to_vec();
         self.overlay = Overlay::Sections(SectionsModal::new(names, cursor));
     }
 
@@ -562,7 +631,10 @@ impl App {
                 );
             }
             SectionsAction::Move { from, to } => {
-                if let Err(error) = self.service.move_section(from, to) {
+                let repo_kind = self.tab.repo_kind();
+                if let Err(error) =
+                    self.service.move_section(repo_kind, from, to)
+                {
                     self.set_status(format!("{error}"));
                 }
                 self.open_sections_manager_at(to);
@@ -577,10 +649,13 @@ impl App {
         kind: SectionPromptKind,
         value: String,
     ) {
+        let repo_kind = self.tab.repo_kind();
         let result = match &kind {
-            SectionPromptKind::New => self.service.add_section(&value),
+            SectionPromptKind::New => {
+                self.service.add_section(repo_kind, &value)
+            }
             SectionPromptKind::Rename(old) => {
-                self.service.rename_section(old, &value)
+                self.service.rename_section(repo_kind, old, &value)
             }
         };
         if let Err(error) = result {
@@ -1008,7 +1083,10 @@ impl App {
             Overlay::SectionDelete(confirm, name) => {
                 match confirm.handle_key(key) {
                     ConfirmResult::Yes => {
-                        if let Err(error) = self.service.delete_section(&name) {
+                        let repo_kind = self.tab.repo_kind();
+                        if let Err(error) =
+                            self.service.delete_section(repo_kind, &name)
+                        {
                             self.set_status(format!("{error}"));
                         }
                         self.open_sections_manager();
@@ -1064,9 +1142,9 @@ impl App {
     /// end.
     ///
     /// The context-dependent actions branch on the active tab here rather than
-    /// on the key, so a rebound key keeps its meaning: `Sort` jumps to a section
-    /// where the list is sectioned, `Reload`/`ReloadFetch` re-check paths on the
-    /// Files tab, and `ManageSections` only applies there.
+    /// on the key, so a rebound key keeps its meaning: `SectionJump` only jumps
+    /// where the list is sectioned, and `Reload`/`ReloadFetch` re-check paths on
+    /// the files tabs but refresh git status on the git tabs.
     fn run_action(&mut self, action: Action) -> Option<RunOutcome> {
         match action {
             Action::Up => self.move_cursor(-1),
@@ -1077,9 +1155,8 @@ impl App {
             Action::PageDown => self.page(1, false),
             Action::HalfPageUp => self.page(-1, true),
             Action::HalfPageDown => self.page(1, true),
-            Action::TabGit => self.switch_tab(Tab::GitRepos),
-            Action::TabFiles => self.switch_tab(Tab::FilesAndFolders),
-            Action::TabArchive => self.switch_tab(Tab::Archive),
+            Action::TabGit => self.select_kind(TabKind::Git),
+            Action::TabFiles => self.select_kind(TabKind::Files),
             Action::ToggleSelect => self.toggle_select(),
             Action::Jump | Action::JumpCd => return self.open_selected(false),
             Action::Open => return self.open_selected(true),
@@ -1096,14 +1173,13 @@ impl App {
             Action::PreviewGrow => self.resize_preview(1),
             Action::Columns => self.cycle_columns(),
             Action::Sort => self.open_sort_picker(),
+            Action::ToggleGrouping => self.toggle_grouping(),
+            Action::ToggleFavFloat => self.toggle_fav_float(),
             Action::SectionJump if self.is_sectioned() => {
                 self.open_section_jump();
             }
             Action::SectionJump => {}
-            Action::ManageSections if self.tab == Tab::FilesAndFolders => {
-                self.open_sections_manager();
-            }
-            Action::ManageSections => {}
+            Action::ManageSections => self.open_sections_manager(),
             Action::ReorderUp => self.move_entry(-1),
             Action::ReorderDown => self.move_entry(1),
             Action::Add => self.open_add(),
@@ -1120,7 +1196,7 @@ impl App {
             Action::RepairPath => self.open_repair_picker(),
             Action::Errors => self.open_error_list(),
             Action::Reload | Action::ReloadFetch
-                if self.tab == Tab::FilesAndFolders =>
+                if self.tab.kind() == TabKind::Files =>
             {
                 self.check_files_existence();
             }
@@ -1157,6 +1233,36 @@ impl App {
         None
     }
 
+    /// Selects `kind`: switches to its active view, or toggles between active
+    /// and archive when that kind is already showing (the double-press of
+    /// `1`/`2`).
+    fn select_kind(&mut self, kind: TabKind) {
+        let target = if self.tab.kind() == kind {
+            self.tab.toggle_archived()
+        } else {
+            kind.active_tab()
+        };
+        self.switch_tab(target);
+    }
+
+    /// Toggles grouping for the current kind (grouped <-> flat) and persists it.
+    fn toggle_grouping(&mut self) {
+        let grouped = self.view().grouped;
+        self.view_mut().grouped = !grouped;
+        let len = self.ordered_view().len();
+        self.clamp_cursor(len);
+        self.save_ui_state();
+    }
+
+    /// Toggles floating favourites for the current kind and persists it.
+    fn toggle_fav_float(&mut self) {
+        let fav_float = self.view().fav_float;
+        self.view_mut().fav_float = !fav_float;
+        let len = self.ordered_view().len();
+        self.clamp_cursor(len);
+        self.save_ui_state();
+    }
+
     /// Switches to `tab`, remembering the current tab's cursor entry and
     /// restoring the target tab's, clearing the selection and persisting state.
     fn switch_tab(&mut self, tab: Tab) {
@@ -1170,18 +1276,22 @@ impl App {
         self.list_offset.set(0);
         self.table_offset.set(0);
         self.restore_focus();
-        self.columns = self.columns.available_on(tab);
+        let clamped = self.columns().available_on(tab);
+        self.view_mut().columns = clamped;
         self.preview_scroll.reset();
         self.save_ui_state();
         self.start_stats();
         self.refresh_tab_on_first_visit();
     }
 
-    /// Cycles to the next/previous tab (`Tab`/`Shift+Tab`).
+    /// Cycles to the next/previous active tab (`Tab`/`Shift+Tab`). Archives are
+    /// not part of the cycle; an archive view normalises to its active sibling
+    /// first.
     fn cycle_tab(&mut self, delta: isize) {
-        let current = Tab::ALL.iter().position(|t| *t == self.tab).unwrap_or(0);
-        let next = cycle(current, Tab::ALL.len(), delta);
-        self.switch_tab(Tab::ALL[next]);
+        let base = self.tab.active();
+        let current = Tab::ACTIVE.iter().position(|t| *t == base).unwrap_or(0);
+        let next = cycle(current, Tab::ACTIVE.len(), delta);
+        self.switch_tab(Tab::ACTIVE[next]);
     }
 
     /// Records the current tab's cursor entry by path, to restore on return.
@@ -1208,7 +1318,7 @@ impl App {
         }
     }
 
-    /// Runs the per-tab first-visit work: the Files tab checks that its paths
+    /// Runs the per-tab first-visit work: the files tabs check that their paths
     /// still exist; the git tabs refresh status (without fetching), mirroring
     /// the startup refresh of the initially active tab. Each runs once per
     /// session; a git refresh is deferred while another is in flight (and
@@ -1217,7 +1327,7 @@ impl App {
         if self.refreshed_tabs.contains(&self.tab) {
             return;
         }
-        if self.tab == Tab::FilesAndFolders {
+        if self.tab.kind() == TabKind::Files {
             self.refreshed_tabs.insert(self.tab);
             if !self.config.example_mode {
                 self.check_files_existence();
@@ -1233,8 +1343,9 @@ impl App {
     /// Everything a sort needs, borrowed from the statistics caches.
     fn sort_context(&self) -> SortContext<'_> {
         SortContext {
-            mode: self.sort,
-            dir: self.sort_dir,
+            mode: self.sort(),
+            dir: self.sort_dir(),
+            float_favs: self.fav_float(),
             now: Local::now().timestamp(),
             stats: StatsLookup {
                 code: &self.stats.code,
@@ -1252,19 +1363,20 @@ impl App {
             SortMode::Frecency,
             SortMode::Custom,
         ];
-        modes.extend_from_slice(self.columns.sort_modes());
+        modes.extend_from_slice(self.columns().sort_modes());
         modes
     }
 
     /// Opens the sort picker, with the cursor on the active mode.
     fn open_sort_picker(&mut self) {
+        let (sort, dir) = (self.sort(), self.sort_dir());
         let modes = self.sort_modes();
-        let cursor = modes.iter().position(|m| *m == self.sort).unwrap_or(0);
+        let cursor = modes.iter().position(|m| *m == sort).unwrap_or(0);
         let items: Vec<String> = modes
             .iter()
             .map(|mode| {
-                if *mode == self.sort {
-                    format!("{}  {}", mode.title(), self.sort_dir.arrow())
+                if *mode == sort {
+                    format!("{}  {}", mode.title(), dir.arrow())
                 } else {
                     mode.title().to_string()
                 }
@@ -1278,20 +1390,23 @@ impl App {
     /// direction; a fresh statistics column starts descending, because "which
     /// is the biggest" is the question it answers.
     fn apply_sort(&mut self, mode: SortMode) {
-        if mode == self.sort {
-            self.sort_dir = self.sort_dir.flip();
+        let dir = if mode == self.sort() {
+            self.sort_dir().flip()
         } else if mode.is_statistic() {
-            self.sort_dir = SortDir::Desc;
+            SortDir::Desc
         } else {
-            self.sort_dir = SortDir::Asc;
-        }
-        self.sort = mode;
+            SortDir::Asc
+        };
+        let view = self.view_mut();
+        view.sort = mode;
+        view.sort_dir = dir;
         self.save_ui_state();
     }
 
     /// Cycles the table's column set and starts the worker the new set needs.
     fn cycle_columns(&mut self) {
-        self.columns = self.columns.next(self.tab);
+        let next = self.columns().next(self.tab);
+        self.view_mut().columns = next;
         self.save_ui_state();
         self.start_stats();
     }
@@ -1345,20 +1460,31 @@ impl App {
         }
     }
 
-    /// Persists the sort mode, active tab, slug display, preview mode and
-    /// whether the hint footer is shown.
+    /// The persisted per-kind view block for tab-state index `i`.
+    fn tab_view_of(&self, i: usize) -> TabView {
+        let state = &self.tab_state[i];
+        TabView {
+            sort: state.sort,
+            sort_dir: state.sort_dir,
+            columns: state.columns.as_key().to_string(),
+            grouped: state.grouped,
+            fav_float: state.fav_float,
+        }
+    }
+
+    /// Persists the per-kind view settings, active tab, slug display, preview
+    /// mode and whether the hint footer is shown.
     fn save_ui_state(&self) {
         let _ = ui_state_service::save(
             &self.ui_state_path,
             &UiState {
-                sort: self.sort,
-                sort_dir: self.sort_dir,
+                git: self.tab_view_of(TabKind::Git.index()),
+                files: self.tab_view_of(TabKind::Files.index()),
                 tab: self.tab,
                 show_slugs: self.show_slugs,
                 preview: self.preview.as_key().to_string(),
                 preview_width_pct: self.preview.width_pct,
                 preview_height_rows: self.preview.height_rows,
-                columns: self.columns.as_key().to_string(),
                 hints_visible: shortcut_hints::visible(),
             },
         );
@@ -1518,11 +1644,10 @@ impl App {
     /// Starts adding an entry: the form opens directly with a kind guessed from
     /// the active tab. The path is a plain text field; `^O` opens the picker.
     fn open_add(&mut self) {
-        let kind = match self.tab {
-            Tab::GitRepos => RepoKind::Git,
-            _ => RepoKind::Path,
-        };
-        let form = RepoForm::for_add("", kind, self.service.sections());
+        let kind = self.tab.repo_kind();
+        let git = self.service.sections(RepoKind::Git);
+        let paths = self.service.sections(RepoKind::Path);
+        let form = RepoForm::for_add("", kind, git, paths);
         self.overlay = Overlay::Form(Box::new(form), None);
     }
 
@@ -1557,7 +1682,9 @@ impl App {
         let Some(repo) = self.service.get(index) else {
             return;
         };
-        let form = RepoForm::for_edit(repo, self.service.sections());
+        let git = self.service.sections(RepoKind::Git);
+        let paths = self.service.sections(RepoKind::Path);
+        let form = RepoForm::for_edit(repo, git, paths);
         self.overlay = Overlay::Form(Box::new(form), Some(index));
     }
 
@@ -1879,7 +2006,7 @@ impl App {
         self.code_rx = None;
         self.git_stats_rx = None;
         self.computing.clear();
-        if !self.columns.is_statistics() || self.config.example_mode {
+        if !self.columns().is_statistics() || self.config.example_mode {
             return;
         }
         let paths: Vec<PathBuf> = self
@@ -1892,12 +2019,12 @@ impl App {
             return;
         }
         self.computing = paths.iter().cloned().collect();
-        if self.columns.needs_code_stats() {
+        if self.columns().needs_code_stats() {
             self.code_rx = Some(spawn_code_stats(
                 paths,
                 self.config.zip_exclude_dirs.clone(),
             ));
-        } else if self.columns.needs_git_stats() {
+        } else if self.columns().needs_git_stats() {
             self.git_stats_rx =
                 Some(spawn_git_stats(Arc::clone(&self.git_client), paths));
         }
@@ -2205,10 +2332,10 @@ impl App {
 
     /// Moves the cursor entry within the custom order (only in custom sort).
     fn move_entry(&mut self, delta: isize) {
-        // The Files tab reorders within a section regardless of sort mode; the
-        // git tabs require the custom sort.
-        if !self.is_sectioned() && self.sort != SortMode::Custom {
-            self.set_status("switch to custom sort (s) to reorder");
+        // Manual reorder only makes sense in custom sort; every other mode
+        // orders automatically.
+        if self.sort() != SortMode::Custom {
+            self.set_status("switch to custom sort (t) to reorder");
             return;
         }
         let view = self.ordered_view();
@@ -2222,11 +2349,11 @@ impl App {
         }
         let (a, b) = (view[cur], view[neighbor as usize]);
         let repos = self.service.repos();
-        // Stay within the favourites / non-favourites group (favs keep on top).
-        if repos[a].fav != repos[b].fav {
+        // While favourites float, stay within the fav / non-fav segment.
+        if self.fav_float() && repos[a].fav != repos[b].fav {
             return;
         }
-        // On the Files tab, only reorder within the same section.
+        // In the grouped view, only reorder within the same section.
         if self.is_sectioned() && repos[a].section != repos[b].section {
             return;
         }
@@ -2311,7 +2438,7 @@ impl App {
         };
         let saved = result.is_ok();
         if saved && let Some(name) = section {
-            let _ = self.service.ensure_section(&name);
+            let _ = self.service.ensure_section(kind, &name);
         }
         self.report(result, ok_message);
         if saved && assumed_file {
@@ -2382,14 +2509,13 @@ impl App {
     /// the content surface, and any overlay on top.
     fn render(&self, frame: &mut Frame) {
         let area = frame.area();
-        let active = Tab::ALL
-            .iter()
-            .position(|tab| *tab == self.tab)
-            .unwrap_or(0);
         let areas = appframe::render_frame(
             frame,
             &self.skin,
-            active,
+            appframe::TabBar {
+                active: self.tab.kind_index(),
+                archived: self.tab.is_archived(),
+            },
             self.status_lines(area.width),
             &self.hint_groups(),
             self.loading.is_some(),
@@ -2401,7 +2527,7 @@ impl App {
             self::columns::render_footer(
                 frame,
                 footer,
-                (self.columns, self.tab),
+                (self.columns(), self.tab),
                 (self.visible_totals(), &self.colors),
             );
         }
@@ -2506,7 +2632,7 @@ impl App {
     /// set, the totals-and-bar footer below it. A short terminal keeps every
     /// row for the list and gets no footer.
     fn split_columns_footer(&self, content: Rect) -> (Rect, Option<Rect>) {
-        let rows = self::columns::footer_rows(self.columns, content.height);
+        let rows = self::columns::footer_rows(self.columns(), content.height);
         if rows == 0 {
             return (content, None);
         }
@@ -2716,7 +2842,7 @@ impl App {
         spans.push(Span::styled(count, muted));
         spans.push(sep());
         spans.push(Span::styled(
-            format!("{} {}", icons.sort, self.sort.label()),
+            format!("{} {}", icons.sort, self.sort().label()),
             muted,
         ));
         // Active view lenses (filter / changes-only / slugs) in the accent.
@@ -2738,12 +2864,12 @@ impl App {
             ));
         }
 
-        // The status/remote times are git-specific, so skip them on the Files
-        // and Folders tab.
+        // The status/remote times are git-specific, so skip them on the files
+        // tabs.
         if self.config.example_mode {
             spans.push(sep());
             spans.push(Span::styled("example mode", muted));
-        } else if self.tab != Tab::FilesAndFolders {
+        } else if self.tab.kind() == TabKind::Git {
             if let Some(at) = self.cache_generated_at {
                 let age = Local::now().signed_duration_since(at);
                 spans.push(sep());
@@ -2887,7 +3013,7 @@ impl App {
             config: &self.config,
             skin: &self.skin,
             colors: &self.colors,
-            columns: self.columns,
+            columns: self.columns(),
             code: &self.stats.code,
             git: &self.stats.git,
             computing: &self.computing,
@@ -2899,6 +3025,9 @@ impl App {
             has_selection: !self.selected.is_empty(),
             missing: &self.files_missing,
             show_slugs: self.show_slugs,
+            // The flat view labels each row with its section when grouping is
+            // off, so the section is still visible without header bars.
+            show_section: !self.grouped(),
             query: self.filtering_active().then_some(query),
             zip_backups: &self.zip_backups,
             offset: &self.table_offset,
@@ -2906,21 +3035,26 @@ impl App {
         table::render_table(frame, area, &visible, cursor, &table_view);
     }
 
-    /// Renders the Files tab as a sectioned list (`view_len` entries total).
+    /// Renders the current tab as a sectioned list (`view_len` entries total).
     fn render_sections(&self, frame: &mut Frame, area: Rect, view_len: usize) {
         let groups = self.section_groups();
         let cursor = self.cursor.min(view_len.saturating_sub(1));
+        let spinner =
+            self.spinner_frame().map(|glyph| (&self.refreshing, glyph));
         let view = sections_view::SectionedView {
+            tab: self.tab,
             groups: &groups,
             repos: self.service.repos(),
+            config: &self.config,
             icons: &self.icons,
             skin: &self.skin,
             colors: &self.colors,
-            columns: self.columns,
+            columns: self.columns(),
             code: &self.stats.code,
             git: &self.stats.git,
             computing: &self.computing,
-            spinner: self.spinner_frame(),
+            example_mode: self.config.example_mode,
+            spinner,
             now: Local::now().timestamp(),
             selected: &self.selected,
             has_selection: !self.selected.is_empty(),
@@ -2971,9 +3105,10 @@ impl App {
 /// The placeholder text for an empty tab.
 fn empty_hint(tab: Tab) -> &'static str {
     match tab {
-        Tab::GitRepos => "No git repos. Press n to add one.",
-        Tab::FilesAndFolders => "No folders or files. Press n to add one.",
-        Tab::Archive => "Nothing archived.",
+        Tab::GitActive => "No git repos. Press n to add one.",
+        Tab::GitArchive => "No archived git repos.",
+        Tab::FilesActive => "No folders or files. Press n to add one.",
+        Tab::FilesArchive => "No archived folders or files.",
     }
 }
 
@@ -3227,6 +3362,8 @@ mod tests {
     #[test]
     fn c_cycles_the_column_sets_and_only_they_show_the_bar() {
         let mut app = sample_app();
+        // Flat view (grouping off) shows the classic table with column headers.
+        press(&mut app, KeyCode::Char('.'));
         // Standard looks exactly as it always did: no bar, no totals row.
         let standard = screen(&app, 120, 30);
         assert!(standard.contains("Branch"));
@@ -3336,9 +3473,15 @@ mod tests {
         assert!(!listed.contains("Lines of code"));
 
         // Name is active and first; Enter re-picks it and flips the direction.
-        assert_eq!((app.sort, app.sort_dir), (SortMode::Name, SortDir::Asc));
+        assert_eq!(
+            (app.sort(), app.sort_dir()),
+            (SortMode::Name, SortDir::Asc)
+        );
         press(&mut app, KeyCode::Enter);
-        assert_eq!((app.sort, app.sort_dir), (SortMode::Name, SortDir::Desc));
+        assert_eq!(
+            (app.sort(), app.sort_dir()),
+            (SortMode::Name, SortDir::Desc)
+        );
     }
 
     #[test]
@@ -3356,9 +3499,9 @@ mod tests {
         let mut app = sample_app();
         press(&mut app, KeyCode::Char('2'));
         press(&mut app, KeyCode::Char('c'));
-        assert_eq!(app.columns, ColumnSet::Code);
+        assert_eq!(app.columns(), ColumnSet::Code);
         press(&mut app, KeyCode::Char('c'));
-        assert_eq!(app.columns, ColumnSet::Standard, "Activity is skipped");
+        assert_eq!(app.columns(), ColumnSet::Standard, "Activity is skipped");
     }
 
     #[test]
@@ -3366,9 +3509,10 @@ mod tests {
         let mut app = sample_app();
         press(&mut app, KeyCode::Char('c'));
         press(&mut app, KeyCode::Char('c'));
-        assert_eq!(app.columns, ColumnSet::Activity);
+        assert_eq!(app.columns(), ColumnSet::Activity);
         press(&mut app, KeyCode::Char('2'));
-        assert_eq!(app.columns, ColumnSet::Standard);
+        // Switching to files keeps the files tab's own column set (Standard).
+        assert_eq!(app.columns(), ColumnSet::Standard);
     }
 
     #[test]
@@ -3508,13 +3652,14 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let mut app = sample_app();
-        app.tab = Tab::GitRepos;
+        app.tab = Tab::GitActive;
         let git = labels(&app);
         assert_eq!(git.first().map(String::as_str), Some("Navigation"));
         assert!(git.contains(&"Git".to_string()));
-        assert!(!git.contains(&"Sections".to_string()));
+        // Sections now work on the git tabs too.
+        assert!(git.contains(&"Sections".to_string()));
 
-        app.tab = Tab::FilesAndFolders;
+        app.tab = Tab::FilesActive;
         let files = labels(&app);
         assert!(files.contains(&"Sections".to_string()));
         assert!(files.contains(&"Paths".to_string()));

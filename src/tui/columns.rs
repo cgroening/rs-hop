@@ -11,7 +11,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use crate::domain::filter::Tab;
+use crate::domain::filter::{Tab, TabKind};
 use crate::domain::sort::SortMode;
 use crate::domain::stats::{
     CodeEntry, GitStats, Totals, format_age, format_bytes, format_count,
@@ -47,12 +47,15 @@ pub enum ColumnSet {
 impl ColumnSet {
     /// The sets available on `tab`, in cycle order.
     ///
-    /// The Files tab omits `Activity`: commits and branches say nothing about a
-    /// folder or a file, and an empty column is worse than no column.
+    /// The files tabs omit `Activity`: commits and branches say nothing about a
+    /// folder or a file, and an empty column is worse than no column. The git
+    /// tabs (active and archive) keep all three.
     pub fn all(tab: Tab) -> &'static [ColumnSet] {
-        match tab {
-            Tab::FilesAndFolders => &[ColumnSet::Standard, ColumnSet::Code],
-            _ => &[ColumnSet::Standard, ColumnSet::Code, ColumnSet::Activity],
+        match tab.kind() {
+            TabKind::Files => &[ColumnSet::Standard, ColumnSet::Code],
+            TabKind::Git => {
+                &[ColumnSet::Standard, ColumnSet::Code, ColumnSet::Activity]
+            }
         }
     }
 
@@ -414,18 +417,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_files_tab_skips_the_activity_set() {
-        assert_eq!(ColumnSet::all(Tab::FilesAndFolders).len(), 2);
-        assert_eq!(ColumnSet::all(Tab::GitRepos).len(), 3);
-        // Cycling on the Files tab returns to Standard after Code.
-        let set = ColumnSet::Standard.next(Tab::FilesAndFolders);
+    fn the_files_tabs_skip_the_activity_set() {
+        // Both a files active and files archive view omit Activity.
+        assert_eq!(ColumnSet::all(Tab::FilesActive).len(), 2);
+        assert_eq!(ColumnSet::all(Tab::FilesArchive).len(), 2);
+        // Both git views keep all three.
+        assert_eq!(ColumnSet::all(Tab::GitActive).len(), 3);
+        assert_eq!(ColumnSet::all(Tab::GitArchive).len(), 3);
+        // Cycling on a files tab returns to Standard after Code.
+        let set = ColumnSet::Standard.next(Tab::FilesActive);
         assert_eq!(set, ColumnSet::Code);
-        assert_eq!(set.next(Tab::FilesAndFolders), ColumnSet::Standard);
+        assert_eq!(set.next(Tab::FilesActive), ColumnSet::Standard);
     }
 
     #[test]
     fn cycling_the_git_tab_visits_every_set() {
-        let tab = Tab::GitRepos;
+        let tab = Tab::GitActive;
         let mut set = ColumnSet::Standard;
         set = set.next(tab);
         assert_eq!(set, ColumnSet::Code);
@@ -436,11 +443,11 @@ mod tests {
 
     #[test]
     fn a_set_the_tab_does_not_offer_falls_back_to_standard() {
-        // Persisted "activity", then the user opens the Files tab.
-        let set = ColumnSet::Activity.available_on(Tab::FilesAndFolders);
+        // Persisted "activity", then the user opens a files tab.
+        let set = ColumnSet::Activity.available_on(Tab::FilesActive);
         assert_eq!(set, ColumnSet::Standard);
         assert_eq!(
-            ColumnSet::Code.available_on(Tab::FilesAndFolders),
+            ColumnSet::Code.available_on(Tab::FilesActive),
             ColumnSet::Code
         );
     }

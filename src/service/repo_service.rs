@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::domain::error::{Error, Result};
-use crate::domain::repo::{GitInfo, Repo};
+use crate::domain::repo::{GitInfo, Repo, RepoKind};
 use crate::domain::sections;
 use crate::domain::slug;
 use crate::storage::repository::RepoRepository;
@@ -26,7 +26,8 @@ struct UndoSnapshot {
 pub struct RepoService {
     repository: Box<dyn RepoRepository>,
     repos: Vec<Repo>,
-    sections: Vec<String>,
+    git_sections: Vec<String>,
+    path_sections: Vec<String>,
     usage_path: PathBuf,
     selected_repo_path: PathBuf,
     undo: Option<UndoSnapshot>,
@@ -44,7 +45,8 @@ impl RepoService {
     ) -> Result<Self> {
         let mut service = RepoService {
             repos: repository.find_all()?,
-            sections: repository.find_sections()?,
+            git_sections: repository.find_sections(RepoKind::Git)?,
+            path_sections: repository.find_sections(RepoKind::Path)?,
             repository,
             usage_path,
             selected_repo_path,
@@ -272,116 +274,149 @@ impl RepoService {
         })
     }
 
-    /// The ordered list of user section names (Files tab grouping).
-    pub fn sections(&self) -> &[String] {
-        &self.sections
+    /// The ordered list of section names for `kind` (each kind has its own
+    /// independent namespace).
+    pub fn sections(&self, kind: RepoKind) -> &[String] {
+        self.sections_of(kind)
     }
 
-    /// Appends a new section, validating its name.
+    /// Appends a new section to `kind`'s namespace, validating its name.
     ///
     /// # Errors
     /// Returns [`Error::Invalid`] for an empty, reserved or duplicate name, or a
     /// write error.
-    pub fn add_section(&mut self, name: &str) -> Result<()> {
+    pub fn add_section(&mut self, kind: RepoKind, name: &str) -> Result<()> {
         let name = name.trim();
-        self.validate_section_name(name, None)?;
-        let mut next = self.sections.clone();
+        self.validate_section_name(kind, name, None)?;
+        let mut next = self.sections_of(kind).to_vec();
         next.push(name.to_string());
-        self.persist_sections(next)
+        self.persist_sections(kind, next)
     }
 
-    /// Registers `name` as a section if it is non-empty and not already known
-    /// (case-insensitive), used when an entry is saved with a new section.
+    /// Registers `name` in `kind`'s namespace if it is non-empty and not already
+    /// known (case-insensitive), used when an entry is saved with a new section.
     ///
     /// # Errors
     /// Returns a write error if persistence fails.
-    pub fn ensure_section(&mut self, name: &str) -> Result<()> {
+    pub fn ensure_section(&mut self, kind: RepoKind, name: &str) -> Result<()> {
         let name = name.trim();
-        if name.is_empty() || self.section_index(name).is_some() {
+        if name.is_empty() || self.section_index(kind, name).is_some() {
             return Ok(());
         }
-        let mut next = self.sections.clone();
+        let mut next = self.sections_of(kind).to_vec();
         next.push(name.to_string());
-        self.persist_sections(next)
+        self.persist_sections(kind, next)
     }
 
-    /// Renames the section `old` to `new`, updating every entry that referenced
-    /// it (one undo frame for the entries).
+    /// Renames the section `old` to `new` in `kind`'s namespace, updating every
+    /// entry of that kind which referenced it (one undo frame for the entries).
     ///
     /// # Errors
     /// Returns [`Error::NotFound`] when `old` is unknown, [`Error::Invalid`] for
     /// a bad `new` name, or a write error.
-    pub fn rename_section(&mut self, old: &str, new: &str) -> Result<()> {
+    pub fn rename_section(
+        &mut self,
+        kind: RepoKind,
+        old: &str,
+        new: &str,
+    ) -> Result<()> {
         let new = new.trim();
         let pos = self
-            .section_index(old)
+            .section_index(kind, old)
             .ok_or_else(|| Error::NotFound(format!("section '{old}'")))?;
-        self.validate_section_name(new, Some(pos))?;
-        let old_name = self.sections[pos].clone();
+        self.validate_section_name(kind, new, Some(pos))?;
+        let old_name = self.sections_of(kind)[pos].clone();
         let new_name = new.to_string();
         self.mutate("rename section", |repos| {
             for repo in repos.iter_mut() {
-                if repo.section.as_deref() == Some(old_name.as_str()) {
+                if repo.kind == kind
+                    && repo.section.as_deref() == Some(old_name.as_str())
+                {
                     repo.section = Some(new_name.clone());
                 }
             }
             Ok(())
         })?;
-        let mut next = self.sections.clone();
+        let mut next = self.sections_of(kind).to_vec();
         next[pos] = new.to_string();
-        self.persist_sections(next)
+        self.persist_sections(kind, next)
     }
 
-    /// Deletes the section `name`, moving its entries to Ungrouped (one undo
-    /// frame for the entries).
+    /// Deletes the section `name` from `kind`'s namespace, moving that kind's
+    /// entries in it to Ungrouped (one undo frame for the entries).
     ///
     /// # Errors
     /// Returns [`Error::NotFound`] when `name` is unknown, or a write error.
-    pub fn delete_section(&mut self, name: &str) -> Result<()> {
+    pub fn delete_section(&mut self, kind: RepoKind, name: &str) -> Result<()> {
         let pos = self
-            .section_index(name)
+            .section_index(kind, name)
             .ok_or_else(|| Error::NotFound(format!("section '{name}'")))?;
-        let removed = self.sections[pos].clone();
+        let removed = self.sections_of(kind)[pos].clone();
         self.mutate("delete section", |repos| {
             for repo in repos.iter_mut() {
-                if repo.section.as_deref() == Some(removed.as_str()) {
+                if repo.kind == kind
+                    && repo.section.as_deref() == Some(removed.as_str())
+                {
                     repo.section = None;
                 }
             }
             Ok(())
         })?;
-        let mut next = self.sections.clone();
+        let mut next = self.sections_of(kind).to_vec();
         next.remove(pos);
-        self.persist_sections(next)
+        self.persist_sections(kind, next)
     }
 
-    /// Moves the section at `from` to position `to` in the order.
+    /// Moves the section at `from` to position `to` in `kind`'s order.
     ///
     /// # Errors
     /// Returns [`Error::NotFound`] for an out-of-range index, or a write error.
-    pub fn move_section(&mut self, from: usize, to: usize) -> Result<()> {
-        let len = self.sections.len();
+    pub fn move_section(
+        &mut self,
+        kind: RepoKind,
+        from: usize,
+        to: usize,
+    ) -> Result<()> {
+        let len = self.sections_of(kind).len();
         if from >= len || to >= len {
             return Err(Error::NotFound(format!("section index {from}/{to}")));
         }
-        let mut next = self.sections.clone();
+        let mut next = self.sections_of(kind).to_vec();
         let name = next.remove(from);
         next.insert(to, name);
-        self.persist_sections(next)
+        self.persist_sections(kind, next)
     }
 
-    /// The index of the section named `name` (case-insensitive), if present.
-    fn section_index(&self, name: &str) -> Option<usize> {
+    /// The section list for `kind`.
+    fn sections_of(&self, kind: RepoKind) -> &Vec<String> {
+        match kind {
+            RepoKind::Git => &self.git_sections,
+            RepoKind::Path => &self.path_sections,
+        }
+    }
+
+    /// The mutable section list for `kind`.
+    fn sections_slot(&mut self, kind: RepoKind) -> &mut Vec<String> {
+        match kind {
+            RepoKind::Git => &mut self.git_sections,
+            RepoKind::Path => &mut self.path_sections,
+        }
+    }
+
+    /// The index of the section named `name` in `kind`'s namespace
+    /// (case-insensitive), if present.
+    fn section_index(&self, kind: RepoKind, name: &str) -> Option<usize> {
         let name = name.trim();
-        self.sections
+        self.sections_of(kind)
             .iter()
             .position(|section| section.eq_ignore_ascii_case(name))
     }
 
-    /// Validates a section name: non-empty, not the reserved Ungrouped label,
-    /// and not a duplicate of another section (case-insensitive).
+    /// Validates a section name in `kind`'s namespace: non-empty, not the
+    /// reserved Ungrouped label, and not a duplicate (case-insensitive).
     fn validate_section_name(
         &self,
+        kind: RepoKind,
         name: &str,
         except: Option<usize>,
     ) -> Result<()> {
@@ -391,9 +426,13 @@ impl RepoService {
         if name.eq_ignore_ascii_case(sections::UNGROUPED) {
             return Err(Error::invalid("'Ungrouped' is a reserved name"));
         }
-        let clash = self.sections.iter().enumerate().any(|(index, section)| {
-            Some(index) != except && section.eq_ignore_ascii_case(name)
-        });
+        let clash =
+            self.sections_of(kind)
+                .iter()
+                .enumerate()
+                .any(|(index, sec)| {
+                    Some(index) != except && sec.eq_ignore_ascii_case(name)
+                });
         if clash {
             return Err(Error::invalid(format!(
                 "section '{name}' already exists"
@@ -402,11 +441,17 @@ impl RepoService {
         Ok(())
     }
 
-    /// Replaces the section list and persists it, rolling back on write failure.
-    fn persist_sections(&mut self, next: Vec<String>) -> Result<()> {
-        let previous = std::mem::replace(&mut self.sections, next);
-        if let Err(error) = self.repository.save_sections(&self.sections) {
-            self.sections = previous;
+    /// Replaces `kind`'s section list and persists it, rolling back on write
+    /// failure.
+    fn persist_sections(
+        &mut self,
+        kind: RepoKind,
+        next: Vec<String>,
+    ) -> Result<()> {
+        let previous = std::mem::replace(self.sections_slot(kind), next);
+        let write = self.repository.save_sections(kind, self.sections_of(kind));
+        if let Err(error) = write {
+            *self.sections_slot(kind) = previous;
             return Err(error);
         }
         Ok(())
@@ -645,36 +690,42 @@ mod tests {
         repo
     }
 
+    const GIT: RepoKind = RepoKind::Git;
+    const PATH: RepoKind = RepoKind::Path;
+
     #[test]
     fn add_section_rejects_empty_reserved_and_duplicate() {
         let mut svc = service(vec![]);
-        svc.add_section("Work").unwrap();
-        assert_eq!(svc.sections(), ["Work"]);
-        assert!(matches!(svc.add_section("  "), Err(Error::Invalid(_))));
+        svc.add_section(GIT, "Work").unwrap();
+        assert_eq!(svc.sections(GIT), ["Work"]);
+        assert!(matches!(svc.add_section(GIT, "  "), Err(Error::Invalid(_))));
         assert!(matches!(
-            svc.add_section("Ungrouped"),
+            svc.add_section(GIT, "Ungrouped"),
             Err(Error::Invalid(_))
         ));
         // Duplicate is case-insensitive.
-        assert!(matches!(svc.add_section("work"), Err(Error::Invalid(_))));
+        assert!(matches!(
+            svc.add_section(GIT, "work"),
+            Err(Error::Invalid(_))
+        ));
     }
 
     #[test]
     fn ensure_section_is_idempotent() {
         let mut svc = service(vec![]);
-        svc.ensure_section("Work").unwrap();
-        svc.ensure_section("work").unwrap();
-        svc.ensure_section("  ").unwrap();
-        assert_eq!(svc.sections(), ["Work"]);
+        svc.ensure_section(GIT, "Work").unwrap();
+        svc.ensure_section(GIT, "work").unwrap();
+        svc.ensure_section(GIT, "  ").unwrap();
+        assert_eq!(svc.sections(GIT), ["Work"]);
     }
 
     #[test]
     fn rename_section_updates_entries() {
         let mut svc =
             service(vec![sectioned("a", Some("Work")), sectioned("b", None)]);
-        svc.add_section("Work").unwrap();
-        svc.rename_section("Work", "Job").unwrap();
-        assert_eq!(svc.sections(), ["Job"]);
+        svc.add_section(GIT, "Work").unwrap();
+        svc.rename_section(GIT, "Work", "Job").unwrap();
+        assert_eq!(svc.sections(GIT), ["Job"]);
         assert_eq!(svc.get(0).unwrap().section.as_deref(), Some("Job"));
         assert_eq!(svc.get(1).unwrap().section, None);
     }
@@ -682,20 +733,44 @@ mod tests {
     #[test]
     fn delete_section_ungroups_entries() {
         let mut svc = service(vec![sectioned("a", Some("Work"))]);
-        svc.add_section("Work").unwrap();
-        svc.delete_section("Work").unwrap();
-        assert!(svc.sections().is_empty());
+        svc.add_section(GIT, "Work").unwrap();
+        svc.delete_section(GIT, "Work").unwrap();
+        assert!(svc.sections(GIT).is_empty());
         assert_eq!(svc.get(0).unwrap().section, None);
     }
 
     #[test]
     fn move_section_reorders() {
         let mut svc = service(vec![]);
-        svc.add_section("Work").unwrap();
-        svc.add_section("Personal").unwrap();
-        svc.add_section("Misc").unwrap();
-        svc.move_section(2, 0).unwrap();
-        assert_eq!(svc.sections(), ["Misc", "Work", "Personal"]);
+        svc.add_section(GIT, "Work").unwrap();
+        svc.add_section(GIT, "Personal").unwrap();
+        svc.add_section(GIT, "Misc").unwrap();
+        svc.move_section(GIT, 2, 0).unwrap();
+        assert_eq!(svc.sections(GIT), ["Misc", "Work", "Personal"]);
+    }
+
+    #[test]
+    fn git_and_path_namespaces_are_independent() {
+        // Same section name in both namespaces is allowed and separate.
+        let mut svc = service(vec![]);
+        svc.add_section(GIT, "Work").unwrap();
+        svc.add_section(PATH, "Work").unwrap();
+        assert_eq!(svc.sections(GIT), ["Work"]);
+        assert_eq!(svc.sections(PATH), ["Work"]);
+    }
+
+    #[test]
+    fn rename_only_touches_the_matching_kind() {
+        // A git entry and a (path) folder both sit in a "Work" section.
+        let git_entry = sectioned("g", Some("Work"));
+        let mut folder = sectioned("f", Some("Work"));
+        folder.kind = PATH;
+        let mut svc = service(vec![git_entry, folder]);
+        svc.add_section(GIT, "Work").unwrap();
+        svc.rename_section(GIT, "Work", "Job").unwrap();
+        // Only the git entry is rewritten; the folder keeps its own "Work".
+        assert_eq!(svc.get(0).unwrap().section.as_deref(), Some("Job"));
+        assert_eq!(svc.get(1).unwrap().section.as_deref(), Some("Work"));
     }
 
     #[test]

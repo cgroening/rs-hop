@@ -17,15 +17,20 @@ use ratatui::widgets::{Cell, Row, Table, TableState};
 use unicode_width::UnicodeWidthStr;
 
 use crate::config::{ColumnWidth, Config};
-use crate::domain::filter::Tab;
-use crate::domain::repo::{GitInfo, Repo, RepoKind, is_dir_target};
+use crate::domain::filter::{Tab, TabKind};
+use crate::domain::repo::{GitInfo, Repo, is_dir_target};
+use crate::domain::sections::UNGROUPED;
 use crate::domain::stats::{CodeEntry, GitStats};
 use crate::theme::Skin;
 use crate::tui::columns::{
     CellSource, ColumnSet, StatColumn, cell_text, stat_columns,
 };
+use crate::tui::git_columns::{
+    branch_text, effective_info, git_marker_errored, github_text,
+    status_display, zip_date_text,
+};
 use crate::tui::presentation::{
-    IconSet, highlight_name, name_plain, slug_style, status_text,
+    IconSet, highlight_name, name_plain, slug_style, status_span,
 };
 use crate::tui::skin::Colors;
 
@@ -56,6 +61,9 @@ pub struct TableView<'a> {
     pub missing: &'a HashSet<PathBuf>,
     /// Whether to show each entry's slug (dim, italic) after its name.
     pub show_slugs: bool,
+    /// Whether to show a leading Section column (the flat view, when grouping is
+    /// toggled off, so an entry's group is still visible without header bars).
+    pub show_section: bool,
     /// The active fuzzy query, to highlight matched characters in the name.
     pub query: Option<&'a str>,
     /// Last ZIP-backup time per repo path, for the "ZIP Backup" column.
@@ -139,16 +147,6 @@ fn name_cell_spans(repo: &Repo, view: &TableView) -> Vec<Span<'static>> {
         spans.push(Span::styled(format!(" {slug}"), slug_style(view.colors)));
     }
     spans
-}
-
-/// The git info to display for `repo`: example info in example mode, otherwise
-/// the live info (which may still be loading).
-fn effective_info(repo: &Repo, example_mode: bool) -> Option<&GitInfo> {
-    if example_mode {
-        repo.example_git_info.as_ref()
-    } else {
-        repo.git_info.as_ref()
-    }
 }
 
 /// Renders the table of `repos` (already filtered and sorted) into `area`,
@@ -240,16 +238,21 @@ fn widths(
         4,
         cols.name,
     );
-    // A 2-cell selection-marker column, only while a selection is active.
-    let lead: &[Constraint] = if view.has_selection {
-        &[
+    // A 2-cell selection-marker column, only while a selection is active,
+    // then the leading Section column when grouping is toggled off.
+    let mut lead: Vec<Constraint> = if view.has_selection {
+        vec![
             Constraint::Length(2),
             Constraint::Length(1),
             Constraint::Length(1),
         ]
     } else {
-        &[Constraint::Length(1), Constraint::Length(1)]
+        vec![Constraint::Length(1), Constraint::Length(1)]
     };
+    if view.show_section {
+        lead.push(Constraint::Length(section_width(repos)));
+    }
+    let lead = lead.as_slice();
     if view.columns.is_statistics() {
         let mut constraints = lead.to_vec();
         constraints.push(Constraint::Length(name));
@@ -262,8 +265,8 @@ fn widths(
         constraints.push(Constraint::Min(0));
         return constraints;
     }
-    match view.tab {
-        Tab::FilesAndFolders => [
+    match view.tab.kind() {
+        TabKind::Files => [
             lead,
             &[
                 Constraint::Length(name),
@@ -272,7 +275,7 @@ fn widths(
             ],
         ]
         .concat(),
-        _ => {
+        TabKind::Git => {
             let branch = sized(
                 content_width(repos, |r| {
                     branch_text(effective_info(r, view.example_mode))
@@ -281,7 +284,12 @@ fn widths(
                 cols.current_branch_name,
             );
             let status = sized(
-                content_width(repos, |r| status_display(r, view)),
+                content_width(repos, |r| {
+                    status_display(
+                        effective_info(r, view.example_mode),
+                        view.icons,
+                    )
+                }),
                 6,
                 cols.status,
             );
@@ -293,15 +301,25 @@ fn widths(
                 cols.github_repo_name,
             );
             let zip = sized(
-                content_width(repos, |r| zip_date_text(r, view)),
+                content_width(repos, |r| {
+                    zip_date_text(r, view.icons, view.zip_backups)
+                }),
                 "ZIP Backup".len(),
                 cols.zip_backup,
             );
             // GitHub is the column that yields: it keeps its content width when
             // there is room, but shrinks so the rigid columns (above all Name)
-            // are never squeezed.
-            let lead_cells: u16 = if view.has_selection { 3 } else { 2 };
-            let lead_width: u16 = if view.has_selection { 4 } else { 2 };
+            // are never squeezed. The optional Section column counts as part of
+            // the fixed lead.
+            let section = if view.show_section {
+                section_width(repos)
+            } else {
+                0
+            };
+            let lead_cells: u16 =
+                (if view.has_selection { 3 } else { 2 }) + section_cells(view);
+            let lead_width: u16 =
+                (if view.has_selection { 4 } else { 2 }) + section;
             let spacing = (lead_cells + 5).saturating_sub(1); // column_spacing 1
             let fixed = lead_width + name + branch + status + zip + spacing;
             let github = github_width(github_desired, fixed, available);
@@ -350,18 +368,34 @@ fn github_width(desired: u16, fixed: u16, available: u16) -> u16 {
     desired.min(available.saturating_sub(fixed))
 }
 
-/// The status text used both to render and to size the status column.
-fn status_display(repo: &Repo, view: &TableView) -> String {
-    let info = effective_info(repo, view.example_mode);
-    match info {
-        None => "\u{2026}".to_string(),
-        Some(info) if info.is_path_missing() => "-".to_string(),
-        Some(info) => status_text(info, view.icons),
-    }
+/// The header label and floor width of the leading Section column.
+const SECTION_HEADER: &str = "Section";
+/// The upper bound of the Section column, so a long name cannot dominate.
+const SECTION_MAX: usize = 24;
+
+/// The Section column width, sized to the widest section label (floored at the
+/// header, capped at [`SECTION_MAX`]).
+fn section_width(repos: &[&Repo]) -> u16 {
+    content_width(repos, section_label)
+        .max(SECTION_HEADER.len())
+        .min(SECTION_MAX) as u16
+}
+
+/// Whether the layout adds a Section column cell (0 or 1), for lead-cell counts.
+fn section_cells(view: &TableView) -> u16 {
+    u16::from(view.show_section)
+}
+
+/// The section label for `repo`: its section name, or the Ungrouped label.
+fn section_label(repo: &Repo) -> String {
+    repo.section
+        .clone()
+        .unwrap_or_else(|| UNGROUPED.to_string())
 }
 
 /// The header row for `tab` (a leading blank cell for the selection column when
-/// a selection is active).
+/// a selection is active, and a Section header when the flat section column is
+/// shown).
 fn header_row(view: &TableView) -> Row<'static> {
     let titles: Vec<String> = if view.columns.is_statistics() {
         let mut titles = vec![String::new(), String::new(), "Name".to_string()];
@@ -373,9 +407,9 @@ fn header_row(view: &TableView) -> Row<'static> {
         titles.push(String::new());
         titles
     } else {
-        match view.tab {
-            Tab::FilesAndFolders => vec!["", "", "Name", "Type", "Path"],
-            _ => {
+        match view.tab.kind() {
+            TabKind::Files => vec!["", "", "Name", "Type", "Path"],
+            TabKind::Git => {
                 vec!["", "", "Name", "Branch", "Status", "GitHub", "ZIP Backup"]
             }
         }
@@ -386,6 +420,12 @@ fn header_row(view: &TableView) -> Row<'static> {
     let mut cells: Vec<Cell> = Vec::new();
     if view.has_selection {
         cells.push(Cell::from(""));
+    }
+    let mut titles = titles;
+    if view.show_section {
+        // The two leading blanks are the marker + fav columns; the Section
+        // header sits after them, before Name.
+        titles.insert(2, SECTION_HEADER.to_string());
     }
     cells.extend(titles.into_iter().map(Cell::from));
     Row::new(cells).style(view.colors.header_style())
@@ -399,6 +439,12 @@ fn row_for<'a>(repo: &Repo, view: &TableView, selected: bool) -> Row<'a> {
     }
     cells.push(marker_cell(repo, view));
     cells.push(fav_cell(repo, view));
+    if view.show_section {
+        cells.push(Cell::from(Span::styled(
+            truncate(&section_label(repo), SECTION_MAX),
+            Style::default().fg(view.colors.dim),
+        )));
+    }
     cells.push(Cell::from(Line::from(name_cell_spans(repo, view))));
     if view.columns.is_statistics() {
         for column in stat_columns(view.columns) {
@@ -413,15 +459,15 @@ fn row_for<'a>(repo: &Repo, view: &TableView, selected: bool) -> Row<'a> {
         cells.push(Cell::from(""));
         return Row::new(cells);
     }
-    match view.tab {
-        Tab::FilesAndFolders => {
+    match view.tab.kind() {
+        TabKind::Files => {
             cells.push(Cell::from(type_label(repo)));
             cells.push(Cell::from(Span::styled(
                 repo.path.to_string_lossy().into_owned(),
                 Style::default().fg(view.colors.dim),
             )));
         }
-        _ => {
+        TabKind::Git => {
             let info = effective_info(repo, view.example_mode);
             // Only ellipsize a branch that exceeds its configured maximum; the
             // column itself is sized to the content otherwise.
@@ -435,7 +481,7 @@ fn row_for<'a>(repo: &Repo, view: &TableView, selected: bool) -> Row<'a> {
             cells.push(status_cell(repo, info, view));
             cells.push(Cell::from(github_text(info)));
             cells.push(Cell::from(Span::styled(
-                zip_date_text(repo, view),
+                zip_date_text(repo, view.icons, view.zip_backups),
                 Style::default().fg(view.colors.dim),
             )));
         }
@@ -459,11 +505,8 @@ fn selection_cell<'a>(selected: bool, colors: &Colors) -> Cell<'a> {
 /// repository); a file/folder entry only once the on-demand existence check
 /// flagged its path.
 fn marker_cell<'a>(repo: &Repo, view: &TableView) -> Cell<'a> {
-    let errored = match repo.kind {
-        RepoKind::Git if view.example_mode => repo.example_error().is_some(),
-        RepoKind::Git => repo.entry_error().is_some(),
-        RepoKind::Path => view.missing.contains(&repo.path),
-    };
+    let errored = git_marker_errored(repo, view.example_mode)
+        || view.missing.contains(&repo.path);
     if errored {
         Cell::from(Span::styled(
             view.icons.missing.to_string(),
@@ -505,62 +548,8 @@ fn status_cell<'a>(
             Style::default().fg(view.colors.accent),
         ));
     }
-    let Some(info) = info else {
-        return Cell::from(Span::styled(
-            "…",
-            Style::default().fg(view.colors.dim),
-        ));
-    };
-    if info.is_path_missing() {
-        return Cell::from(Span::styled(
-            "-",
-            Style::default().fg(view.colors.dim),
-        ));
-    }
-    // The status column is sized to its content, so no truncation is needed.
-    let text = status_text(info, view.icons);
-    let style = if info.is_clean() {
-        Style::default().fg(view.colors.positive)
-    } else if has_changes(info) {
-        Style::default().fg(view.colors.changes)
-    } else {
-        Style::default()
-    };
-    Cell::from(Span::styled(text, style))
-}
-
-/// Whether the info reports uncommitted changes (a non-clean working tree).
-fn has_changes(info: &GitInfo) -> bool {
-    info.changes.unwrap_or(0) > 0
-}
-
-/// The branch text, or a loading marker / dash.
-fn branch_text(info: Option<&GitInfo>) -> String {
-    match info {
-        None => "…".to_string(),
-        Some(info) => info
-            .current_branch_name
-            .clone()
-            .unwrap_or_else(|| "-".to_string()),
-    }
-}
-
-/// The GitHub name text, or a dash.
-fn github_text(info: Option<&GitInfo>) -> String {
-    info.and_then(|info| info.github_repo_name.clone())
-        .unwrap_or_else(|| "-".to_string())
-}
-
-/// The ZIP Backup cell text for `repo`: the excluded marker when the entry opts
-/// out of the "backup all" run, else the last-backup date (`YYYY-MM-DD`) or a
-/// dash when never backed up. Read from the precomputed map (no filesystem I/O).
-fn zip_date_text(repo: &Repo, view: &TableView) -> String {
-    if !repo.include_in_backup {
-        return view.icons.excluded.to_string();
-    }
-    view.zip_backups
-        .get(&repo.path)
-        .map_or_else(|| "-".to_string(), |dt| dt.format("%Y-%m-%d").to_string())
+    // Otherwise the shared coloured status span (loading / clean / changes).
+    Cell::from(status_span(info, view.icons, view.colors))
 }
 
 /// The detected type label for the Files and Folders tab.

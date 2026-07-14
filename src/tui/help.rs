@@ -33,8 +33,11 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
     (
         "Navigation",
         &[
-            ("1 / 2 / 3", "switch tab (Git Repos / Files / Archive)"),
-            ("Tab / Shift+Tab", "cycle to the next / previous tab"),
+            (
+                "1 / 2",
+                "Git Repos / Files (press again for that kind's archive)",
+            ),
+            ("Tab / Shift+Tab", "cycle the two active tabs"),
             ("\u{2191} \u{2193}", "move cursor (wraps)"),
             ("g / G", "top / bottom"),
             ("PgUp/PgDn \u{b7} Ctrl+u/d", "page \u{b7} half page"),
@@ -121,6 +124,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("F", "toggle showing only git repos with a status change"),
             ("c", "cycle the columns (Standard / Code / Activity)"),
             ("t", "pick the column to sort by (again: flip direction)"),
+            (",", "toggle floating favourites to the top"),
             ("i", "toggle showing slugs (dim, italic) after the name"),
         ],
     ),
@@ -147,11 +151,15 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
     (
         "Sections",
         &[
-            ("s", "Files: jump to a section"),
-            ("M", "Files: manage sections (add / rename / delete / move)"),
+            (
+                ".",
+                "toggle grouping into sections (off: flat, global sort)",
+            ),
+            ("s", "jump to a section (in the grouped view)"),
+            ("M", "manage sections (add / rename / delete / move)"),
             (
                 "Alt+\u{2191}\u{2193}",
-                "reorder (custom sort, or within a Files section)",
+                "reorder within a group (custom sort only)",
             ),
         ],
     ),
