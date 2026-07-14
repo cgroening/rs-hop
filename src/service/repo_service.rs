@@ -249,6 +249,28 @@ impl RepoService {
         })
     }
 
+    /// Applies `edit` to every entry in `indices` as one action (a bulk edit of
+    /// fields with no per-entry validation, e.g. section/kind/favourite/backup).
+    ///
+    /// # Errors
+    /// Returns [`Error::NotFound`] for a bad index, or a write error.
+    pub fn update_many(
+        &mut self,
+        indices: &[usize],
+        edit: impl Fn(&mut Repo),
+    ) -> Result<()> {
+        for &index in indices {
+            self.ensure_index(index)?;
+        }
+        let indices = indices.to_vec();
+        self.mutate("edit entries", |repos| {
+            for &index in &indices {
+                edit(&mut repos[index]);
+            }
+            Ok(())
+        })
+    }
+
     /// Swaps two entries' positions (the stored custom order), as one action.
     ///
     /// # Errors
@@ -688,6 +710,22 @@ mod tests {
         let mut repo = repo(name);
         repo.section = section.map(str::to_string);
         repo
+    }
+
+    #[test]
+    fn update_many_applies_to_all_in_one_undo_frame() {
+        let mut svc = service(vec![repo("a"), repo("b"), repo("c")]);
+        svc.update_many(&[0, 2], |repo| {
+            repo.section = Some("Work".to_string());
+        })
+        .unwrap();
+        assert_eq!(svc.get(0).unwrap().section.as_deref(), Some("Work"));
+        assert_eq!(svc.get(1).unwrap().section, None);
+        assert_eq!(svc.get(2).unwrap().section.as_deref(), Some("Work"));
+        // One undo frame restores every touched entry.
+        svc.undo().unwrap();
+        assert_eq!(svc.get(0).unwrap().section, None);
+        assert_eq!(svc.get(2).unwrap().section, None);
     }
 
     const GIT: RepoKind = RepoKind::Git;

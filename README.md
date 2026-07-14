@@ -18,7 +18,7 @@ Pick an entry and hop writes its path to a handoff file your shell reads to `cd`
 - **Live git status** (branch, uncommitted changes, ahead/behind, GitHub repo name), gathered in the background and cached so the list shows instantly.
 - **Two tabs, each with its own archive**: Git Repos and Files and Folders. Press a tab's key (`1` / `2`) again to toggle into that kind's archive; `Tab`/`Shift+Tab` cycle the two active tabs. Each kind remembers its own sort, columns, grouping and fav-float across runs.
 - **Sections** on both kinds: group entries under named, reorderable section headers (Git and Files each keep their own section list; an archived entry keeps its group). `.` toggles the grouped view (off = a flat, globally sorted list with a Section column), `s` jumps to a section, `M` manages them, and inside a group entries follow the active sort mode.
-- **In-app management**: add, edit, delete, favourite, archive/restore, set a slug - the config is written back preserving its comments.
+- **In-app management**: add, edit, delete, favourite, archive/restore, set a slug - the config is written back preserving its comments. The add/edit form picks a section from a fuzzy-searchable list (type a new name to create it). Selecting several entries and pressing `e` bulk-edits their Section/Favourite/Backup/Kind at once, changing only the fields you touch and marking differing values as *mixed*.
 - **Content-aware open**: a file/folder entry auto-detects its target – a folder `cd`s, a text file (by extension; configurable via `editor_extensions`) opens in the editor, and any other file (image, PDF, …) opens with the system's default app.
 - **Slugs**: `hop <slug>` jumps straight to an entry from the shell; `hop add [PATH]` registers one without opening the TUI.
 - **Bulk import**: `hop scan [DIR]` finds git repos recursively and offers them in a multi-select picker (`--dry-run` to preview, `--nested` for repos inside repos).
@@ -214,7 +214,7 @@ HOP_CONFIRM_QUIT    true | false: ask before quitting with `q`
 | `M` | manage sections (add / rename / delete / reorder) |
 | `Alt+↑/↓` | reorder the entry within its group (custom sort; favourites stay on top) |
 | `n` | add an entry (fill the form; `^O` opens the path picker) |
-| `e` | edit the selected entry |
+| `e` | edit the entry (bulk-edit Section/Favourite/Backup/Kind when several are selected) |
 | `d` / `Del` / `Backspace` | delete (acts on the selection, else the cursor; confirm) |
 | `u` | undo the last change |
 | `*` | toggle favourite (selection or cursor) |

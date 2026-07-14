@@ -1,13 +1,17 @@
-//! The add/edit form for an entry: path, name, section, slug, kind, favourite.
+//! The add/edit form for an entry: path, name, slug, section, favourite,
+//! backup and kind.
 //!
-//! Which fields show depends on the current kind: a git entry shows the
-//! Favourite toggle, a folder/file shows the Section dropdown; changing the
-//! Kind field updates this live. `Tab`/`BackTab` (or `Up`/`Down`) step between
-//! the visible fields, the text fields edit inline, `Left`/`Right` cycle the
-//! section and the kind, `Space` toggles the favourite, `^O` opens the path
-//! picker, `Enter`/`Ctrl+S` save and `Esc` cancels. When the name is still
-//! blank, it is auto-filled from the path's basename (after picking a path, or
-//! when the name field is focused).
+//! `Tab`/`BackTab` (or `Up`/`Down`) step between the visible fields; the text
+//! fields edit inline; `Left`/`Right` cycle the kind; `Space` toggles the
+//! favourite and backup checkboxes; `Enter` on the Section field opens the
+//! fuzzy section picker; `^O` opens the path picker; `Enter` elsewhere (or
+//! `Ctrl+S`) saves and `Esc` cancels. When the name is still blank it is
+//! auto-filled from the path's basename.
+//!
+//! A **bulk** form (editing several entries at once) hides Path/Name/Slug and
+//! shows only Section/Favourite/Backup/Kind. A field whose value differs across
+//! the selection renders as *mixed* and is only written when the user touches
+//! it, so an untouched field leaves every selected entry as it was.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratada::input::InputField;
@@ -27,6 +31,8 @@ use crate::tui::widgets::centered_rect;
 
 /// Display columns reserved for a field's label, before its value.
 const LABEL_WIDTH: usize = 8;
+/// The placeholder shown for a bulk field whose value differs across entries.
+const MIXED: &str = "(mixed)";
 
 /// What a field line needs to draw itself, bundled to keep the parameter count
 /// low.
@@ -40,7 +46,7 @@ struct LineCtx<'a> {
 }
 
 /// One editable field of the form.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Field {
     Path,
     Name,
@@ -51,7 +57,7 @@ enum Field {
     Backup,
 }
 
-/// The values captured by the form on save.
+/// The values captured by a single-entry form on save.
 pub struct RepoDraft {
     /// Explicit name, or `None` to fall back to the path's basename.
     pub name: Option<String>,
@@ -69,14 +75,31 @@ pub struct RepoDraft {
     pub include_in_backup: bool,
 }
 
+/// The changes a bulk form applies. Each field is `Some` only when the user
+/// touched it, so untouched fields leave every selected entry unchanged.
+pub struct BulkDraft {
+    /// The section to set (`Some(None)` = Ungrouped), or `None` to leave as-is.
+    pub section: Option<Option<String>>,
+    /// The favourite state to set, or `None` to leave as-is.
+    pub fav: Option<bool>,
+    /// The backup membership to set, or `None` to leave as-is.
+    pub include_in_backup: Option<bool>,
+    /// The kind to set, or `None` to leave as-is.
+    pub kind: Option<RepoKind>,
+}
+
 /// Outcome of feeding a key to the form.
 pub enum FormResult {
     /// Still editing.
     Pending,
-    /// The user saved these values.
+    /// The user saved a single entry's values.
     Save(RepoDraft),
+    /// The user saved a bulk edit (only the touched fields).
+    SaveBulk(BulkDraft),
     /// The user asked to pick the path with the filesystem picker.
     PickPath,
+    /// The user asked to choose the section with the fuzzy picker.
+    PickSection,
     /// The user cancelled.
     Cancel,
 }
@@ -84,21 +107,25 @@ pub enum FormResult {
 /// Add/edit form state.
 pub struct RepoForm {
     title: String,
+    /// Whether this form edits several entries at once (hides Path/Name/Slug and
+    /// tracks per-field touched/mixed state).
+    bulk: bool,
     name: InputField,
     path: InputField,
     slug: InputField,
     kind: RepoKind,
+    kind_touched: bool,
     fav: bool,
+    fav_mixed: bool,
+    fav_touched: bool,
     include_in_backup: bool,
-    /// The git-namespace section options: `None` (Ungrouped) first, then each
-    /// known section. Shown when the current kind is git.
-    git_section_options: Vec<Option<String>>,
-    /// The files-namespace section options, shown when the kind is a path.
-    path_section_options: Vec<Option<String>>,
-    /// The selected index into the current kind's section options.
-    section_choice: usize,
-    /// The original section, kept for entries whose Section field is hidden.
-    seed_section: Option<String>,
+    backup_mixed: bool,
+    backup_touched: bool,
+    /// The chosen section, or `None` for Ungrouped.
+    section: Option<String>,
+    /// In a bulk form, whether the section differs across entries (until picked).
+    section_mixed: bool,
+    section_touched: bool,
     /// The focused field's position in the currently visible fields.
     focus: usize,
 }
@@ -106,13 +133,8 @@ pub struct RepoForm {
 impl RepoForm {
     /// A blank add form, seeded with a `path` and guessed `kind`. The backup
     /// toggle defaults per kind: on for git repos, off for file/folder entries.
-    pub fn for_add(
-        path: &str,
-        kind: RepoKind,
-        git_sections: &[String],
-        path_sections: &[String],
-    ) -> Self {
-        Self::build(
+    pub fn for_add(path: &str, kind: RepoKind) -> Self {
+        Self::single(
             "Add entry",
             "",
             path,
@@ -121,18 +143,12 @@ impl RepoForm {
             false,
             kind == RepoKind::Git,
             None,
-            git_sections,
-            path_sections,
         )
     }
 
     /// An edit form seeded from an existing entry's fields.
-    pub fn for_edit(
-        repo: &Repo,
-        git_sections: &[String],
-        path_sections: &[String],
-    ) -> Self {
-        Self::build(
+    pub fn for_edit(repo: &Repo) -> Self {
+        Self::single(
             "Edit entry",
             repo.name.as_deref().unwrap_or(""),
             &repo.path.to_string_lossy(),
@@ -141,14 +157,49 @@ impl RepoForm {
             repo.fav,
             repo.include_in_backup,
             repo.section.clone(),
-            git_sections,
-            path_sections,
         )
     }
 
-    /// Builds a form from explicit seed values and both kinds' section names.
+    /// A bulk form over `count` entries of the same `kind`. Each of `section`,
+    /// `fav` and `backup` is the shared value when all entries agree, or `None`
+    /// (mixed) when they differ.
+    pub fn for_bulk(
+        count: usize,
+        kind: RepoKind,
+        section: Option<Option<String>>,
+        fav: Option<bool>,
+        backup: Option<bool>,
+    ) -> Self {
+        let (section, section_mixed) =
+            section.map_or((None, true), |value| (value, false));
+        let (fav, fav_mixed) =
+            fav.map_or((false, true), |value| (value, false));
+        let (include_in_backup, backup_mixed) =
+            backup.map_or((false, true), |value| (value, false));
+        RepoForm {
+            title: format!("Edit {count} entries"),
+            bulk: true,
+            name: InputField::new(""),
+            path: InputField::new(""),
+            slug: InputField::new(""),
+            kind,
+            kind_touched: false,
+            fav,
+            fav_mixed,
+            fav_touched: false,
+            include_in_backup,
+            backup_mixed,
+            backup_touched: false,
+            section,
+            section_mixed,
+            section_touched: false,
+            focus: 0,
+        }
+    }
+
+    /// Builds a single-entry form from explicit seed values.
     #[allow(clippy::too_many_arguments)]
-    fn build(
+    fn single(
         title: &str,
         name: &str,
         path: &str,
@@ -157,64 +208,85 @@ impl RepoForm {
         fav: bool,
         include_in_backup: bool,
         section: Option<String>,
-        git_sections: &[String],
-        path_sections: &[String],
     ) -> Self {
-        let git_section_options = section_options(git_sections);
-        let path_section_options = section_options(path_sections);
-        let current = match kind {
-            RepoKind::Git => &git_section_options,
-            RepoKind::Path => &path_section_options,
-        };
-        let section_choice = section_choice(current, section.as_deref());
         RepoForm {
             title: title.to_string(),
+            bulk: false,
             name: InputField::new(name),
             path: InputField::new(path),
             slug: InputField::new(slug),
             kind,
+            kind_touched: false,
             fav,
+            fav_mixed: false,
+            fav_touched: false,
             include_in_backup,
-            git_section_options,
-            path_section_options,
-            section_choice,
-            seed_section: section,
+            backup_mixed: false,
+            backup_touched: false,
+            section,
+            section_mixed: false,
+            section_touched: false,
             focus: 0,
         }
     }
 
-    /// The fields visible for the current kind, in focus order. Both kinds show
-    /// the Section dropdown (each namespace is per kind); only git shows Fav.
+    /// The current kind (used to seed the section picker with the right list).
+    pub fn kind(&self) -> RepoKind {
+        self.kind
+    }
+
+    /// The currently chosen section (`None` = Ungrouped), for the picker cursor.
+    pub fn section(&self) -> Option<String> {
+        self.section.clone()
+    }
+
+    /// Sets the section from the picker, marking it touched (so a bulk edit
+    /// applies it) and returning focus to the Section field.
+    pub fn set_section(&mut self, section: Option<String>) {
+        self.section = section;
+        self.section_mixed = false;
+        self.section_touched = true;
+        self.focus = self.field_index(Field::Section);
+    }
+
+    /// The fields visible in this form, in focus order. A bulk form hides the
+    /// per-entry Path/Name/Slug and only offers the shared fields.
     fn fields(&self) -> Vec<Field> {
-        let mut fields =
-            vec![Field::Path, Field::Name, Field::Section, Field::Slug];
-        if self.kind == RepoKind::Git {
-            fields.push(Field::Fav);
+        if self.bulk {
+            return vec![
+                Field::Section,
+                Field::Fav,
+                Field::Backup,
+                Field::Kind,
+            ];
         }
-        // The backup toggle shows for both kinds; Kind sits at the very bottom.
-        fields.push(Field::Backup);
-        fields.push(Field::Kind);
-        fields
+        vec![
+            Field::Path,
+            Field::Name,
+            Field::Slug,
+            Field::Section,
+            Field::Fav,
+            Field::Backup,
+            Field::Kind,
+        ]
     }
 
-    /// The section dropdown options for the current kind.
-    fn section_options(&self) -> &[Option<String>] {
-        match self.kind {
-            RepoKind::Git => &self.git_section_options,
-            RepoKind::Path => &self.path_section_options,
-        }
-    }
-
-    /// Handles a key, returning a save draft, a cancel, or pending.
+    /// Handles a key, returning a save draft, a picker request, a cancel, or
+    /// pending.
     pub fn handle_key(&mut self, key: KeyEvent) -> FormResult {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => return FormResult::Cancel,
-            KeyCode::Enter => return FormResult::Save(self.draft()),
-            KeyCode::Char('s') if ctrl => {
-                return FormResult::Save(self.draft());
+            KeyCode::Enter => {
+                if self.focused_field() == Field::Section {
+                    return FormResult::PickSection;
+                }
+                return self.save();
             }
-            KeyCode::Char('o') if ctrl => return FormResult::PickPath,
+            KeyCode::Char('s') if ctrl => return self.save(),
+            KeyCode::Char('o') if ctrl && !self.bulk => {
+                return FormResult::PickPath;
+            }
             KeyCode::Tab | KeyCode::Down => self.move_focus(1),
             KeyCode::BackTab | KeyCode::Up => {
                 self.move_focus(self.fields().len() - 1)
@@ -222,6 +294,15 @@ impl RepoForm {
             _ => self.edit_focused(key),
         }
         FormResult::Pending
+    }
+
+    /// The save result for this form's mode.
+    fn save(&self) -> FormResult {
+        if self.bulk {
+            FormResult::SaveBulk(self.bulk_draft())
+        } else {
+            FormResult::Save(self.draft())
+        }
     }
 
     /// Moves focus by `delta` (wrapping), auto-filling the name on arrival.
@@ -245,28 +326,42 @@ impl RepoForm {
             Field::Slug => {
                 self.slug.handle_key(key);
             }
-            Field::Section => match key.code {
-                KeyCode::Left => self.cycle_section(-1),
-                KeyCode::Right => self.cycle_section(1),
-                _ => {}
-            },
+            // The Section field opens the fuzzy picker on Enter (handled above).
+            Field::Section => {}
             Field::Kind => self.edit_kind(key),
             Field::Fav => {
                 if key.code == KeyCode::Char(' ') {
-                    self.fav = !self.fav;
+                    self.toggle_fav();
                 }
             }
             Field::Backup => {
                 if key.code == KeyCode::Char(' ') {
-                    self.include_in_backup = !self.include_in_backup;
+                    self.toggle_backup();
                 }
             }
         }
     }
 
-    /// Cycles the kind on `Left`/`Right`, keeping focus on the Kind field even
-    /// though the visible field set changes with the kind. The section choice is
-    /// re-resolved against the new kind's namespace, preserving it by name.
+    /// Toggles the favourite checkbox; a mixed field flips to on first.
+    fn toggle_fav(&mut self) {
+        self.fav = if self.fav_mixed { true } else { !self.fav };
+        self.fav_mixed = false;
+        self.fav_touched = true;
+    }
+
+    /// Toggles the backup checkbox; a mixed field flips to on first.
+    fn toggle_backup(&mut self) {
+        self.include_in_backup = if self.backup_mixed {
+            true
+        } else {
+            !self.include_in_backup
+        };
+        self.backup_mixed = false;
+        self.backup_touched = true;
+    }
+
+    /// Cycles the kind on `Left`/`Right`, marking it touched and keeping focus on
+    /// the Kind field even though the visible field set can change with the kind.
     fn edit_kind(&mut self, key: KeyEvent) {
         let changed = match key.code {
             KeyCode::Left => {
@@ -280,18 +375,8 @@ impl RepoForm {
             _ => false,
         };
         if changed {
-            let selected = self.selected_section().map(str::to_string);
-            self.section_choice =
-                section_choice(self.section_options(), selected.as_deref());
+            self.kind_touched = true;
             self.focus = self.field_index(Field::Kind);
-        }
-    }
-
-    /// The currently selected section name, or `None` for Ungrouped.
-    fn selected_section(&self) -> Option<&str> {
-        match self.section_options().get(self.section_choice) {
-            Some(Some(name)) => Some(name),
-            _ => None,
         }
     }
 
@@ -306,17 +391,6 @@ impl RepoForm {
             .iter()
             .position(|candidate| *candidate == field)
             .unwrap_or(0)
-    }
-
-    /// Cycles the section choice by `delta` (wrapping).
-    fn cycle_section(&mut self, delta: isize) {
-        let len = self.section_options().len();
-        if len == 0 {
-            return;
-        }
-        let next =
-            (self.section_choice as isize + delta).rem_euclid(len as isize);
-        self.section_choice = next as usize;
     }
 
     /// The path field's current value (used to seed the path picker).
@@ -342,26 +416,28 @@ impl RepoForm {
         }
     }
 
-    /// Builds the draft from the current field values.
+    /// Builds the single-entry draft from the current field values.
     fn draft(&self) -> RepoDraft {
-        let name = non_empty(self.name.value().to_string());
-        let slug = non_empty(slugify(self.slug.value()));
-        let section = if self.fields().contains(&Field::Section) {
-            self.section_options()
-                .get(self.section_choice)
-                .cloned()
-                .flatten()
-        } else {
-            self.seed_section.clone()
-        };
         RepoDraft {
-            name,
+            name: non_empty(self.name.value().to_string()),
             path: self.path.value().to_string(),
-            slug,
-            section,
+            slug: non_empty(slugify(self.slug.value())),
+            section: self.section.clone(),
             kind: self.kind,
             fav: self.fav,
             include_in_backup: self.include_in_backup,
+        }
+    }
+
+    /// Builds the bulk draft: only the fields the user actually touched.
+    fn bulk_draft(&self) -> BulkDraft {
+        BulkDraft {
+            section: self.section_touched.then(|| self.section.clone()),
+            fav: self.fav_touched.then_some(self.fav),
+            include_in_backup: self
+                .backup_touched
+                .then_some(self.include_in_backup),
+            kind: self.kind_touched.then_some(self.kind),
         }
     }
 
@@ -386,11 +462,21 @@ impl RepoForm {
             .collect();
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
-            "Tab field · \u{2190}\u{2192} change · Space fav · ^O pick path · \
-             Enter save · Esc cancel",
+            self.hint(),
             Style::default().fg(colors.dim),
         )));
         frame.render_widget(Paragraph::new(lines).block(block), rect);
+    }
+
+    /// The footer hint line for this form's mode.
+    fn hint(&self) -> &'static str {
+        if self.bulk {
+            "Tab field · \u{2190}\u{2192} kind · Space toggle · Enter on \
+             Section: pick · ^S save · Esc cancel"
+        } else {
+            "Tab field · \u{2190}\u{2192} kind · Space toggle · Enter on \
+             Section: pick · ^O path · ^S save · Esc cancel"
+        }
     }
 
     /// Builds the rendered line for `field` at focus position `index`.
@@ -406,8 +492,10 @@ impl RepoForm {
             Field::Name => self.text_line("Name", &self.name, index, ctx),
             Field::Slug => self.text_line("Slug", &self.slug, index, ctx),
             Field::Section => {
+                // No `< >` chrome: the section is chosen via the picker
+                // (Enter), not cycled like the kind.
                 let label = self.section_label();
-                self.choice_line("Section", label, index, colors)
+                self.value_line("Section", &label, index, colors)
             }
             Field::Kind => {
                 self.choice_line("Kind", kind_label(self.kind), index, colors)
@@ -437,7 +525,7 @@ impl RepoForm {
         self.styled(spans, index, ctx.colors)
     }
 
-    /// A `< value >` selector line (section, kind).
+    /// A `< value >` selector line (the kind, cycled with Left/Right).
     fn choice_line(
         &self,
         label: &str,
@@ -455,9 +543,25 @@ impl RepoForm {
         self.styled(spans, index, colors)
     }
 
+    /// A labelled value line without the `< >` selector chrome (the section,
+    /// which is chosen via the fuzzy picker on Enter, not cycled).
+    fn value_line(
+        &self,
+        label: &str,
+        value: &str,
+        index: usize,
+        colors: &Colors,
+    ) -> Line<'static> {
+        let spans = vec![
+            self.label_span(label, index, colors),
+            Span::styled(value.to_string(), Style::default().fg(colors.accent)),
+        ];
+        self.styled(spans, index, colors)
+    }
+
     /// The favourite toggle line.
     fn fav_line(&self, index: usize, colors: &Colors) -> Line<'static> {
-        let mark = if self.fav { "[x]" } else { "[ ]" };
+        let mark = checkbox(self.fav, self.fav_mixed, self.fav_touched);
         let spans = vec![
             self.label_span("Fav", index, colors),
             Span::raw(mark.to_string()),
@@ -467,7 +571,11 @@ impl RepoForm {
 
     /// The "include in backup all (`Z`)" toggle line.
     fn backup_line(&self, index: usize, colors: &Colors) -> Line<'static> {
-        let mark = if self.include_in_backup { "[x]" } else { "[ ]" };
+        let mark = checkbox(
+            self.include_in_backup,
+            self.backup_mixed,
+            self.backup_touched,
+        );
         let spans = vec![
             self.label_span("Backup", index, colors),
             Span::raw(mark.to_string()),
@@ -475,9 +583,15 @@ impl RepoForm {
         self.styled(spans, index, colors)
     }
 
-    /// The label of the currently selected section option.
-    fn section_label(&self) -> &str {
-        self.selected_section().unwrap_or(UNGROUPED)
+    /// The label shown for the Section field: the chosen section, Ungrouped, or
+    /// the mixed placeholder in an untouched bulk form.
+    fn section_label(&self) -> String {
+        if self.bulk && self.section_mixed && !self.section_touched {
+            return MIXED.to_string();
+        }
+        self.section
+            .clone()
+            .unwrap_or_else(|| UNGROUPED.to_string())
     }
 
     /// The fixed-width field label, accented when focused.
@@ -513,26 +627,16 @@ impl RepoForm {
     }
 }
 
-/// The Section dropdown options: Ungrouped (`None`) first, then each section.
-fn section_options(sections: &[String]) -> Vec<Option<String>> {
-    let mut options = vec![None];
-    options.extend(sections.iter().cloned().map(Some));
-    options
-}
-
-/// The option index matching `section` (case-insensitive), or 0 (Ungrouped).
-fn section_choice(options: &[Option<String>], section: Option<&str>) -> usize {
-    let Some(name) = section else {
-        return 0;
-    };
-    options
-        .iter()
-        .position(|option| {
-            option
-                .as_deref()
-                .is_some_and(|o| o.eq_ignore_ascii_case(name))
-        })
-        .unwrap_or(0)
+/// The checkbox glyph: mixed (`[-]`) while an untouched bulk field differs, else
+/// on (`[x]`) or off (`[ ]`).
+fn checkbox(on: bool, mixed: bool, touched: bool) -> &'static str {
+    if mixed && !touched {
+        "[-]"
+    } else if on {
+        "[x]"
+    } else {
+        "[ ]"
+    }
 }
 
 /// The final path component of `path`, or `None` when it has none.
@@ -593,52 +697,122 @@ mod tests {
     }
 
     #[test]
-    fn section_choice_matches_case_insensitively() {
-        let options = section_options(&["Work".to_string()]);
-        assert_eq!(section_choice(&options, Some("work")), 1);
-        assert_eq!(section_choice(&options, Some("Misc")), 0);
-        assert_eq!(section_choice(&options, None), 0);
+    fn single_form_shows_all_fields_for_both_kinds() {
+        for kind in [RepoKind::Git, RepoKind::Path] {
+            let form = RepoForm::for_add("/p", kind);
+            for field in [
+                Field::Path,
+                Field::Name,
+                Field::Slug,
+                Field::Section,
+                Field::Fav,
+                Field::Backup,
+                Field::Kind,
+            ] {
+                assert!(form.fields().contains(&field));
+            }
+        }
     }
 
     #[test]
-    fn both_kinds_show_section_and_only_git_shows_fav() {
-        let git = RepoForm::for_add("/p", RepoKind::Git, &[], &[]);
-        assert!(git.fields().contains(&Field::Fav));
-        assert!(git.fields().contains(&Field::Section));
-
-        let folder = RepoForm::for_add("/p", RepoKind::Path, &[], &[]);
-        assert!(folder.fields().contains(&Field::Section));
-        assert!(!folder.fields().contains(&Field::Fav));
-
-        // The backup toggle shows for both kinds.
-        assert!(git.fields().contains(&Field::Backup));
-        assert!(folder.fields().contains(&Field::Backup));
+    fn field_order_puts_slug_before_section() {
+        let form = RepoForm::for_add("/p", RepoKind::Git);
+        let fields = form.fields();
+        let slug = fields.iter().position(|f| *f == Field::Slug).unwrap();
+        let section = fields.iter().position(|f| *f == Field::Section).unwrap();
+        assert!(slug < section);
     }
 
     #[test]
-    fn switching_kind_shows_that_kinds_sections() {
-        let git_sections = ["Backend".to_string()];
-        let path_sections = ["Notes".to_string()];
-        let mut form = RepoForm::for_add(
-            "/p",
-            RepoKind::Git,
-            &git_sections,
-            &path_sections,
-        );
-        assert_eq!(form.section_options().len(), 2); // Ungrouped + Backend
-        assert_eq!(form.section_options()[1].as_deref(), Some("Backend"));
-        // Switch to a path: the files namespace's sections show instead.
+    fn kind_cycle_marks_it_touched_and_keeps_the_section() {
+        let mut form = RepoForm::for_edit(&{
+            let mut repo = Repo::new("/p".into());
+            repo.section = Some("Backend".to_string());
+            repo
+        });
+        assert!(!form.kind_touched);
         form.edit_kind(KeyEvent::from(KeyCode::Right));
         assert_eq!(form.kind, RepoKind::Path);
-        assert_eq!(form.section_options()[1].as_deref(), Some("Notes"));
+        assert!(form.kind_touched);
+        // The typed section survives a kind change (re-registered on save).
+        assert_eq!(form.section.as_deref(), Some("Backend"));
     }
 
     #[test]
     fn for_add_seeds_backup_toggle_per_kind() {
-        // Git repos default to included, file/folder entries to excluded.
-        let git = RepoForm::for_add("/p", RepoKind::Git, &[], &[]);
+        let git = RepoForm::for_add("/p", RepoKind::Git);
         assert!(git.draft().include_in_backup);
-        let folder = RepoForm::for_add("/p", RepoKind::Path, &[], &[]);
+        let folder = RepoForm::for_add("/p", RepoKind::Path);
         assert!(!folder.draft().include_in_backup);
+    }
+
+    #[test]
+    fn set_section_marks_it_touched() {
+        let mut form = RepoForm::for_add("/p", RepoKind::Git);
+        assert!(!form.section_touched);
+        form.set_section(Some("Work".to_string()));
+        assert_eq!(form.section.as_deref(), Some("Work"));
+        assert!(form.section_touched);
+    }
+
+    #[test]
+    fn bulk_form_hides_per_entry_fields() {
+        let form =
+            RepoForm::for_bulk(3, RepoKind::Git, Some(None), Some(true), None);
+        let fields = form.fields();
+        assert_eq!(
+            fields,
+            vec![Field::Section, Field::Fav, Field::Backup, Field::Kind]
+        );
+        assert!(!fields.contains(&Field::Path));
+        assert!(!fields.contains(&Field::Name));
+        assert!(!fields.contains(&Field::Slug));
+    }
+
+    #[test]
+    fn bulk_draft_only_carries_touched_fields() {
+        // Section shared, fav shared, backup mixed, kind untouched.
+        let mut form = RepoForm::for_bulk(
+            2,
+            RepoKind::Git,
+            Some(Some("A".to_string())),
+            Some(false),
+            None,
+        );
+        // Nothing touched yet: an all-None draft.
+        let draft = form.bulk_draft();
+        assert!(draft.section.is_none());
+        assert!(draft.fav.is_none());
+        assert!(draft.include_in_backup.is_none());
+        assert!(draft.kind.is_none());
+
+        // Touch fav (flips false -> true) and set a section.
+        form.toggle_fav();
+        form.set_section(Some("B".to_string()));
+        let draft = form.bulk_draft();
+        assert_eq!(draft.fav, Some(true));
+        assert_eq!(draft.section, Some(Some("B".to_string())));
+        // Backup was mixed and untouched: still left as-is.
+        assert!(draft.include_in_backup.is_none());
+        assert!(draft.kind.is_none());
+    }
+
+    #[test]
+    fn a_mixed_bulk_checkbox_toggles_to_on_first() {
+        let mut form = RepoForm::for_bulk(2, RepoKind::Git, None, None, None);
+        // A mixed checkbox renders indeterminate until touched.
+        assert_eq!(checkbox(form.fav, form.fav_mixed, form.fav_touched), "[-]");
+        form.toggle_fav();
+        assert!(form.fav);
+        assert_eq!(checkbox(form.fav, form.fav_mixed, form.fav_touched), "[x]");
+    }
+
+    #[test]
+    fn a_mixed_section_shows_the_placeholder_until_picked() {
+        let mut form =
+            RepoForm::for_bulk(2, RepoKind::Git, None, Some(true), None);
+        assert_eq!(form.section_label(), MIXED);
+        form.set_section(None);
+        assert_eq!(form.section_label(), UNGROUPED);
     }
 }

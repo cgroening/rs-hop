@@ -82,7 +82,10 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         "Manage",
         &[
             ("n", "add an entry (fill the form; ^O picks the path)"),
-            ("e", "edit the selected entry"),
+            (
+                "e",
+                "edit the entry (or bulk-edit when several are selected)",
+            ),
             (
                 "d / Del / Backspace",
                 "delete (acts on the selection, else the cursor)",

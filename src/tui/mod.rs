@@ -18,6 +18,7 @@ pub mod path_picker;
 pub mod presentation;
 pub mod preview;
 pub mod scroll;
+pub mod section_picker;
 pub mod sections_modal;
 pub mod sections_view;
 pub mod skin;
@@ -70,12 +71,13 @@ use crate::service::zip_service::{ZipJob, ZipUpdate, spawn_zip};
 use crate::storage::git_client::GitClient;
 use crate::theme::Skin;
 use crate::tui::columns::ColumnSet;
-use crate::tui::form::{FormResult, RepoDraft, RepoForm};
+use crate::tui::form::{BulkDraft, FormResult, RepoDraft, RepoForm};
 use crate::tui::path_picker::{PathPicker, PickerResult};
 use crate::tui::presentation::{
     FieldView, IconSet, field_spans, github_url, render_empty_hint,
 };
 use crate::tui::preview::PreviewLayout;
+use crate::tui::section_picker::{SectionPickResult, SectionPicker};
 use crate::tui::sections_modal::{SectionsAction, SectionsModal};
 use crate::tui::skin::Colors;
 use crate::tui::widgets::{
@@ -154,9 +156,13 @@ enum Overlay {
     Confirm(ConfirmModal, Vec<usize>),
     Prompt(TextPrompt, usize),
     /// Boxed: the form's three text fields make it far larger than any other
-    /// overlay, and `Overlay` is held by value in `App`.
-    Form(Box<RepoForm>, Option<usize>),
+    /// overlay, and `Overlay` is held by value in `App`. The target says whether
+    /// it adds, edits one entry, or bulk-edits several.
+    Form(Box<RepoForm>, EditTarget),
     Picker(PathPicker, PickerIntent),
+    /// The fuzzy section picker over a form in progress (the form is stashed so
+    /// it resumes with the chosen section).
+    SectionPicker(Box<SectionPicker>, Box<RepoForm>, EditTarget),
     /// The list of errored entries; the vec maps rows to service indices.
     Errors(SelectModal, Vec<usize>),
     /// The action menu for an errored entry at the given service index.
@@ -186,7 +192,18 @@ enum PickerIntent {
     /// Repair the path of the entry at this index.
     Repair(usize),
     /// Fill the path field of a form already in progress.
-    FormPath(Box<RepoForm>, Option<usize>),
+    FormPath(Box<RepoForm>, EditTarget),
+}
+
+/// What a form is editing: a new entry, one existing entry, or several at once.
+#[derive(Clone)]
+enum EditTarget {
+    /// A new entry (the add form).
+    Add,
+    /// The single entry at this service index.
+    One(usize),
+    /// Several entries (bulk edit), by service index.
+    Bulk(Vec<usize>),
 }
 
 /// The interactive application state.
@@ -998,14 +1015,36 @@ impl App {
                     }
                 }
             }
-            Overlay::Form(mut form, index) => match form.handle_key(key) {
-                FormResult::Save(draft) => self.do_save_form(index, draft),
-                FormResult::PickPath => self.open_form_path_picker(form, index),
+            Overlay::Form(mut form, target) => match form.handle_key(key) {
+                FormResult::Save(draft) => {
+                    self.do_save_form(save_index(&target), draft);
+                }
+                FormResult::SaveBulk(bulk) => self.do_save_bulk(target, bulk),
+                FormResult::PickPath => {
+                    self.open_form_path_picker(form, target);
+                }
+                FormResult::PickSection => {
+                    self.open_section_picker(form, target);
+                }
                 FormResult::Cancel => {}
                 FormResult::Pending => {
-                    self.overlay = Overlay::Form(form, index);
+                    self.overlay = Overlay::Form(form, target);
                 }
             },
+            Overlay::SectionPicker(mut picker, form, target) => {
+                match picker.handle_key(key) {
+                    SectionPickResult::Picked(section) => {
+                        self.resume_form_with_section(form, target, section);
+                    }
+                    SectionPickResult::Cancel => {
+                        self.overlay = Overlay::Form(form, target);
+                    }
+                    SectionPickResult::Pending => {
+                        self.overlay =
+                            Overlay::SectionPicker(picker, form, target);
+                    }
+                }
+            }
             Overlay::Picker(mut picker, intent) => {
                 match picker.handle_key(key) {
                     PickerResult::Selected(path) => {
@@ -1644,11 +1683,8 @@ impl App {
     /// Starts adding an entry: the form opens directly with a kind guessed from
     /// the active tab. The path is a plain text field; `^O` opens the picker.
     fn open_add(&mut self) {
-        let kind = self.tab.repo_kind();
-        let git = self.service.sections(RepoKind::Git);
-        let paths = self.service.sections(RepoKind::Path);
-        let form = RepoForm::for_add("", kind, git, paths);
-        self.overlay = Overlay::Form(Box::new(form), None);
+        let form = RepoForm::for_add("", self.tab.repo_kind());
+        self.overlay = Overlay::Form(Box::new(form), EditTarget::Add);
     }
 
     /// Opens the path picker to fill the path field of `form`, seeded near the
@@ -1656,7 +1692,7 @@ impl App {
     fn open_form_path_picker(
         &mut self,
         form: Box<RepoForm>,
-        index: Option<usize>,
+        target: EditTarget,
     ) {
         let typed = form.path_value();
         let start = if typed.trim().is_empty() {
@@ -1666,14 +1702,37 @@ impl App {
         };
         self.overlay = Overlay::Picker(
             PathPicker::new(&start, true),
-            PickerIntent::FormPath(form, index),
+            PickerIntent::FormPath(form, target),
         );
     }
 
-    /// Opens the edit form for the selected entry.
+    /// Opens the fuzzy section picker over a form in progress, seeded with the
+    /// form's kind's section list and its current section.
+    fn open_section_picker(&mut self, form: Box<RepoForm>, target: EditTarget) {
+        let sections = self.service.sections(form.kind()).to_vec();
+        let picker = SectionPicker::new(&sections, form.section().as_deref());
+        self.overlay = Overlay::SectionPicker(Box::new(picker), form, target);
+    }
+
+    /// Re-opens the form after the section picker, applying the chosen section.
+    fn resume_form_with_section(
+        &mut self,
+        mut form: Box<RepoForm>,
+        target: EditTarget,
+        section: Option<String>,
+    ) {
+        form.set_section(section);
+        self.overlay = Overlay::Form(form, target);
+    }
+
+    /// Opens the edit form: a bulk form when several entries are targeted, else
+    /// the single-entry form for the cursor/selection.
     fn open_edit_form(&mut self) {
-        if let Some(index) = self.selected_index() {
-            self.edit_form_for(index);
+        let targets = self.targets();
+        match targets.len() {
+            0 => {}
+            1 => self.edit_form_for(targets[0]),
+            _ => self.open_bulk_form(targets),
         }
     }
 
@@ -1682,10 +1741,26 @@ impl App {
         let Some(repo) = self.service.get(index) else {
             return;
         };
-        let git = self.service.sections(RepoKind::Git);
-        let paths = self.service.sections(RepoKind::Path);
-        let form = RepoForm::for_edit(repo, git, paths);
-        self.overlay = Overlay::Form(Box::new(form), Some(index));
+        let form = RepoForm::for_edit(repo);
+        self.overlay = Overlay::Form(Box::new(form), EditTarget::One(index));
+    }
+
+    /// Opens a bulk-edit form over `indices` (all the same kind, since selection
+    /// is per-tab): the shared value of each field, or *mixed* when they differ.
+    fn open_bulk_form(&mut self, indices: Vec<usize>) {
+        let repos: Vec<&Repo> = indices
+            .iter()
+            .filter_map(|&index| self.service.get(index))
+            .collect();
+        if repos.is_empty() {
+            return;
+        }
+        let kind = repos[0].kind;
+        let section = shared(&repos, |repo| repo.section.clone());
+        let fav = shared(&repos, |repo| repo.fav);
+        let backup = shared(&repos, |repo| repo.include_in_backup);
+        let form = RepoForm::for_bulk(repos.len(), kind, section, fav, backup);
+        self.overlay = Overlay::Form(Box::new(form), EditTarget::Bulk(indices));
     }
 
     /// Opens the delete confirmation for the target entries (selection/cursor).
@@ -2455,6 +2530,41 @@ impl App {
         }
     }
 
+    /// Applies a bulk edit: writes each touched field onto every target entry
+    /// (one undo frame), registering a newly typed section and refocusing.
+    fn do_save_bulk(&mut self, target: EditTarget, draft: BulkDraft) {
+        let EditTarget::Bulk(indices) = target else {
+            return;
+        };
+        // The kind after the edit decides which namespace a new section joins.
+        let kind_after = draft.kind.unwrap_or_else(|| self.tab.repo_kind());
+        let result = self.service.update_many(&indices, |repo| {
+            if let Some(section) = &draft.section {
+                repo.section = section.clone();
+            }
+            if let Some(fav) = draft.fav {
+                repo.fav = fav;
+            }
+            if let Some(backup) = draft.include_in_backup {
+                repo.include_in_backup = backup;
+            }
+            if let Some(kind) = draft.kind {
+                repo.kind = kind;
+            }
+        });
+        if result.is_ok()
+            && let Some(Some(name)) = &draft.section
+        {
+            let _ = self.service.ensure_section(kind_after, name);
+        }
+        let count = indices.len();
+        self.report(result, &format!("updated {count} entries"));
+        self.clear_selection();
+        let len = self.ordered_view().len();
+        self.clamp_cursor(len);
+        self.start_stats();
+    }
+
     /// Applies a picked path to its intent (repair an entry, or fill a form).
     fn do_picked(&mut self, intent: PickerIntent, path: PathBuf) {
         match intent {
@@ -2472,9 +2582,9 @@ impl App {
                     }
                 }
             }
-            PickerIntent::FormPath(mut form, index) => {
+            PickerIntent::FormPath(mut form, target) => {
                 form.set_path(&path.to_string_lossy());
-                self.overlay = Overlay::Form(form, index);
+                self.overlay = Overlay::Form(form, target);
             }
         }
     }
@@ -2490,6 +2600,25 @@ impl App {
             Err(error) => self.set_status(format!("{error}")),
         }
     }
+}
+
+/// The single index a non-bulk `Save` applies to (`One` -> `Some`, else `None`).
+fn save_index(target: &EditTarget) -> Option<usize> {
+    match target {
+        EditTarget::One(index) => Some(*index),
+        _ => None,
+    }
+}
+
+/// The shared value of a field over `repos`: `Some(value)` when all agree, or
+/// `None` when they differ (a *mixed* field).
+fn shared<T: PartialEq>(
+    repos: &[&Repo],
+    get: impl Fn(&Repo) -> T,
+) -> Option<T> {
+    let mut values = repos.iter().map(|repo| get(repo));
+    let first = values.next()?;
+    values.all(|value| value == first).then_some(first)
 }
 
 /// Copies the draft's fields onto `repo`, keeping its runtime/example fields.
@@ -3086,6 +3215,9 @@ impl App {
             Overlay::Confirm(modal, _) => modal.render(frame, area, skin),
             Overlay::Prompt(prompt, _) => prompt.render(frame, area, skin),
             Overlay::Form(form, _) => form.render(frame, area, skin),
+            Overlay::SectionPicker(picker, _, _) => {
+                picker.render(frame, area, skin)
+            }
             Overlay::Picker(picker, _) => picker.render(frame, area, skin),
             Overlay::Errors(modal, _) => modal.render(frame, area, skin),
             Overlay::ErrorAction(modal, _) => modal.render(frame, area, skin),

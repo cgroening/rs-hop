@@ -11,13 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Sections on git repos and archives, not just files.** Each kind (git, files) keeps its own independent, reorderable section list; an entry keeps its group when archived. `.` toggles the grouped view for the current tab; with grouping off the list is a flat, globally sorted table with a leading `Section` column. Inside a group, entries follow the active sort mode. Sections are managed with `M` and jumped to with `s` on both kinds now (the add/edit form shows the `Section` dropdown for git entries too). Git and files section orders are stored in separate `git_sections` / `sections` arrays in `config.toml`.
 - **A toggle to float favourites (`,`).** By default favourites float to the top of each group and are sorted among themselves by the active sort mode; `,` turns the floating off for a pure sort. This applies in both the grouped and the flat view, and now in every sort mode (including the statistics columns).
 - **Per-kind view settings.** Git and Files each remember their own sort mode, sort direction, column set, grouping and fav-float across runs (a kind's active and archive views share its settings).
+- **A fuzzy section picker in the add/edit form.** The `Section` field is now a searchable list instead of a left/right cycle: press `Enter` on it to open the picker, type to filter, and type a name that isn't listed to create a new section (registered on save). Ungrouped is always offered.
+- **Bulk edit.** With several entries selected, `E` opens a bulk form over all of them: Path/Name/Slug are locked, and Section/Favourite/Backup/Kind are applied to every selected entry at once. A field whose value differs across the selection shows as *mixed* (`[-]` / `(mixed)`) and is left untouched unless you change it — so only the fields you actually edit are written. The whole bulk change is one undo step.
 
 ### Changed
 
 - **Each kind now has its own archive, reached by a second key press.** The single shared Archive tab (and its `3` key) is gone. Pressing `1` again while on Git Repos shows the git archive, `2` again shows the files archive, and a further press toggles back; the active tab's header gains a ` · Archiv` suffix. `Tab`/`Shift+Tab` cycle only the two active tabs. A persisted `tab = "archive"` from an older version opens the git archive; a pre-existing `sections = [...]` list maps to the files namespace.
+- **Add/edit form: Slug now sits before Section, and the Favourite toggle shows for both kinds** (not just git repos). Save is `Enter` (or `Ctrl+S`), except on the `Section` field where `Enter` opens the section picker.
 
 ### Fixed
 
+- **Grouped-view column colours.** In the grouped (sectioned) git view the Branch and GitHub-name columns were dimmed grey; they now use the normal foreground like the entry name (Status keeps its green/amber colouring, ZIP Backup stays dim), matching the flat table.
 - **Refreshing an entry no longer cancels a running refresh.** `x`/`X` (and `r`/`R`) previously replaced the single in-flight refresh, so refreshing one repo while the startup or a full refresh was still running silently aborted it. Refreshes now run in parallel: the one already running keeps going and the new one runs alongside it.
 
 ## [0.2.0] - 2026-07-10

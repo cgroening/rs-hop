@@ -381,8 +381,9 @@ fn files_spans(
     ]
 }
 
-/// The git-tab columns after the name: branch, coloured status, the dim GitHub
-/// name (flexing into the leftover width) and the ZIP date.
+/// The git-tab columns after the name: branch and GitHub name in the foreground
+/// (like the name), the coloured status, and the dim ZIP date. GitHub flexes
+/// into the leftover width.
 fn git_spans(
     repo: &Repo,
     view: &SectionedView,
@@ -395,15 +396,13 @@ fn git_spans(
     let branch = pad(&branch_text(info), branch_w);
     let github = pad(&github_text(info), github_w);
     let zip = format!("{:>ZIP_WIDTH$}", zip_cell_text(repo, view));
-    let mut spans = vec![
-        Span::raw("  "),
-        Span::styled(branch, Style::default().fg(view.colors.dim)),
-        Span::raw("  "),
-    ];
+    let fg = Style::default().fg(view.colors.foreground);
+    let mut spans =
+        vec![Span::raw("  "), Span::styled(branch, fg), Span::raw("  ")];
     spans.extend(git_status_spans(repo, view, info, status_w));
     spans.extend([
         Span::raw("  "),
-        Span::styled(github, Style::default().fg(view.colors.dim)),
+        Span::styled(github, fg),
         Span::raw("  "),
         Span::styled(zip, Style::default().fg(view.colors.dim)),
     ]);
