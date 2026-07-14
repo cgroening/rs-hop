@@ -128,7 +128,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("c", "cycle the columns (Standard / Code / Activity)"),
             ("t", "pick the column to sort by (again: flip direction)"),
             (",", "toggle floating favourites to the top"),
-            ("i", "toggle showing slugs (dim, italic) after the name"),
+            ("i", "toggle the slug column (dim, italic) after the name"),
         ],
     ),
     (

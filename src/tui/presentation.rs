@@ -140,20 +140,11 @@ pub fn status_span(
     Span::styled(text, style)
 }
 
-/// The style for an inline slug shown after an entry name: dim and italic.
+/// The style for the slug column shown after an entry name: dim and italic.
 pub fn slug_style(colors: &Colors) -> Style {
     Style::default()
         .fg(colors.dim)
         .add_modifier(Modifier::ITALIC)
-}
-
-/// The plain name text used to size the name column: the name, plus ` slug`
-/// when a slug is shown.
-pub fn name_plain(name: &str, slug: Option<&str>) -> String {
-    match slug {
-        Some(slug) => format!("{name} {slug}"),
-        None => name.to_string(),
-    }
 }
 
 /// Spans for `name` with the characters matched by the fuzzy `query` shown in
@@ -374,12 +365,6 @@ mod tests {
             ..GitInfo::default()
         };
         assert_eq!(status_text(&info, &unicode()), "-");
-    }
-
-    #[test]
-    fn name_plain_appends_slug_when_present() {
-        assert_eq!(name_plain("hop", Some("hp")), "hop hp");
-        assert_eq!(name_plain("hop", None), "hop");
     }
 
     #[test]

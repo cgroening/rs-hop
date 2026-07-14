@@ -30,7 +30,7 @@ use crate::tui::git_columns::{
     status_display, zip_date_text,
 };
 use crate::tui::presentation::{
-    IconSet, highlight_name, name_plain, slug_style, status_span,
+    IconSet, highlight_name, slug_style, status_span,
 };
 use crate::tui::skin::Colors;
 
@@ -59,7 +59,7 @@ pub struct TableView<'a> {
     pub has_selection: bool,
     /// Paths flagged missing by the on-demand file/folder existence check.
     pub missing: &'a HashSet<PathBuf>,
-    /// Whether to show each entry's slug (dim, italic) after its name.
+    /// Whether to show the slug in its own dim-italic column after the name.
     pub show_slugs: bool,
     /// Whether to show a leading Section column (the flat view, when grouping is
     /// toggled off, so an entry's group is still visible without header bars).
@@ -128,25 +128,16 @@ fn settled_offset(
     offset
 }
 
-/// The slug to display after `repo`'s name, or `None` when slugs are hidden.
-fn shown_slug<'a>(repo: &'a Repo, view: &TableView) -> Option<&'a str> {
-    repo.slug.as_deref().filter(|_| view.show_slugs)
-}
-
-/// The name-cell spans: the name (fuzzy-highlighted when a query is active),
-/// plus the dim-italic slug when shown.
+/// The name-cell spans: the name, fuzzy-highlighted when a query is active. The
+/// slug is its own column (see `row_for`), not appended here.
 fn name_cell_spans(repo: &Repo, view: &TableView) -> Vec<Span<'static>> {
     let name = repo.display_name();
-    let mut spans = match view.query {
+    match view.query {
         Some(query) if !query.trim().is_empty() => {
             highlight_name(&name, query, view.colors)
         }
         _ => vec![Span::raw(name)],
-    };
-    if let Some(slug) = shown_slug(repo, view) {
-        spans.push(Span::styled(format!(" {slug}"), slug_style(view.colors)));
     }
-    spans
 }
 
 /// Renders the table of `repos` (already filtered and sorted) into `area`,
@@ -231,16 +222,11 @@ fn widths(
     available: u16,
 ) -> Vec<Constraint> {
     let cols = &view.config.column_widths;
-    let name = sized(
-        content_width(repos, |r| {
-            name_plain(&r.display_name(), shown_slug(r, view))
-        }),
-        4,
-        cols.name,
-    );
-    // A 2-cell selection-marker column, only while a selection is active,
-    // then the leading Section column when grouping is toggled off.
-    let mut lead: Vec<Constraint> = if view.has_selection {
+    let name = sized(content_width(repos, |r| r.display_name()), 4, cols.name);
+    // The lead: a 2-cell selection marker (only while a selection is active),
+    // the marker + fav cells, and the leading Section column when grouping is
+    // toggled off. The Name column and the optional Slug column follow.
+    let mut cells: Vec<Constraint> = if view.has_selection {
         vec![
             Constraint::Length(2),
             Constraint::Length(1),
@@ -250,31 +236,27 @@ fn widths(
         vec![Constraint::Length(1), Constraint::Length(1)]
     };
     if view.show_section {
-        lead.push(Constraint::Length(section_width(repos)));
+        cells.push(Constraint::Length(section_width(repos)));
     }
-    let lead = lead.as_slice();
+    cells.push(Constraint::Length(name));
+    if view.show_slugs {
+        cells.push(Constraint::Length(slug_width(repos)));
+    }
     if view.columns.is_statistics() {
-        let mut constraints = lead.to_vec();
-        constraints.push(Constraint::Length(name));
-        constraints.extend(
+        cells.extend(
             stat_columns(view.columns)
                 .iter()
                 .map(|column| Constraint::Length(column.width())),
         );
         // Leave the remainder unused rather than stretching a number column.
-        constraints.push(Constraint::Min(0));
-        return constraints;
+        cells.push(Constraint::Min(0));
+        return cells;
     }
     match view.tab.kind() {
-        TabKind::Files => [
-            lead,
-            &[
-                Constraint::Length(name),
-                Constraint::Length(6),
-                Constraint::Min(20),
-            ],
-        ]
-        .concat(),
+        TabKind::Files => {
+            cells.push(Constraint::Length(6));
+            cells.push(Constraint::Min(20));
+        }
         TabKind::Git => {
             let branch = sized(
                 content_width(repos, |r| {
@@ -309,33 +291,33 @@ fn widths(
             );
             // GitHub is the column that yields: it keeps its content width when
             // there is room, but shrinks so the rigid columns (above all Name)
-            // are never squeezed. The optional Section column counts as part of
-            // the fixed lead.
+            // are never squeezed. The optional Section and Slug columns count as
+            // part of the fixed lead.
             let section = if view.show_section {
                 section_width(repos)
             } else {
                 0
             };
-            let lead_cells: u16 =
-                (if view.has_selection { 3 } else { 2 }) + section_cells(view);
+            let slug = if view.show_slugs {
+                slug_width(repos)
+            } else {
+                0
+            };
+            let lead_cells: u16 = (if view.has_selection { 3 } else { 2 })
+                + section_cells(view)
+                + slug_cells(view);
             let lead_width: u16 =
-                (if view.has_selection { 4 } else { 2 }) + section;
+                (if view.has_selection { 4 } else { 2 }) + section + slug;
             let spacing = (lead_cells + 5).saturating_sub(1); // column_spacing 1
             let fixed = lead_width + name + branch + status + zip + spacing;
             let github = github_width(github_desired, fixed, available);
-            [
-                lead,
-                &[
-                    Constraint::Length(name),
-                    Constraint::Length(branch),
-                    Constraint::Length(status),
-                    Constraint::Length(github),
-                    Constraint::Length(zip),
-                ],
-            ]
-            .concat()
+            cells.push(Constraint::Length(branch));
+            cells.push(Constraint::Length(status));
+            cells.push(Constraint::Length(github));
+            cells.push(Constraint::Length(zip));
         }
     }
+    cells
 }
 
 /// The widest rendered cell (display columns) over `repos` for one column.
@@ -393,6 +375,29 @@ fn section_label(repo: &Repo) -> String {
         .unwrap_or_else(|| UNGROUPED.to_string())
 }
 
+/// The header label and floor width of the Slug column.
+const SLUG_HEADER: &str = "Slug";
+/// The upper bound of the Slug column, so a long slug cannot dominate.
+const SLUG_MAX: usize = 20;
+
+/// The Slug column width, sized to the widest slug (floored at the header,
+/// capped at [`SLUG_MAX`]). Only meaningful while `show_slugs` is on.
+fn slug_width(repos: &[&Repo]) -> u16 {
+    content_width(repos, slug_text)
+        .max(SLUG_HEADER.len())
+        .min(SLUG_MAX) as u16
+}
+
+/// Whether the layout adds a Slug column cell (0 or 1), for lead-cell counts.
+fn slug_cells(view: &TableView) -> u16 {
+    u16::from(view.show_slugs)
+}
+
+/// The slug text for `repo` (empty when it has none).
+fn slug_text(repo: &Repo) -> String {
+    repo.slug.clone().unwrap_or_default()
+}
+
 /// The header row for `tab` (a leading blank cell for the selection column when
 /// a selection is active, and a Section header when the flat section column is
 /// shown).
@@ -422,9 +427,13 @@ fn header_row(view: &TableView) -> Row<'static> {
         cells.push(Cell::from(""));
     }
     let mut titles = titles;
+    // Name sits at index 2 (after the marker + fav blanks). The Slug header
+    // goes right after it, the Section header right before it; insert Slug first
+    // so the Section insert keeps Name at index 2.
+    if view.show_slugs {
+        titles.insert(3, SLUG_HEADER.to_string());
+    }
     if view.show_section {
-        // The two leading blanks are the marker + fav columns; the Section
-        // header sits after them, before Name.
         titles.insert(2, SECTION_HEADER.to_string());
     }
     cells.extend(titles.into_iter().map(Cell::from));
@@ -446,6 +455,12 @@ fn row_for<'a>(repo: &Repo, view: &TableView, selected: bool) -> Row<'a> {
         )));
     }
     cells.push(Cell::from(Line::from(name_cell_spans(repo, view))));
+    if view.show_slugs {
+        cells.push(Cell::from(Span::styled(
+            slug_text(repo),
+            slug_style(view.colors),
+        )));
+    }
     if view.columns.is_statistics() {
         for column in stat_columns(view.columns) {
             let text = view.stat_text(repo, *column);

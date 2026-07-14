@@ -32,7 +32,7 @@ use crate::tui::git_columns::{
     branch_text, effective_info, git_marker_errored, github_text,
     status_display, zip_date_text,
 };
-use crate::tui::presentation::{IconSet, name_plain, slug_style, status_span};
+use crate::tui::presentation::{IconSet, slug_style, status_span};
 use crate::tui::skin::Colors;
 
 /// The lower and upper bound for the auto-sized name column.
@@ -48,6 +48,8 @@ const BRANCH_MAX: usize = 20;
 /// Lower and upper bounds for the git status column.
 const STATUS_MIN: usize = 4;
 const STATUS_MAX: usize = 12;
+/// Upper bound of the Slug column, so a long slug cannot dominate.
+const SLUG_MAX: usize = 20;
 
 /// The styling context for a sectioned render, bundled to keep the parameter
 /// count low.
@@ -254,6 +256,12 @@ fn render_column_header(frame: &mut Frame, area: Rect, view: &SectionedView) {
     let name_width = name_width(view);
     let mut spans = vec![Span::raw("     ")];
     spans.push(Span::raw(pad("Name", name_width)));
+    // Keep the Slug column reserved so the statistics titles stay aligned.
+    let slug_w = slug_col_width(view);
+    if slug_w > 0 {
+        spans.push(Span::raw("  "));
+        spans.push(Span::raw(pad("Slug", slug_w)));
+    }
     for column in stat_columns(view.columns) {
         spans.push(Span::raw("  "));
         spans.push(Span::raw(format!(
@@ -325,12 +333,7 @@ fn entry_item<'a>(
     } else {
         Span::raw("  ")
     };
-    let name_field = name_field_spans(
-        &repo.display_name(),
-        shown_slug(view, repo),
-        name_width,
-        view.colors,
-    );
+    let name_field = name_field_spans(&repo.display_name(), name_width);
     let mut spans = vec![
         lead,
         marker_span(repo, view),
@@ -338,16 +341,27 @@ fn entry_item<'a>(
         Span::raw(" "),
     ];
     spans.extend(name_field);
+    // The slug is its own dim-italic column right after the name; `slug_extra`
+    // is the cells it consumes (its gap + width) so the flexible path/github
+    // columns still fit.
+    let slug_w = slug_col_width(view);
+    let slug_extra = if view.show_slugs { 2 + slug_w } else { 0 };
+    if view.show_slugs {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            pad(shown_slug(view, repo).unwrap_or(""), slug_w),
+            slug_style(view.colors),
+        ));
+    }
+    let prefix = name_width + slug_extra;
     if view.columns.is_statistics() {
         spans.extend(stat_spans(view, repo));
     } else {
         match view.tab.kind() {
             TabKind::Files => {
-                spans.extend(files_spans(repo, view, name_width, width))
+                spans.extend(files_spans(repo, view, prefix, width))
             }
-            TabKind::Git => {
-                spans.extend(git_spans(repo, view, name_width, width))
-            }
+            TabKind::Git => spans.extend(git_spans(repo, view, prefix, width)),
         }
     }
     let item = ListItem::new(Line::from(spans));
@@ -358,17 +372,18 @@ fn entry_item<'a>(
     }
 }
 
-/// The Files-tab columns after the name: type, the dim path and the ZIP date.
+/// The Files-tab columns after the name/slug prefix: type, the dim path and the
+/// ZIP date. `prefix` is the name column plus the optional slug column.
 fn files_spans(
     repo: &Repo,
     view: &SectionedView,
-    name_width: usize,
+    prefix: usize,
     width: usize,
 ) -> Vec<Span<'static>> {
     let kind = pad(type_label(repo), TYPE_WIDTH);
-    // lead(2) + marker(1) + fav(1) + space(1) + name + gap(2) + type + gap(2);
+    // lead(2) + marker(1) + fav(1) + space(1) + prefix + gap(2) + type + gap(2);
     // the path then fills up to the trailing gap(2) + ZIP column at the edge.
-    let used = 2 + 1 + 1 + 1 + name_width + 2 + TYPE_WIDTH + 2 + 2 + ZIP_WIDTH;
+    let used = 2 + 1 + 1 + 1 + prefix + 2 + TYPE_WIDTH + 2 + 2 + ZIP_WIDTH;
     let path = pad(&repo.path.to_string_lossy(), width.saturating_sub(used));
     let zip = format!("{:>ZIP_WIDTH$}", zip_cell_text(repo, view));
     vec![
@@ -387,11 +402,10 @@ fn files_spans(
 fn git_spans(
     repo: &Repo,
     view: &SectionedView,
-    name_width: usize,
+    prefix: usize,
     width: usize,
 ) -> Vec<Span<'static>> {
-    let (branch_w, status_w, github_w) =
-        git_column_widths(view, name_width, width);
+    let (branch_w, status_w, github_w) = git_column_widths(view, prefix, width);
     let info = effective_info(repo, view.example_mode);
     let branch = pad(&branch_text(info), branch_w);
     let github = pad(&github_text(info), github_w);
@@ -435,7 +449,7 @@ fn git_status_spans(
 /// GitHub taking the leftover width (so the row fills without overflowing).
 fn git_column_widths(
     view: &SectionedView,
-    name_width: usize,
+    prefix: usize,
     width: usize,
 ) -> (usize, usize, usize) {
     let branch = col_content(view, |r| {
@@ -446,20 +460,11 @@ fn git_column_widths(
         status_display(effective_info(r, view.example_mode), view.icons)
     })
     .clamp(STATUS_MIN, STATUS_MAX);
-    // lead(2) + marker(1) + fav(1) + space(1) + name + gap(2) + branch + gap(2)
+    // lead(2) + marker(1) + fav(1) + space(1) + prefix + gap(2) + branch + gap(2)
     // + status + gap(2) + github + gap(2) + ZIP; GitHub flexes into the rest.
-    let used = 2
-        + 1
-        + 1
-        + 1
-        + name_width
-        + 2
-        + branch
-        + 2
-        + status
-        + 2
-        + 2
-        + ZIP_WIDTH;
+    // `prefix` = the name column plus the optional slug column.
+    let used =
+        2 + 1 + 1 + 1 + prefix + 2 + branch + 2 + status + 2 + 2 + ZIP_WIDTH;
     let github = width.saturating_sub(used);
     (branch, status, github)
 }
@@ -507,52 +512,47 @@ fn fav_span(repo: &Repo, view: &SectionedView) -> Span<'static> {
     }
 }
 
-/// The auto-sized name column width: the widest name (plus its slug when
-/// shown), bounded.
+/// The auto-sized name column width: the widest display name, bounded.
 fn name_width(view: &SectionedView) -> usize {
     view.groups
         .iter()
         .flat_map(|group| group.items.iter())
         .map(|&index| {
-            let repo = &view.repos[index];
-            UnicodeWidthStr::width(
-                name_plain(&repo.display_name(), shown_slug(view, repo))
-                    .as_str(),
-            )
+            UnicodeWidthStr::width(view.repos[index].display_name().as_str())
         })
         .max()
         .unwrap_or(NAME_MIN)
         .clamp(NAME_MIN, NAME_MAX)
 }
 
-/// The slug to display after `repo`'s name, or `None` when slugs are hidden.
+/// The Slug column width: the widest entry slug (bounded), or 0 when slugs are
+/// hidden or no entry has one.
+fn slug_col_width(view: &SectionedView) -> usize {
+    if !view.show_slugs {
+        return 0;
+    }
+    view.groups
+        .iter()
+        .flat_map(|group| group.items.iter())
+        .map(|&index| {
+            view.repos[index]
+                .slug
+                .as_deref()
+                .map_or(0, UnicodeWidthStr::width)
+        })
+        .max()
+        .unwrap_or(0)
+        .min(SLUG_MAX)
+}
+
+/// The slug to display for `repo`, or `None` when slugs are hidden.
 fn shown_slug<'a>(view: &SectionedView, repo: &'a Repo) -> Option<&'a str> {
     repo.slug.as_deref().filter(|_| view.show_slugs)
 }
 
-/// The name-column spans: the name, plus a dim-italic ` slug` when shown, fit
-/// and padded to `width` (the slug is shortened first when space is tight).
-fn name_field_spans(
-    name: &str,
-    slug: Option<&str>,
-    width: usize,
-    colors: &Colors,
-) -> Vec<Span<'static>> {
-    let Some(slug) = slug else {
-        return vec![Span::raw(pad(name, width))];
-    };
-    let name_w = UnicodeWidthStr::width(name);
-    if width <= name_w + 1 {
-        // No room for a space and at least one slug character.
-        return vec![Span::raw(pad(name, width))];
-    }
-    let slug_text = truncate(slug, width - name_w - 1);
-    let used = name_w + 1 + UnicodeWidthStr::width(slug_text.as_str());
-    vec![
-        Span::raw(name.to_string()),
-        Span::styled(format!(" {slug_text}"), slug_style(colors)),
-        Span::raw(" ".repeat(width.saturating_sub(used))),
-    ]
+/// The name-column spans: the name, padded to `width`.
+fn name_field_spans(name: &str, width: usize) -> Vec<Span<'static>> {
+    vec![Span::raw(pad(name, width))]
 }
 
 /// Pads `text` with trailing spaces to `width`, truncating when it is longer.
@@ -602,14 +602,10 @@ mod tests {
     }
 
     #[test]
-    fn name_field_spans_adds_slug_only_with_room() {
-        let colors =
-            Colors::from_palette(&crate::config::Config::default().palette());
-        // No slug -> one padded span.
-        assert_eq!(name_field_spans("hop", None, 10, &colors).len(), 1);
-        // Slug with room -> name + slug + padding.
-        assert_eq!(name_field_spans("hop", Some("hp"), 12, &colors).len(), 3);
-        // Too narrow for a slug -> just the padded name.
-        assert_eq!(name_field_spans("hop", Some("hp"), 4, &colors).len(), 1);
+    fn name_field_spans_pads_the_name() {
+        // The slug is its own column now; the name field is a single padded
+        // span sized to the name column width.
+        let spans = name_field_spans("hop", 10);
+        assert_eq!(spans.len(), 1);
     }
 }

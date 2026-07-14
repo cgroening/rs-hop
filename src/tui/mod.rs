@@ -280,7 +280,7 @@ pub struct App {
     /// Paths of `Path`-kind entries found missing by the on-demand existence
     /// check (`r` on the Files tab). Empty until checked; never run on start.
     files_missing: HashSet<PathBuf>,
-    /// Whether slugs are shown inline (dim, italic) after the entry name.
+    /// Whether slugs are shown in their own dim-italic column after the name.
     show_slugs: bool,
     /// When on, only git entries with a status change are shown (session-only).
     changes_only: bool,
@@ -1450,7 +1450,7 @@ impl App {
         self.start_stats();
     }
 
-    /// Toggles the inline slug display and persists it for the next run.
+    /// Toggles the Slug column display and persists it for the next run.
     fn toggle_slugs(&mut self) {
         self.show_slugs = !self.show_slugs;
         self.save_ui_state();
@@ -3624,6 +3624,21 @@ mod tests {
         let listed = screen(&app, 120, 30);
         assert!(listed.contains("Lines of code") && listed.contains("Size"));
         assert!(!listed.contains("Commits"), "those belong to Activity");
+    }
+
+    #[test]
+    fn i_shows_the_slug_in_its_own_column() {
+        let mut app = sample_app();
+        // Flat view (grouping off) so the table draws its column headers.
+        press(&mut app, KeyCode::Char('.'));
+        let before = screen(&app, 120, 30);
+        assert!(!before.contains("Slug"), "no Slug header until toggled");
+
+        press(&mut app, KeyCode::Char('i'));
+        let after = screen(&app, 120, 30);
+        assert!(after.contains("Slug"), "the Slug column has a header");
+        // The demo git entry's slug is shown (it lives in its own column).
+        assert!(after.contains("gone"), "the slug value is rendered");
     }
 
     #[test]

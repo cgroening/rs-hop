@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Each kind now has its own archive, reached by a second key press.** The single shared Archive tab (and its `3` key) is gone. Pressing `1` again while on Git Repos shows the git archive, `2` again shows the files archive, and a further press toggles back; the active tab's header gains a ` · Archiv` suffix. `Tab`/`Shift+Tab` cycle only the two active tabs. A persisted `tab = "archive"` from an older version opens the git archive; a pre-existing `sections = [...]` list maps to the files namespace.
 - **Add/edit form: Slug now sits before Section, and the Favourite toggle shows for both kinds** (not just git repos). Save is `Enter` (or `Ctrl+S`), except on the `Section` field where `Enter` opens the section picker.
+- **Slugs show in their own column.** `i` now renders the slug in a dedicated dim-italic column right after the name (with a `Slug` header in the flat table) instead of appending it inline to the name; the name column no longer widens to fit the slug.
 
 ### Fixed
 

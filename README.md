@@ -222,7 +222,7 @@ HOP_CONFIRM_QUIT    true | false: ask before quitting with `q`
 | `Z` | zip every entry opted into backup (the form's `Backup` toggle) |
 | `A` | archive / restore (selection or cursor) |
 | `S` | set or change the slug |
-| `i` | toggle showing slugs (dim, italic) after the name |
+| `i` | toggle the slug column (dim, italic) after the name |
 | `y` | copy the selected entry's path to the clipboard |
 | `p` | repair a missing path |
 | `!` | list entries with path errors, then repair / edit / delete |
