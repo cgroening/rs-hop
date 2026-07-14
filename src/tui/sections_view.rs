@@ -45,10 +45,12 @@ const ZIP_WIDTH: usize = 10;
 /// Lower and upper bounds for the git branch column.
 const BRANCH_MIN: usize = 6;
 const BRANCH_MAX: usize = 20;
-/// Lower and upper bounds for the git status column.
-const STATUS_MIN: usize = 4;
+/// Lower and upper bounds for the git status column (the floor fits the
+/// "Status" header).
+const STATUS_MIN: usize = 6;
 const STATUS_MAX: usize = 12;
-/// Upper bound of the Slug column, so a long slug cannot dominate.
+/// Header label and bounds of the Slug column (the floor fits the header).
+const SLUG_HEADER: &str = "Slug";
 const SLUG_MAX: usize = 20;
 
 /// The styling context for a sectioned render, bundled to keep the parameter
@@ -133,33 +135,34 @@ pub fn render(
     cursor: usize,
     view: &SectionedView,
 ) {
-    // The statistics sets need a column-title row; the sectioned list has none
-    // of its own, so it is drawn above the list and taken off its viewport.
-    let header_rows: u16 = u16::from(view.columns.is_statistics());
-    let area = if header_rows > 0 && area.height > header_rows {
-        render_column_header(frame, area, view);
-        Rect {
-            y: area.y + header_rows,
-            height: area.height - header_rows,
-            ..area
-        }
-    } else {
-        area
+    // A column-header row plus a blank spacer sit above the list (the sectioned
+    // list has no header of its own); reserve them, then the list and its
+    // scrollbar take the rest.
+    let header_h: u16 = if area.height > 1 { 1 } else { 0 };
+    let header_area = (header_h > 0).then_some(Rect { height: 1, ..area });
+    let list_full = Rect {
+        y: area.y + header_h,
+        height: area.height - header_h,
+        ..area
     };
 
     let row_count = view.groups.len() + entry_count(view.groups);
-    let viewport = area.height as usize;
+    let viewport = list_full.height as usize;
     let overflow = viewport > 0 && row_count > viewport;
     // Reserve the rightmost column for the scrollbar when the list overflows.
     let list_area = if overflow {
         Rect {
-            width: area.width.saturating_sub(1),
-            ..area
+            width: list_full.width.saturating_sub(1),
+            ..list_full
         }
     } else {
-        area
+        list_full
     };
     let content_width = list_area.width as usize;
+
+    if let Some(header_area) = header_area {
+        render_column_header(frame, header_area, view, content_width);
+    }
 
     let (items, cursor_row, first_entry_row) =
         build_items(view, cursor, content_width);
@@ -182,7 +185,7 @@ pub fn render(
     if overflow {
         ratada::scroll::render_scrollbar(
             frame,
-            area,
+            list_full,
             view.skin,
             ratada::nav::ScrollView {
                 total: row_count,
@@ -250,30 +253,64 @@ fn settled_offset(
     offset
 }
 
-/// The column-title row for a statistics set, drawn above the sectioned list.
-fn render_column_header(frame: &mut Frame, area: Rect, view: &SectionedView) {
+/// The column-title row drawn above the sectioned list. Its columns are sized
+/// exactly like the entry rows (same width helpers) so the titles line up.
+fn render_column_header(
+    frame: &mut Frame,
+    area: Rect,
+    view: &SectionedView,
+    width: usize,
+) {
     let row = Rect { height: 1, ..area };
-    let name_width = name_width(view);
-    let mut spans = vec![Span::raw("     ")];
-    spans.push(Span::raw(pad("Name", name_width)));
-    // Keep the Slug column reserved so the statistics titles stay aligned.
-    let slug_w = slug_col_width(view);
-    if slug_w > 0 {
-        spans.push(Span::raw("  "));
-        spans.push(Span::raw(pad("Slug", slug_w)));
-    }
-    for column in stat_columns(view.columns) {
-        spans.push(Span::raw("  "));
-        spans.push(Span::raw(format!(
-            "{:>width$}",
-            column.title(),
-            width = column.width() as usize
-        )));
-    }
     frame.render_widget(
-        Paragraph::new(Line::from(spans)).style(view.colors.header_style()),
+        Paragraph::new(Line::from(header_spans(view, width)))
+            .style(view.colors.header_style()),
         row,
     );
+}
+
+/// The header spans: the shared name/slug prefix, then the set-specific columns
+/// (statistics titles, or the git/files Standard columns).
+fn header_spans(view: &SectionedView, width: usize) -> Vec<Span<'static>> {
+    let name_w = name_width(view);
+    let mut spans = vec![Span::raw("     "), Span::raw(pad("Name", name_w))];
+    if view.show_slugs {
+        spans.push(Span::raw("  "));
+        spans.push(Span::raw(pad(SLUG_HEADER, slug_col_width(view))));
+    }
+    if view.columns.is_statistics() {
+        for column in stat_columns(view.columns) {
+            spans.push(Span::raw("  "));
+            spans.push(Span::raw(format!(
+                "{:>w$}",
+                column.title(),
+                w = column.width() as usize
+            )));
+        }
+        return spans;
+    }
+    let prefix = content_prefix(view, name_w);
+    match view.tab.kind() {
+        TabKind::Files => {
+            spans.push(Span::raw("  "));
+            spans.push(Span::raw(pad("Type", TYPE_WIDTH)));
+            spans.push(Span::raw("  "));
+            spans.push(Span::raw(pad("Path", files_path_width(prefix, width))));
+        }
+        TabKind::Git => {
+            let (branch_w, status_w, github_w) =
+                git_column_widths(view, prefix, width);
+            spans.push(Span::raw("  "));
+            spans.push(Span::raw(pad("Branch", branch_w)));
+            spans.push(Span::raw("  "));
+            spans.push(Span::raw(pad("Status", status_w)));
+            spans.push(Span::raw("  "));
+            spans.push(Span::raw(pad("GitHub", github_w)));
+        }
+    }
+    spans.push(Span::raw("  "));
+    spans.push(Span::raw(format!("{:>ZIP_WIDTH$}", "ZIP Backup")));
+    spans
 }
 
 /// The statistics cells of one entry, right-aligned under their headers.
@@ -341,19 +378,17 @@ fn entry_item<'a>(
         Span::raw(" "),
     ];
     spans.extend(name_field);
-    // The slug is its own dim-italic column right after the name; `slug_extra`
-    // is the cells it consumes (its gap + width) so the flexible path/github
-    // columns still fit.
-    let slug_w = slug_col_width(view);
-    let slug_extra = if view.show_slugs { 2 + slug_w } else { 0 };
+    // The slug is its own dim-italic column right after the name.
     if view.show_slugs {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
-            pad(shown_slug(view, repo).unwrap_or(""), slug_w),
+            pad(shown_slug(view, repo).unwrap_or(""), slug_col_width(view)),
             slug_style(view.colors),
         ));
     }
-    let prefix = name_width + slug_extra;
+    // The prefix the kind columns start after (name + optional slug), so the
+    // flexible path/github columns still fit.
+    let prefix = content_prefix(view, name_width);
     if view.columns.is_statistics() {
         spans.extend(stat_spans(view, repo));
     } else {
@@ -381,10 +416,10 @@ fn files_spans(
     width: usize,
 ) -> Vec<Span<'static>> {
     let kind = pad(type_label(repo), TYPE_WIDTH);
-    // lead(2) + marker(1) + fav(1) + space(1) + prefix + gap(2) + type + gap(2);
-    // the path then fills up to the trailing gap(2) + ZIP column at the edge.
-    let used = 2 + 1 + 1 + 1 + prefix + 2 + TYPE_WIDTH + 2 + 2 + ZIP_WIDTH;
-    let path = pad(&repo.path.to_string_lossy(), width.saturating_sub(used));
+    let path = pad(
+        &repo.path.to_string_lossy(),
+        files_path_width(prefix, width),
+    );
     let zip = format!("{:>ZIP_WIDTH$}", zip_cell_text(repo, view));
     vec![
         Span::raw("  "),
@@ -525,8 +560,8 @@ fn name_width(view: &SectionedView) -> usize {
         .clamp(NAME_MIN, NAME_MAX)
 }
 
-/// The Slug column width: the widest entry slug (bounded), or 0 when slugs are
-/// hidden or no entry has one.
+/// The Slug column width: the widest entry slug, floored at the "Slug" header
+/// and capped, or 0 when slugs are hidden.
 fn slug_col_width(view: &SectionedView) -> usize {
     if !view.show_slugs {
         return 0;
@@ -542,7 +577,28 @@ fn slug_col_width(view: &SectionedView) -> usize {
         })
         .max()
         .unwrap_or(0)
+        .max(SLUG_HEADER.len())
         .min(SLUG_MAX)
+}
+
+/// The row prefix width before the kind columns: the name column plus the
+/// optional slug column (its 2-cell gap + width). Shared by the entry rows and
+/// the column header so they align.
+fn content_prefix(view: &SectionedView, name_width: usize) -> usize {
+    let slug = if view.show_slugs {
+        2 + slug_col_width(view)
+    } else {
+        0
+    };
+    name_width + slug
+}
+
+/// The Files-tab path column width: the leftover after the fixed columns, so the
+/// row fills to `width` without overflowing. Shared by the rows and the header.
+fn files_path_width(prefix: usize, width: usize) -> usize {
+    // lead(5) + prefix + gap(2) + type + gap(2) + path + gap(2) + ZIP.
+    let used = 2 + 1 + 1 + 1 + prefix + 2 + TYPE_WIDTH + 2 + 2 + ZIP_WIDTH;
+    width.saturating_sub(used)
 }
 
 /// The slug to display for `repo`, or `None` when slugs are hidden.

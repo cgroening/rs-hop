@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **The grouped view now shows the column header.** The sectioned view only drew column titles for the statistics sets; the Standard set had none. It now shows a header (Name / Branch / Status / GitHub / ZIP Backup, or Name / Type / Path, plus the Slug column) above the sections, aligned with the entry rows, with a blank spacer line below it.
 - **Grouped-view column colours.** In the grouped (sectioned) git view the Branch and GitHub-name columns were dimmed grey; they now use the normal foreground like the entry name (Status keeps its green/amber colouring, ZIP Backup stays dim), matching the flat table.
 - **Refreshing an entry no longer cancels a running refresh.** `x`/`X` (and `r`/`R`) previously replaced the single in-flight refresh, so refreshing one repo while the startup or a full refresh was still running silently aborted it. Refreshes now run in parallel: the one already running keeps going and the new one runs alongside it.
 

@@ -3627,6 +3627,21 @@ mod tests {
     }
 
     #[test]
+    fn the_grouped_view_shows_the_column_header() {
+        let mut app = sample_app();
+        // Default git tab, grouping on: the column header sits above the list.
+        let git = screen(&app, 120, 30);
+        assert!(git.contains("Branch"), "git header shows Branch");
+        assert!(git.contains("Status") && git.contains("GitHub"));
+        assert!(git.contains("ZIP Backup"));
+
+        // The files tab (grouped) shows its own header.
+        press(&mut app, KeyCode::Char('2'));
+        let files = screen(&app, 120, 30);
+        assert!(files.contains("Type") && files.contains("Path"));
+    }
+
+    #[test]
     fn i_shows_the_slug_in_its_own_column() {
         let mut app = sample_app();
         // Flat view (grouping off) so the table draws its column headers.
