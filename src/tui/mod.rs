@@ -917,6 +917,10 @@ pub fn run(mut app: App, tui: &mut Tui) -> io::Result<RunOutcome> {
                 }
                 other => other,
             },
+            Some(TuiEvent::Paste(text)) => {
+                app.handle_paste(&text);
+                None
+            }
             Some(TuiEvent::Resize) | None => None,
         };
         if let Some(outcome) = outcome {
@@ -982,6 +986,27 @@ impl App {
                 self.handle_overlay_key(key);
                 None
             }
+        }
+    }
+
+    /// Routes a bracketed paste to the focused text field: the live filter, or
+    /// the open overlay's own. Anything else has no caret to paste at, so the
+    /// paste is dropped.
+    fn handle_paste(&mut self, text: &str) {
+        if self.filtering {
+            self.filter.paste(text);
+            // The wider query can drop the entry under the cursor, as after
+            // any other filter edit.
+            self.cursor = 0;
+            return;
+        }
+        match &mut self.overlay {
+            Overlay::Form(form, _) => form.paste(text),
+            Overlay::Prompt(prompt, _) => prompt.paste(text),
+            Overlay::SectionPrompt(prompt, _) => prompt.paste(text),
+            Overlay::SectionPicker(picker, ..) => picker.paste(text),
+            Overlay::Picker(picker, _) => picker.paste(text),
+            _ => {}
         }
     }
 

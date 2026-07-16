@@ -129,6 +129,11 @@ impl TextPrompt {
         }
     }
 
+    /// Inserts a bracketed paste into the value at the caret.
+    pub fn paste(&mut self, text: &str) {
+        self.input.paste(text);
+    }
+
     /// Renders the prompt centred in `area`.
     pub fn render(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
         let colors = Colors::from_palette(&skin.palette);

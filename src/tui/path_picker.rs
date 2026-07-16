@@ -106,6 +106,12 @@ impl PathPicker {
         PickerResult::Pending
     }
 
+    /// Inserts a bracketed paste into the filter and re-runs the match.
+    pub fn paste(&mut self, text: &str) {
+        self.filter.paste(text);
+        self.apply_filter();
+    }
+
     /// Renders the picker centred in `area`, ratada-style: a rounded box titled
     /// `Pick path` with the current directory on a dim header row, the caret
     /// filter, the scrollable entry list, and a compact footer; the `xx/yy`

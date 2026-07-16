@@ -101,6 +101,12 @@ impl SectionPicker {
         SectionPickResult::Pending
     }
 
+    /// Inserts a bracketed paste into the filter and re-runs the match.
+    pub fn paste(&mut self, text: &str) {
+        self.filter.paste(text);
+        self.apply_filter();
+    }
+
     /// Chooses the highlighted row: an existing item, or the create row when the
     /// cursor sits past the visible items.
     fn choose(&self) -> SectionPickResult {
@@ -270,6 +276,17 @@ mod tests {
         picker.handle_key(key('f'));
         // "f" narrows to Frontend, on which the cursor rests; Enter picks it
         // (a create row for the partial "f" sits below, unselected).
+        assert_eq!(picker.visible.len(), 1);
+        assert!(matches!(
+            picker.choose(),
+            SectionPickResult::Picked(Some(name)) if name == "Frontend"
+        ));
+    }
+
+    #[test]
+    fn a_pasted_query_narrows_the_list_like_typing() {
+        let mut picker = SectionPicker::new(&sections(), None);
+        picker.paste("Frontend");
         assert_eq!(picker.visible.len(), 1);
         assert!(matches!(
             picker.choose(),

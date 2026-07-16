@@ -296,6 +296,17 @@ impl RepoForm {
         FormResult::Pending
     }
 
+    /// Inserts a bracketed paste into the focused text field, if any. The
+    /// non-text fields (Section, Kind, Fav, Backup) hold no caret to paste at.
+    pub fn paste(&mut self, text: &str) {
+        match self.focused_field() {
+            Field::Path => self.path.paste(text),
+            Field::Name => self.name.paste(text),
+            Field::Slug => self.slug.paste(text),
+            Field::Section | Field::Kind | Field::Fav | Field::Backup => {}
+        }
+    }
+
     /// The save result for this form's mode.
     fn save(&self) -> FormResult {
         if self.bulk {
@@ -744,6 +755,30 @@ mod tests {
         assert!(git.draft().include_in_backup);
         let folder = RepoForm::for_add("/p", RepoKind::Path);
         assert!(!folder.draft().include_in_backup);
+    }
+
+    #[test]
+    fn paste_lands_in_the_focused_text_field() {
+        let mut form = RepoForm::for_add("", RepoKind::Git);
+        form.focus = form.field_index(Field::Path);
+        form.paste("/code/hop");
+        assert_eq!(form.path.value(), "/code/hop");
+
+        form.focus = form.field_index(Field::Name);
+        form.paste("hop");
+        assert_eq!(form.name.value(), "hop");
+        // The earlier field keeps its own value.
+        assert_eq!(form.path.value(), "/code/hop");
+    }
+
+    #[test]
+    fn paste_on_a_non_text_field_changes_nothing() {
+        let mut form = RepoForm::for_add("/p", RepoKind::Git);
+        form.focus = form.field_index(Field::Fav);
+        form.paste("/code/hop");
+        assert_eq!(form.path.value(), "/p");
+        assert_eq!(form.name.value(), "");
+        assert_eq!(form.slug.value(), "");
     }
 
     #[test]
