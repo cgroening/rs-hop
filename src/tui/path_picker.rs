@@ -352,7 +352,56 @@ fn is_hidden(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_hidden;
+    use std::fs;
+
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use super::{PathPicker, is_hidden};
+
+    /// A picker over a fresh temp dir with one visible and one hidden entry.
+    /// The name carries the pid so parallel test binaries cannot collide.
+    fn picker_over_a_temp_dir() -> (PathPicker, std::path::PathBuf) {
+        let dir = std::env::temp_dir()
+            .join(format!("hop-path-picker-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("visible")).expect("temp dir is writable");
+        fs::create_dir_all(dir.join(".hidden")).expect("temp dir is writable");
+        (PathPicker::new(&dir, false), dir)
+    }
+
+    /// `Ctrl+H` toggles hidden entries, but the picker also has a filter field
+    /// right there - so `AltGr+H` (Control+Alt) must type into the filter
+    /// instead of toggling. That distinction is why this arm goes through
+    /// `is_command` rather than a bare CONTROL check.
+    #[test]
+    fn altgr_h_types_into_the_filter_instead_of_toggling_hidden() {
+        let (mut picker, dir) = picker_over_a_temp_dir();
+        assert!(!picker.show_hidden);
+
+        picker.handle_key(KeyEvent::new(
+            KeyCode::Char('h'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ));
+        assert!(!picker.show_hidden, "AltGr+H toggled the hidden entries");
+        assert_eq!(picker.filter.value(), "h", "AltGr+H did not type");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ctrl_h_toggles_the_hidden_entries() {
+        let (mut picker, dir) = picker_over_a_temp_dir();
+        let ctrl_h = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL);
+
+        picker.handle_key(ctrl_h);
+        assert!(picker.show_hidden);
+        assert!(picker.filter.value().is_empty(), "Ctrl+H must not type");
+
+        picker.handle_key(ctrl_h);
+        assert!(!picker.show_hidden);
+
+        let _ = fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn dot_prefixed_names_are_hidden() {
