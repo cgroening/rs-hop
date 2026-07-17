@@ -3,9 +3,10 @@
 //! It looks like `ratada::help`'s overlay — uppercase section headers, an
 //! aligned accent key column, dimmed descriptions and a hint footer — but stays
 //! hop's own **non-blocking** overlay so a background refresh keeps running
-//! behind it (see `docs/DEVELOPMENT.md`, "Architecture decisions"). The trailing
-//! `Global` section is handed in by the caller, from the same tokens the footer
-//! uses.
+//! behind it (see `docs/DEVELOPMENT.md`, "Architecture decisions"). The leading
+//! `Navigation` and the trailing `Global` section are handed in by the caller
+//! ([`HelpSections`]), from the same tokens the footer uses: both carry keys a
+//! `[keys]` override can move, so they must not be spelled out here.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -27,25 +28,9 @@ const PREFERRED_WIDTH: u16 = 60;
 /// Spaces between the key column and the description.
 const KEY_GAP: usize = 2;
 /// The shortcut list, grouped into the same sections as the footer hint bar.
-/// The `Global` section is appended at render time so its keys stay in sync
-/// with the keymap and the toolkit's own chords.
+/// The `Navigation` and `Global` sections are handed in at render time so their
+/// keys stay in sync with the keymap and the toolkit's own chords.
 const SECTIONS: &[(&str, &[(&str, &str)])] = &[
-    (
-        "Navigation",
-        &[
-            (
-                "1 / 2",
-                "Git Repos / Files (press again for that kind's archive)",
-            ),
-            ("Tab / Shift+Tab", "cycle the two active tabs"),
-            ("\u{2191} \u{2193}", "move cursor (wraps)"),
-            ("g / G", "top / bottom"),
-            ("PgUp/PgDn \u{b7} Ctrl+u/d", "page \u{b7} half page"),
-            ("Space", "toggle selection"),
-            ("Shift+\u{2191}\u{2193}", "extend the selection range"),
-            ("Esc", "clear the selection"),
-        ],
-    ),
     (
         "Open",
         &[
@@ -175,37 +160,48 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
     ),
 ];
 
-/// An owned `(label, hints)` section, as the app builds the `Global` group.
+/// An owned `(label, hints)` section, as the app builds the `Navigation` and
+/// `Global` groups.
 pub type Section = (String, Vec<(String, String)>);
 
-/// Renders the help overlay centred in `area`. `global` is the trailing section
-/// with the app-wide chords, built from the same tokens as the footer; `scroll`
-/// carries the view offset across frames.
+/// The sections the app builds from the keymap, wrapping the static ones.
+///
+/// Both carry keys that a `[keys]` override can move, so they are resolved by
+/// the caller rather than spelled out in [`SECTIONS`].
+pub struct HelpSections<'a> {
+    /// The leading section: cursor movement and the selection keys.
+    pub navigation: &'a Section,
+    /// The trailing section: the app-wide chords.
+    pub global: &'a Section,
+}
+
+/// Renders the help overlay centred in `area`. `scroll` carries the view offset
+/// across frames.
 pub fn render(
     frame: &mut Frame,
     area: Rect,
     skin: &Skin,
-    global: &Section,
+    groups: &HelpSections,
     scroll: &Scroll,
 ) {
     let palette = &skin.palette;
     // Four fifths of the screen, but never below the width the long
     // descriptions need. `centered_box` caps both against `area`.
     let width = (area.width * 4 / 5).max(PREFERRED_WIDTH);
-    let height = section_rows(global) + CHROME_ROWS;
+    let height = section_rows(groups) + CHROME_ROWS;
     let rect = centered_box(width, height, area);
     frame.render_widget(Clear, rect);
     let block = ratada::chrome::modal_block(skin, "Keyboard shortcuts");
     let inner = block.inner(rect);
 
-    let key_width = key_column_width(global);
+    let key_width = key_column_width(groups);
     let header_style =
         ratada::style::fg(palette.accent_dim).add_modifier(Modifier::BOLD);
     let key_style =
         ratada::style::fg(palette.accent).add_modifier(Modifier::BOLD);
 
     let mut lines: Vec<Line> = Vec::new();
-    for (title, hints) in sections(global) {
+    for (title, hints) in sections(groups) {
         lines
             .push(Line::from(Span::styled(title.to_uppercase(), header_style)));
         for (key, description) in hints {
@@ -252,36 +248,39 @@ pub fn render(
     );
 }
 
-/// The static sections followed by the caller's `Global` one.
-fn sections(
-    global: &Section,
-) -> impl Iterator<Item = (&str, Vec<(&str, &str)>)> {
+/// The caller's `Navigation` section, the static ones, then its `Global` one.
+fn sections<'a>(
+    groups: &'a HelpSections,
+) -> impl Iterator<Item = (&'a str, Vec<(&'a str, &'a str)>)> {
     let listed = SECTIONS.iter().map(|(title, hints)| {
         (*title, hints.iter().map(|(k, d)| (*k, *d)).collect())
     });
-    let trailing = std::iter::once((
-        global.0.as_str(),
-        global
-            .1
-            .iter()
-            .map(|(k, d)| (k.as_str(), d.as_str()))
-            .collect(),
-    ));
-    listed.chain(trailing)
+    std::iter::once(borrow(groups.navigation))
+        .chain(listed)
+        .chain(std::iter::once(borrow(groups.global)))
+}
+
+/// An owned section as the borrowed pairs [`sections`] yields.
+fn borrow(section: &Section) -> (&str, Vec<(&str, &str)>) {
+    let hints = section.1.iter().map(|(k, d)| (k.as_str(), d.as_str()));
+    (section.0.as_str(), hints.collect())
 }
 
 /// The rows the sections occupy: one header plus one row per hint.
-fn section_rows(global: &Section) -> u16 {
+fn section_rows(groups: &HelpSections) -> u16 {
     let listed: usize = SECTIONS.iter().map(|(_, hints)| hints.len() + 1).sum();
-    u16::try_from(listed + global.1.len() + 1).unwrap_or(u16::MAX)
+    let owned = groups.navigation.1.len() + groups.global.1.len() + 2;
+    u16::try_from(listed + owned).unwrap_or(u16::MAX)
 }
 
 /// The width of the aligned key column, sized to the widest key.
-fn key_column_width(global: &Section) -> usize {
+fn key_column_width(groups: &HelpSections) -> usize {
     let listed = SECTIONS
         .iter()
         .flat_map(|(_, hints)| hints.iter().map(|(key, _)| key.width()));
-    let owned = global.1.iter().map(|(key, _)| key.width());
+    let owned = [groups.navigation, groups.global]
+        .into_iter()
+        .flat_map(|section| section.1.iter().map(|(key, _)| key.width()));
     listed.chain(owned).max().unwrap_or(0) + KEY_GAP
 }
 
@@ -312,12 +311,24 @@ mod tests {
         )
     }
 
+    fn navigation_section() -> Section {
+        (
+            "Navigation".to_string(),
+            vec![("space".to_string(), "toggle selection".to_string())],
+        )
+    }
+
     /// The overlay used to render only between 60 and 125 columns: below that
     /// its `clamp` had `min > max`, above it the width overflowed a percentage.
     #[test]
     fn renders_at_any_terminal_size() {
         let skin = Config::default().skin();
+        let navigation = navigation_section();
         let global = global_section();
+        let groups = HelpSections {
+            navigation: &navigation,
+            global: &global,
+        };
         let scroll = Scroll::default();
         for width in [1, 20, 40, 59, 60, 100, 126, 200, 400] {
             for height in [1, 2, 3, 5, 40] {
@@ -326,7 +337,7 @@ mod tests {
                         .expect("the test backend never fails");
                 terminal
                     .draw(|frame| {
-                        render(frame, frame.area(), &skin, &global, &scroll);
+                        render(frame, frame.area(), &skin, &groups, &scroll);
                     })
                     .unwrap_or_else(|error| {
                         panic!("{width}x{height} failed to render: {error}")

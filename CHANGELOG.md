@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **`Shift+↑` / `Shift+↓` (extend the selection) are now rebindable**, as the `extend_up` / `extend_down` actions in `[keys]`. They used to sit hard-wired beside the keymap, because hop's own chord parser could not tell `Shift`+arrow from a bare arrow and would have resolved it to a plain cursor move. The default keys are unchanged.
+
+### Changed
+
+- **The help overlay (`?`) shows the keys that are actually bound** for selecting and extending, instead of fixed `Space` / `Shift+↑↓` labels – so a `[keys]` override reaches the overlay too, as it already did the footer hints.
+
+### Fixed
+
+- **`AltGr` types again in the add/edit form and the path picker.** `AltGr` is reported as `Control`+`Alt`, so a bare Control check mistook it for a command: `AltGr+h` in the picker toggled the hidden entries instead of typing an `h`, and the form's Control shortcuts fired the same way. Both now test for a real command chord.
+
 ## [0.3.0] - 2026-07-16
 
 ### Added

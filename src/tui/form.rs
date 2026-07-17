@@ -13,7 +13,7 @@
 //! the selection renders as *mixed* and is only written when the user touches
 //! it, so an untouched field leaves every selected entry as it was.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratada::input::InputField;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -274,7 +274,9 @@ impl RepoForm {
     /// Handles a key, returning a save draft, a picker request, a cancel, or
     /// pending.
     pub fn handle_key(&mut self, key: KeyEvent) -> FormResult {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        // `is_command`, not a bare CONTROL check: AltGr is Control+Alt and must
+        // keep typing into the form's fields.
+        let ctrl = ratada::input::is_command(key);
         match key.code {
             KeyCode::Esc => return FormResult::Cancel,
             KeyCode::Enter => {

@@ -34,7 +34,7 @@ use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -72,6 +72,7 @@ use crate::storage::git_client::GitClient;
 use crate::theme::Skin;
 use crate::tui::columns::ColumnSet;
 use crate::tui::form::{BulkDraft, FormResult, RepoDraft, RepoForm};
+use crate::tui::help::{HelpSections, Section};
 use crate::tui::path_picker::{PathPicker, PickerResult};
 use crate::tui::presentation::{
     FieldView, IconSet, field_spans, github_url, render_empty_hint,
@@ -959,14 +960,69 @@ const MIN_LIST_ROWS: u16 = 3;
 
 /// The label of the group and help section listing the app-wide chords.
 const GLOBAL_GROUP: &str = "Global";
+/// The label of the help section listing the cursor and selection keys.
+const NAVIGATION_GROUP: &str = "Navigation";
+
+/// The compact rows of the help overlay's `Navigation` section, each merging
+/// several actions into one legible row (`↑ ↓` reads better than the verbose
+/// per-key form), as the footer's own Navigation group does. `Tab` and `Esc`
+/// are not actions at all: they are structural and never rebindable.
+const NAVIGATION_ROWS: &[(&str, &str)] = &[
+    (
+        "1 / 2",
+        "Git Repos / Files (press again for that kind's archive)",
+    ),
+    ("Tab / Shift+Tab", "cycle the two active tabs"),
+    ("\u{2191} \u{2193}", "move cursor (wraps)"),
+    ("g / G", "top / bottom"),
+    ("PgUp/PgDn \u{b7} Ctrl+u/d", "page \u{b7} half page"),
+];
 
 /// The app-wide chords: this app's own keys, resolved through the keymap so a
 /// `[keys]` override shows up here too, followed by the ones the toolkit
 /// intercepts itself (the hints toggle and the hard quit).
-fn global_group(keymap: &Keymap) -> (String, Vec<(String, String)>) {
+fn global_group(keymap: &Keymap) -> Section {
     let mut hints = keymap.hints(&[Action::Help, Action::Quit]);
     hints.extend(shortcut_hints::global_bindings());
     (GLOBAL_GROUP.to_string(), hints)
+}
+
+/// The help overlay's leading section: the compact rows above, then the
+/// selection keys resolved through the keymap so a `[keys]` override shows up
+/// here too, then the structural `Esc`.
+fn navigation_group(keymap: &Keymap) -> Section {
+    let mut hints: Vec<(String, String)> = NAVIGATION_ROWS
+        .iter()
+        .map(|(key, description)| (key.to_string(), description.to_string()))
+        .collect();
+    let selection = [
+        (&[Action::ToggleSelect][..], "toggle selection"),
+        (
+            &[Action::ExtendUp, Action::ExtendDown][..],
+            "extend the selection range",
+        ),
+    ];
+    for (actions, description) in selection {
+        let keys = keys_of(keymap, actions);
+        // An unbound action gets no row, as `Keymap::hints` does it.
+        if !keys.is_empty() {
+            hints.push((keys, description.to_string()));
+        }
+    }
+    hints.push(("Esc".to_string(), "clear the selection".to_string()));
+    (NAVIGATION_GROUP.to_string(), hints)
+}
+
+/// The keys bound to `actions`, joined into one help row.
+///
+/// Not `Keymap::hints`: that pairs the keys with the terse footer wording
+/// ("extend"), while the overlay keeps its own fuller description.
+fn keys_of(keymap: &Keymap, actions: &[Action]) -> String {
+    actions
+        .iter()
+        .flat_map(|&action| keymap.keys_for(action))
+        .collect::<Vec<String>>()
+        .join("/")
 }
 
 impl App {
@@ -1183,17 +1239,14 @@ impl App {
 
     /// Handles the keys that have no [`Action`], returning whether one matched.
     ///
-    /// `Shift`+arrow cannot be a binding because [`KeyChord`](crate::keymap::
-    /// KeyChord) ignores the shift modifier, so it has to be caught before the
-    /// keymap turns a shifted arrow into a plain cursor move. Tab cycling and
-    /// `Esc` are structural, not user-facing actions.
+    /// Tab cycling and `Esc` are structural rather than user-facing actions, so
+    /// they stay out of the keymap and are not rebindable. `Shift`+arrow used
+    /// to be caught here too, because the old `KeyChord` ignored the shift
+    /// modifier and would have turned a shifted arrow into a plain cursor move;
+    /// `ratada::keymap` compares shift for a non-character key, so extending is
+    /// now the ordinary `extend_up`/`extend_down` binding.
     fn handle_untracked_key(&mut self, key: KeyEvent) -> bool {
-        // Only a bare `Shift`+arrow extends: `Ctrl`/`Alt`+arrow are real chords
-        // the keymap owns, and they keep winning as they did before.
-        let shift = key.modifiers == KeyModifiers::SHIFT;
         match key.code {
-            KeyCode::Up if shift => self.extend_selection(-1),
-            KeyCode::Down if shift => self.extend_selection(1),
             KeyCode::Tab => self.cycle_tab(1),
             KeyCode::BackTab => self.cycle_tab(-1),
             KeyCode::Esc => self.clear_selection(),
@@ -1222,6 +1275,8 @@ impl App {
             Action::TabGit => self.select_kind(TabKind::Git),
             Action::TabFiles => self.select_kind(TabKind::Files),
             Action::ToggleSelect => self.toggle_select(),
+            Action::ExtendUp => self.extend_selection(-1),
+            Action::ExtendDown => self.extend_selection(1),
             Action::Jump | Action::JumpCd => return self.open_selected(false),
             Action::Open => return self.open_selected(true),
             Action::GitTool => return self.open_git_inline(),
@@ -2778,8 +2833,13 @@ impl App {
     }
 
     /// The app-wide chords, shared by the footer and the help overlay.
-    fn global_hints(&self) -> (String, Vec<(String, String)>) {
+    fn global_hints(&self) -> Section {
         global_group(&self.keymap)
+    }
+
+    /// The help overlay's cursor and selection keys.
+    fn navigation_hints(&self) -> Section {
+        navigation_group(&self.keymap)
     }
 
     /// Splits the content band into the body and, outside the standard column
@@ -3234,7 +3294,10 @@ impl App {
                 frame,
                 area,
                 skin,
-                &self.global_hints(),
+                &HelpSections {
+                    navigation: &self.navigation_hints(),
+                    global: &self.global_hints(),
+                },
                 &self.help_scroll,
             ),
             Overlay::Confirm(modal, _) => modal.render(frame, area, skin),
@@ -3859,6 +3922,31 @@ mod tests {
             .flat_map(|(_, pairs)| pairs)
             .find(|(_, desc)| desc == "add");
         assert_eq!(add, Some(("n".to_string(), "add".to_string())));
+    }
+
+    /// The help overlay used to spell `Shift+↑↓` out as a literal, so a
+    /// `[keys]` override moved the key but not the text describing it.
+    #[test]
+    fn help_navigation_keys_follow_a_keys_override() {
+        let keys_for = |section: &Section, description: &str| {
+            section
+                .1
+                .iter()
+                .find(|(_, text)| text == description)
+                .map(|(keys, _)| keys.clone())
+        };
+        let extend = "extend the selection range";
+
+        let default = navigation_group(&Keymap::default());
+        assert_eq!(
+            keys_for(&default, extend),
+            Some("shift+up/shift+down".to_string())
+        );
+
+        let overrides =
+            BTreeMap::from([("extend_up".to_string(), vec!["K".to_string()])]);
+        let custom = navigation_group(&Keymap::from_overrides(&overrides));
+        assert_eq!(keys_for(&custom, extend), Some("K/shift+down".to_string()));
     }
 
     #[test]

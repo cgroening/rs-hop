@@ -46,10 +46,12 @@ glyphs = "unicode"    # unicode | ascii
 # accent = "#8899ff"
 # background = "#0b0b14"
 
-# Rebind keys per action (see the help overlay for action names). A value may be
-# one key or a list. Example:
+# Rebind keys per action. The action names are the `config_name` column of the
+# ACTIONS table in `src/keymap.rs`; the help overlay (`?`) shows the keys they
+# are bound to, not the names. A value may be one key or a list. Example:
 # [keys]
 # add = "n"
+# extend_up = ["shift+up", "K"]
 # delete = ["d", "backspace"]
 
 # Legacy glyph selector (kept for back-compat; prefer [appearance].glyphs).

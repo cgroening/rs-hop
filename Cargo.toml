@@ -45,7 +45,7 @@ crossterm = "0.29"
 # In-house TUI toolkit (terminal guard, theming/Skin, modals, forms, pickers,
 # help, shortcut hints, panel chrome). Fuzzy matching also comes from here.
 # Path dependency to the local workspace copy.
-ratada = { path = "../../libs/ratada", version = "0.3" }
+ratada = { path = "../../libs/ratada", version = "0.4" }
 # In-house CLI toolkit (styled tables/alerts/key-value output, fuzzy prompts).
 sparcli = { path = "../../libs/sparcli", version = "0.3", features = ["fuzzy"] }
 # Fuzzy matching for the pure domain filter (domain must not depend on the

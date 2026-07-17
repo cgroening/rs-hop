@@ -12,7 +12,7 @@ use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratada::input::InputField;
 use ratada::nav::cycle;
 use ratada::text::truncate;
@@ -91,9 +91,8 @@ impl PathPicker {
             KeyCode::Backspace if self.filter.value().is_empty() => {
                 self.ascend();
             }
-            KeyCode::Char('h')
-                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
+            // `is_command`, so AltGr (Control+Alt) types instead of toggling.
+            KeyCode::Char('h') if ratada::input::is_command(key) => {
                 self.toggle_hidden();
             }
             KeyCode::Enter => return self.choose(),

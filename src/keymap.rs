@@ -8,13 +8,19 @@
 //! Some keys are context-dependent (`r`/`R` reload on the git tabs and re-check
 //! paths on the Files tab; `s` only jumps to a section where the list is
 //! sectioned); the keymap resolves the key to an [`Action`] and the app
-//! interprets it per tab. `Shift`+arrow (extend selection) and `Shift`+`Tab`
-//! (cycle back) are handled inline in dispatch, because [`KeyChord`] ignores the
-//! shift modifier (it is encoded only in a character's case).
+//! interprets it per tab. `Shift`+`Tab` (cycle back) is still handled inline in
+//! dispatch, because tab cycling is structural rather than a user-facing action.
+//!
+//! The chord grammar, the defaults-vs-overrides merge and the display form live
+//! in [`ratada::keymap`]; this module owns only the action catalog.
 
-use std::collections::BTreeMap;
+pub use ratada::keymap::{Conflict as ChordConflict, KeyChord};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+/// The resolved key map for hop's actions.
+pub type Keymap = ratada::keymap::Keymap<Action>;
+
+/// A configured key dropped because an earlier action already claimed it.
+pub type Conflict = ChordConflict<Action>;
 
 /// An app-level action a key can trigger. The single source of truth for the
 /// action's config name, human description and default keys.
@@ -42,6 +48,10 @@ pub enum Action {
     TabFiles,
     /// Toggle the current row's multi-selection.
     ToggleSelect,
+    /// Extend the multi-selection to the row above.
+    ExtendUp,
+    /// Extend the multi-selection to the row below.
+    ExtendDown,
     /// Jump: write the cd path and exit.
     Jump,
     /// Open the entry (git tool / cd / editor / default app).
@@ -204,6 +214,18 @@ const ACTIONS: &[ActionSpec] = &[
         config_name: "select",
         description: "select",
         default_keys: &["space"],
+    },
+    ActionSpec {
+        action: Action::ExtendUp,
+        config_name: "extend_up",
+        description: "extend",
+        default_keys: &["shift+up"],
+    },
+    ActionSpec {
+        action: Action::ExtendDown,
+        config_name: "extend_down",
+        description: "extend",
+        default_keys: &["shift+down"],
     },
     ActionSpec {
         action: Action::Jump,
@@ -483,264 +505,37 @@ impl Action {
     pub fn default_keys(self) -> &'static [&'static str] {
         self.spec().default_keys
     }
-
-    fn from_config_name(name: &str) -> Option<Action> {
-        Action::all().find(|a| a.config_name() == name)
-    }
 }
 
-/// A parsed key chord: a key plus the `ctrl`/`alt` modifiers. `shift` is encoded
-/// in the character's case and otherwise ignored when matching.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct KeyChord {
-    code: KeyCode,
-    ctrl: bool,
-    alt: bool,
-}
-
-impl KeyChord {
-    /// Parses a chord like `"a"`, `"G"`, `"ctrl+u"`, `"alt+up"`, `"pgup"` or
-    /// `"enter"`. Returns `None` for an unrecognised string.
-    pub fn parse(text: &str) -> Option<KeyChord> {
-        let parts: Vec<&str> = text
-            .split('+')
-            .map(str::trim)
-            .filter(|p| !p.is_empty())
-            .collect();
-        // The final token is the key; anything before it is a modifier.
-        let (code_token, modifiers) = parts.split_last()?;
-        let mut ctrl = false;
-        let mut alt = false;
-        for modifier in modifiers {
-            match modifier.to_ascii_lowercase().as_str() {
-                "ctrl" | "control" => ctrl = true,
-                "alt" | "option" => alt = true,
-                "shift" => {}
-                _ => return None,
-            }
-        }
-        let code = code_from_token(code_token)?;
-        Some(KeyChord { code, ctrl, alt })
+/// Hands the catalog to the toolkit, which owns the chords.
+///
+/// Each method delegates to its inherent counterpart above, so the catalog
+/// stays the single source and existing call sites need no
+/// `use ratada::keymap::Action`.
+impl ratada::keymap::Action for Action {
+    fn all() -> impl Iterator<Item = Self> + Clone {
+        Action::all()
     }
 
-    /// Whether `key` triggers this chord (code plus ctrl/alt; shift ignored).
-    pub fn matches(&self, key: &KeyEvent) -> bool {
-        self.code == key.code
-            && self.ctrl == key.modifiers.contains(KeyModifiers::CONTROL)
-            && self.alt == key.modifiers.contains(KeyModifiers::ALT)
+    fn config_name(&self) -> &'static str {
+        (*self).config_name()
     }
 
-    /// A display string for hints, e.g. `ctrl+u`, `alt+up`, `pgup`, `G`.
-    pub fn display(&self) -> String {
-        let mut text = String::new();
-        if self.ctrl {
-            text.push_str("ctrl+");
-        }
-        if self.alt {
-            text.push_str("alt+");
-        }
-        text.push_str(&token_for_code(self.code));
-        text
-    }
-}
-
-/// Parses a single key token (no modifiers) into a [`KeyCode`].
-fn code_from_token(token: &str) -> Option<KeyCode> {
-    let lower = token.to_ascii_lowercase();
-    let code = match lower.as_str() {
-        "enter" | "return" => KeyCode::Enter,
-        "esc" | "escape" => KeyCode::Esc,
-        "tab" => KeyCode::Tab,
-        "space" => KeyCode::Char(' '),
-        "backspace" => KeyCode::Backspace,
-        "up" => KeyCode::Up,
-        "down" => KeyCode::Down,
-        "left" => KeyCode::Left,
-        "right" => KeyCode::Right,
-        "pgup" | "pageup" => KeyCode::PageUp,
-        "pgdn" | "pgdown" | "pagedown" => KeyCode::PageDown,
-        "home" => KeyCode::Home,
-        "end" => KeyCode::End,
-        "del" | "delete" => KeyCode::Delete,
-        _ => return function_or_char(token, &lower),
-    };
-    Some(code)
-}
-
-/// Resolves an `fn` function key or a single character (preserving case).
-fn function_or_char(token: &str, lower: &str) -> Option<KeyCode> {
-    if let Some(digits) = lower.strip_prefix('f')
-        && let Ok(number) = digits.parse::<u8>()
-        && (1..=12).contains(&number)
-    {
-        return Some(KeyCode::F(number));
-    }
-    let mut chars = token.chars();
-    let first = chars.next()?;
-    if chars.next().is_some() {
-        return None;
-    }
-    Some(KeyCode::Char(first))
-}
-
-/// The display token for a key code (inverse of [`code_from_token`]).
-fn token_for_code(code: KeyCode) -> String {
-    match code {
-        KeyCode::Char(' ') => "space".to_string(),
-        KeyCode::Char(ch) => ch.to_string(),
-        KeyCode::Enter => "enter".to_string(),
-        KeyCode::Esc => "esc".to_string(),
-        KeyCode::Tab => "tab".to_string(),
-        KeyCode::Backspace => "backspace".to_string(),
-        KeyCode::Up => "up".to_string(),
-        KeyCode::Down => "down".to_string(),
-        KeyCode::Left => "left".to_string(),
-        KeyCode::Right => "right".to_string(),
-        KeyCode::PageUp => "pgup".to_string(),
-        KeyCode::PageDown => "pgdn".to_string(),
-        KeyCode::Home => "home".to_string(),
-        KeyCode::End => "end".to_string(),
-        KeyCode::Delete => "del".to_string(),
-        KeyCode::F(number) => format!("f{number}"),
-        _ => "?".to_string(),
-    }
-}
-
-/// A configured key that was dropped because an earlier action already claimed
-/// it. Surfaced so a silently shadowed binding is visible.
-#[derive(Debug, Clone)]
-pub struct Conflict {
-    /// The contested key, as a display string (e.g. `"d"`).
-    pub key: String,
-    /// The action whose binding was dropped.
-    pub action: Action,
-    /// The action that already owns the key.
-    pub claimed_by: Action,
-}
-
-/// The resolved key map: chords paired with the action they trigger.
-#[derive(Debug, Clone)]
-pub struct Keymap {
-    entries: Vec<(KeyChord, Action)>,
-    conflicts: Vec<Conflict>,
-}
-
-impl Default for Keymap {
-    /// The compiled-in default key map.
-    fn default() -> Self {
-        Self::from_overrides(&BTreeMap::new())
-    }
-}
-
-impl Keymap {
-    /// Builds the map from defaults, replacing an action's keys if `overrides`
-    /// names it. Unknown action names and unparseable keys are logged and
-    /// skipped; a key already bound to an earlier action keeps that binding.
-    pub fn from_overrides(overrides: &BTreeMap<String, Vec<String>>) -> Self {
-        for name in overrides.keys() {
-            if Action::from_config_name(name).is_none() {
-                log::warn!("unknown key action '{name}' in config, ignoring");
-            }
-        }
-        let mut entries: Vec<(KeyChord, Action)> = Vec::new();
-        let mut conflicts: Vec<Conflict> = Vec::new();
-        for action in Action::all() {
-            for key in override_keys(overrides, action) {
-                bind_key(&mut entries, &mut conflicts, action, &key);
-            }
-        }
-        Self { entries, conflicts }
+    fn description(&self) -> &'static str {
+        (*self).description()
     }
 
-    /// The bindings that were dropped because an earlier action owned the key.
-    pub fn conflicts(&self) -> &[Conflict] {
-        &self.conflicts
+    fn default_keys(&self) -> &'static [&'static str] {
+        (*self).default_keys()
     }
-
-    /// The action bound to `key`, if any.
-    pub fn action_for(&self, key: &KeyEvent) -> Option<Action> {
-        self.entries
-            .iter()
-            .find(|(chord, _)| chord.matches(key))
-            .map(|(_, action)| *action)
-    }
-
-    /// The display strings of the keys bound to `action`.
-    pub fn keys_for(&self, action: Action) -> Vec<String> {
-        self.entries
-            .iter()
-            .filter(|(_, bound)| *bound == action)
-            .map(|(chord, _)| chord.display())
-            .collect()
-    }
-
-    /// Builds `(keys, description)` hint pairs for `actions`, skipping any with
-    /// no bound key. The single source for footer and help content.
-    pub fn hints(&self, actions: &[Action]) -> Vec<(String, String)> {
-        actions
-            .iter()
-            .filter_map(|&action| {
-                let keys = self.keys_for(action).join("/");
-                if keys.is_empty() {
-                    None
-                } else {
-                    Some((keys, action.description().to_string()))
-                }
-            })
-            .collect()
-    }
-}
-
-/// Binds `key` to `action` in `entries`, or records the reason it was dropped:
-/// an unparseable key is logged, and a key already claimed by an earlier action
-/// is logged and pushed to `conflicts` (the earlier binding wins).
-fn bind_key(
-    entries: &mut Vec<(KeyChord, Action)>,
-    conflicts: &mut Vec<Conflict>,
-    action: Action,
-    key: &str,
-) {
-    let Some(chord) = KeyChord::parse(key) else {
-        log::warn!("invalid key '{key}' for '{}'", action.config_name());
-        return;
-    };
-    if let Some((_, owner)) =
-        entries.iter().find(|(existing, _)| *existing == chord)
-    {
-        log::warn!(
-            "key '{key}' already bound to '{}', ignoring for '{}'",
-            owner.config_name(),
-            action.config_name()
-        );
-        conflicts.push(Conflict {
-            key: chord.display(),
-            action,
-            claimed_by: *owner,
-        });
-        return;
-    }
-    entries.push((chord, action));
-}
-
-/// The key strings to use for `action`: the override if present, else defaults.
-fn override_keys(
-    overrides: &BTreeMap<String, Vec<String>>,
-    action: Action,
-) -> Vec<String> {
-    overrides
-        .get(action.config_name())
-        .cloned()
-        .unwrap_or_else(|| {
-            action
-                .default_keys()
-                .iter()
-                .map(|s| (*s).to_string())
-                .collect()
-        })
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
     use super::*;
 
     fn key(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
@@ -850,15 +645,8 @@ mod tests {
             for text in action.default_keys() {
                 let chord =
                     KeyChord::parse(text).expect("default key must parse");
-                let mut modifiers = KeyModifiers::NONE;
-                if chord.ctrl {
-                    modifiers |= KeyModifiers::CONTROL;
-                }
-                if chord.alt {
-                    modifiers |= KeyModifiers::ALT;
-                }
                 assert_eq!(
-                    map.action_for(&key(chord.code, modifiers)),
+                    map.action_for(&chord.to_key()),
                     Some(action),
                     "'{text}' does not resolve back to '{}'",
                     action.config_name()
@@ -892,6 +680,8 @@ mod tests {
                 | Action::TabGit
                 | Action::TabFiles
                 | Action::ToggleSelect
+                | Action::ExtendUp
+                | Action::ExtendDown
                 | Action::Jump
                 | Action::Open
                 | Action::GitTool
