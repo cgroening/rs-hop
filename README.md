@@ -156,21 +156,44 @@ HOP_CONFIG=examples/config.toml cargo run
 ## Commands
 
 ```
-hop                 open the TUI
+hop                 open the TUI (the default when no command is given)
 hop <slug>          jump to a slug: write the path (cd only; no tool/editor)
 hop <slug> -s       deprecated no-op (jumping only cd's anyway)
 hop add [PATH]      add an entry (default: the current dir; --slug/--section/--name/--kind)
-hop scan [DIR]      find git repos under DIR and import the chosen ones (--depth N / --nested / --dry-run)
-hop doctor          report problems (missing paths, bad/duplicate slugs); non-zero exit on issues
-hop list            list entries as plain text
-hop config-path     print the resolved config file path
+hop scan [DIR]      find git repos under DIR and import the chosen ones
+                    (--depth N / --nested / --dry-run / --yes)
+hop doctor          report problems (missing paths, bad/duplicate slugs)
+hop list            list entries (a table on a terminal, plain lines when piped)
+hop list --json     list entries as JSON, for scripts
+hop show-config     print the resolved config file path (was: config-path)
+hop completions SH  print a shell completion script (bash/zsh/fish/…)
+hop man             print the manpage in roff format
 -C / --config PATH  use a specific config file (also via HOP_CONFIG)
 --fetch             git fetch first (TUI: on start; hop <slug>: before the jump)
+--no-fetch          skip the fetch even when fetch_on_start is enabled
 --cached            TUI: show only cached status, run no git
---demo              open the TUI with built-in demo data (for screenshots; no real git/config)
+--demo              open the TUI with built-in demo data (for screenshots)
+-v / --verbose      more detail in the log file; repeat for more
+-q / --quiet        log errors only
+--no-color          disable colored output (as does setting NO_COLOR)
+-h / --help         show the help (on every command) and exit
+-V / --version      show the version and exit
 ```
 
-`hop scan` needs a terminal to show its picker; when its output is piped, use `--dry-run` to only list what it found.
+`hop scan` needs a terminal to show its picker. Without one it exits 2 and names the way out: pass `--yes` to import everything it found, or `--dry-run` to only list it.
+
+### Streams and exit codes
+
+stdout carries only the payload a caller would pipe onwards; every hint, confirmation, warning and error goes to stderr. So `hop list > entries.txt` writes entries and nothing else, and `hop list --json | jq .` never chokes on a message.
+
+| Code | Meaning |
+|---|---|
+| 0 | success |
+| 1 | runtime error (including `hop doctor` finding problems) |
+| 2 | usage error: unknown option or command, missing value, or a prompt with no terminal to show it on |
+| 130 | interrupted with `Ctrl+C` |
+
+Errors are reported on stderr as `hop: error: <what happened>`, one greppable line.
 
 ### Environment overrides
 
@@ -192,8 +215,10 @@ HOP_CONFIRM_QUIT    true | false: ask before quitting with `q`
 | `1` / `2` | Git Repos / Files and Folders (press again for that kind's archive) |
 | `Tab` / `Shift+Tab` | cycle the two active tabs |
 | `↑` / `↓` | move cursor (wraps) |
-| `g` / `G` · `PgUp`/`PgDn` · `Ctrl+u`/`Ctrl+d` | top / bottom · page · half page |
-| `Space` | toggle selection · `Shift+↑/↓`: extend range · `Esc`: clear |
+| `Home` / `End` · `g` / `G` | top / bottom (both spellings work) |
+| `PgUp`/`PgDn` · `Ctrl+u`/`Ctrl+d` | page · half page |
+| `Space` | toggle selection · `Esc`: clear |
+| `Shift+↑/↓` · `Shift+PgUp/PgDn` | extend the selection by a row · by a page |
 | `Enter` | jump only: write path and exit (folder → cd, file → its parent) |
 | `L` | open: git → tool · folder → cd · text file → editor · other file → default app |
 | `l` | git repo: open the git tool (lazygit) as an overlay, then return to the list |
@@ -202,7 +227,7 @@ HOP_CONFIRM_QUIT    true | false: ask before quitting with `q`
 | `b` | open the selected repo on GitHub in the browser |
 | `v` | show or hide the detail panel |
 | `V` | move the detail panel: right ↔ bottom |
-| `Ctrl+↑/↓` | scroll the detail panel |
+| `Ctrl+↑/↓` · `Ctrl+PgUp/PgDn` | scroll the detail panel by a row · by a page |
 | `Ctrl+←/→` | make the detail panel smaller / bigger |
 | `c` | cycle the table's columns (Standard → Code → Activity) |
 | `t` | pick the column to sort by (picking the active one flips the direction) |

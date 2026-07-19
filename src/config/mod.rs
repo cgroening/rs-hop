@@ -8,7 +8,6 @@
 
 pub mod appearance;
 pub mod loader;
-pub mod writer;
 
 use std::collections::BTreeMap;
 

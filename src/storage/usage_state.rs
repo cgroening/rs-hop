@@ -66,6 +66,7 @@ pub fn load(path: &Path) -> HashMap<PathBuf, Usage> {
 /// count in the usage file at `path`.
 ///
 /// # Errors
+///
 /// Returns an error if the usage file cannot be written.
 pub fn record(path: &Path, repo_path: &Path) -> Result<()> {
     let mut usage = load(path);
@@ -95,6 +96,7 @@ fn save(path: &Path, usage: &HashMap<PathBuf, Usage>) -> Result<()> {
 /// Writes `repo_path` as the single-line selected-repo handoff at `dest`.
 ///
 /// # Errors
+///
 /// Returns an error if the file cannot be written.
 pub fn write_selected_repo(dest: &Path, repo_path: &Path) -> Result<()> {
     let line = format!("{}\n", repo_path.to_string_lossy());

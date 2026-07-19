@@ -40,6 +40,7 @@ pub fn load_cache(path: &Path) -> StatsCache {
 /// Writes the gathered statistics to the cache at `path`.
 ///
 /// # Errors
+///
 /// Returns an error if the cache file cannot be written.
 pub fn save_cache(path: &Path, cache: &StatsCache) -> Result<()> {
     stats_cache::save(path, cache)

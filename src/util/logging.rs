@@ -51,6 +51,7 @@ impl Log for FileLogger {
 /// but the app should treat logging as non-fatal.
 ///
 /// # Errors
+///
 /// Returns an error if the log file cannot be opened or the logger cannot be
 /// installed.
 pub fn init(level: LevelFilter, file: Option<&Path>) -> Result<(), String> {

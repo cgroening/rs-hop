@@ -3,7 +3,6 @@
 //! as a locked trailing row that cannot be edited or moved.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratada::nav::cycle;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -12,6 +11,7 @@ use ratatui::widgets::{Clear, List, ListItem, ListState};
 
 use crate::domain::sections::UNGROUPED;
 use crate::theme::Skin;
+use crate::tui::list_layout::moved_cursor;
 use crate::tui::skin::Colors;
 use crate::tui::widgets::centered_rect;
 
@@ -61,8 +61,7 @@ impl SectionsModal {
             KeyCode::Esc => SectionsAction::Close,
             KeyCode::Up if alt => self.move_by(-1),
             KeyCode::Down if alt => self.move_by(1),
-            KeyCode::Up => self.step(-1),
-            KeyCode::Down => self.step(1),
+            _ if !alt && self.navigate(key) => SectionsAction::Pending,
             KeyCode::Char('n') => SectionsAction::New,
             KeyCode::Char('r') => self.rename_action(),
             KeyCode::Char('d') => self.delete_action(),
@@ -70,12 +69,16 @@ impl SectionsModal {
         }
     }
 
-    /// Moves the cursor by `delta` (cyclic) over the real sections.
-    fn step(&mut self, delta: isize) -> SectionsAction {
-        if !self.names.is_empty() {
-            self.cursor = cycle(self.cursor, self.names.len(), delta);
+    /// Applies a navigation key through the shared helper, reporting whether it
+    /// was one.
+    fn navigate(&mut self, key: KeyEvent) -> bool {
+        match moved_cursor(key, self.cursor, self.names.len()) {
+            Some(cursor) => {
+                self.cursor = cursor;
+                true
+            }
+            None => false,
         }
-        SectionsAction::Pending
     }
 
     /// Requests a reorder of the cursor section by `delta`, staying in range.
@@ -131,11 +134,144 @@ impl SectionsModal {
             Style::default().fg(colors.dim),
         ))));
 
+        // The box is capped, so a long section list overflows. Keep the cursor
+        // inside the visible window and show the shared scrollbar, rather than
+        // silently cutting the rest off.
+        let total = items.len();
+        let viewport = inner.height as usize;
+        let offset = ratada::nav::keep_visible(
+            ratada::nav::ScrollView {
+                total,
+                offset: 0,
+                viewport,
+            },
+            self.cursor,
+        );
         let list = List::new(items).highlight_style(colors.selection_style());
-        let mut state = ListState::default();
+        let mut state = ListState::default().with_offset(offset);
         if !self.names.is_empty() {
             state.select(Some(self.cursor));
         }
         frame.render_stateful_widget(list, inner, &mut state);
+        ratada::scroll::render_scrollbar(
+            frame,
+            inner,
+            skin,
+            ratada::nav::ScrollView {
+                total,
+                offset,
+                viewport,
+            },
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn modal() -> SectionsModal {
+        SectionsModal::new(
+            ["Work", "Personal", "Archive"]
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
+            0,
+        )
+    }
+
+    fn press(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn press_alt(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::ALT)
+    }
+
+    #[test]
+    fn the_cursor_is_clamped_into_range_on_construction() {
+        let modal = SectionsModal::new(vec!["One".to_string()], 99);
+        assert_eq!(modal.cursor(), 0);
+        // An empty list has nowhere to point.
+        assert_eq!(SectionsModal::new(Vec::new(), 3).cursor(), 0);
+    }
+
+    #[test]
+    fn the_arrows_wrap_and_the_page_keys_clamp() {
+        let mut modal = modal();
+        modal.handle_key(press(KeyCode::Up));
+        assert_eq!(
+            modal.cursor(),
+            2,
+            "up from the first row wraps to the last"
+        );
+        modal.handle_key(press(KeyCode::Down));
+        assert_eq!(modal.cursor(), 0);
+
+        modal.handle_key(press(KeyCode::End));
+        assert_eq!(modal.cursor(), 2);
+        modal.handle_key(press(KeyCode::PageDown));
+        assert_eq!(modal.cursor(), 2, "a page jump clamps at the end");
+        modal.handle_key(press(KeyCode::PageUp));
+        assert_eq!(modal.cursor(), 0, "and at the start");
+    }
+
+    #[test]
+    fn alt_arrows_reorder_instead_of_moving_the_cursor() {
+        let mut modal = modal();
+        modal.handle_key(press(KeyCode::Down));
+        assert_eq!(modal.cursor(), 1);
+
+        let action = modal.handle_key(press_alt(KeyCode::Up));
+        assert!(matches!(action, SectionsAction::Move { from: 1, to: 0 }));
+        assert_eq!(modal.cursor(), 1, "the cursor follows the applied move");
+    }
+
+    #[test]
+    fn a_reorder_past_either_end_is_refused() {
+        let mut modal = modal();
+        assert!(matches!(
+            modal.handle_key(press_alt(KeyCode::Up)),
+            SectionsAction::Pending
+        ));
+        modal.handle_key(press(KeyCode::End));
+        assert!(matches!(
+            modal.handle_key(press_alt(KeyCode::Down)),
+            SectionsAction::Pending
+        ));
+    }
+
+    #[test]
+    fn the_letter_keys_request_their_actions_for_the_cursor_section() {
+        let mut modal = modal();
+        assert!(matches!(
+            modal.handle_key(press(KeyCode::Char('n'))),
+            SectionsAction::New
+        ));
+        assert!(matches!(
+            modal.handle_key(press(KeyCode::Char('r'))),
+            SectionsAction::Rename(name) if name == "Work"
+        ));
+        assert!(matches!(
+            modal.handle_key(press(KeyCode::Char('d'))),
+            SectionsAction::Delete(name) if name == "Work"
+        ));
+        assert!(matches!(
+            modal.handle_key(press(KeyCode::Esc)),
+            SectionsAction::Close
+        ));
+    }
+
+    #[test]
+    fn an_empty_list_has_nothing_to_rename_or_delete() {
+        let mut modal = SectionsModal::new(Vec::new(), 0);
+        assert!(matches!(
+            modal.handle_key(press(KeyCode::Char('r'))),
+            SectionsAction::Pending
+        ));
+        assert!(matches!(
+            modal.handle_key(press(KeyCode::Char('d'))),
+            SectionsAction::Pending
+        ));
     }
 }

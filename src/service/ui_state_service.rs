@@ -21,6 +21,7 @@ pub fn load(path: &Path) -> UiState {
 /// Writes the view state to `path`.
 ///
 /// # Errors
+///
 /// Returns an error if the state file cannot be written.
 pub fn save(path: &Path, state: &UiState) -> Result<()> {
     ui_state::save(path, state)

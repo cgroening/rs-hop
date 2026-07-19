@@ -22,6 +22,7 @@ use crate::domain::stats::{
 };
 use crate::theme::Skin;
 use crate::tui::detail::{bar, field, log_line, section_header};
+use crate::tui::git_columns::effective_info;
 use crate::tui::presentation::{IconSet, status_text};
 use crate::tui::scroll::Scroll;
 use crate::tui::skin::Colors;
@@ -343,11 +344,7 @@ fn push_git(
     lines.push(Line::raw(""));
     lines.push(section_header("Git", width, colors));
 
-    let info = if ctx.example_mode {
-        repo.example_git_info.as_ref()
-    } else {
-        repo.git_info.as_ref()
-    };
+    let info = effective_info(repo, ctx.example_mode);
     match info {
         Some(info) => {
             if let Some(branch) = &info.current_branch_name {

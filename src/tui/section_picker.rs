@@ -10,7 +10,6 @@ use std::cell::Cell;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratada::input::InputField;
-use ratada::nav::cycle;
 use ratada::text::truncate;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -20,6 +19,7 @@ use ratatui::widgets::{Clear, Paragraph};
 
 use crate::domain::sections::UNGROUPED;
 use crate::theme::Skin;
+use crate::tui::list_layout::moved_cursor;
 use crate::tui::presentation::{FieldView, field_spans};
 use crate::tui::skin::Colors;
 use crate::tui::widgets::centered_rect;
@@ -89,8 +89,7 @@ impl SectionPicker {
     pub fn handle_key(&mut self, key: KeyEvent) -> SectionPickResult {
         match key.code {
             KeyCode::Esc => return SectionPickResult::Cancel,
-            KeyCode::Up => self.move_cursor(-1),
-            KeyCode::Down => self.move_cursor(1),
+            _ if self.navigate(key) => {}
             KeyCode::Enter => return self.choose(),
             _ => {
                 if self.filter.handle_key(key) {
@@ -140,9 +139,16 @@ impl SectionPicker {
         self.visible.len() + usize::from(self.create_label().is_some())
     }
 
-    /// Moves the cursor cyclically within the selectable rows.
-    fn move_cursor(&mut self, delta: isize) {
-        self.cursor = cycle(self.cursor, self.row_count(), delta);
+    /// Applies a navigation key through the shared helper, reporting whether it
+    /// was one. Anything else falls through to the filter field.
+    fn navigate(&mut self, key: KeyEvent) -> bool {
+        match moved_cursor(key, self.cursor, self.row_count()) {
+            Some(cursor) => {
+                self.cursor = cursor;
+                true
+            }
+            None => false,
+        }
     }
 
     /// Recomputes the visible indices from the filter text and clamps the cursor.

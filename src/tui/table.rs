@@ -18,19 +18,22 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::config::{ColumnWidth, Config};
 use crate::domain::filter::{Tab, TabKind};
-use crate::domain::repo::{GitInfo, Repo, is_dir_target};
+use crate::domain::repo::{GitInfo, Repo};
 use crate::domain::sections::UNGROUPED;
 use crate::domain::stats::{CodeEntry, GitStats};
 use crate::theme::Skin;
-use crate::tui::columns::{
-    CellSource, ColumnSet, StatColumn, cell_text, stat_columns,
-};
+use crate::tui::columns::{ColumnSet, StatColumn, stat_columns};
 use crate::tui::git_columns::{
-    branch_text, effective_info, git_marker_errored, github_text,
-    status_display, zip_date_text,
+    branch_text, effective_info, github_text, status_display, zip_date_text,
+};
+use crate::tui::list_layout::{
+    ListScroll, SLUG_HEADER, settled_offset, slug_column_width,
 };
 use crate::tui::presentation::{
     IconSet, highlight_name, slug_style, status_span,
+};
+use crate::tui::row_cells::{
+    GlyphContext, StatContext, fav_span, marker_span, type_label,
 };
 use crate::tui::skin::Colors;
 
@@ -84,48 +87,31 @@ pub struct TableView<'a> {
 }
 
 impl TableView<'_> {
-    /// What the statistics cells of `repo` read from.
-    fn cell_source<'b>(&'b self, repo: &Repo) -> CellSource<'b> {
-        CellSource {
-            code: self.code.get(&repo.path),
-            git: self.git.get(&repo.path),
-            open_count: repo.open_count,
-            last_used: repo.last_used,
-            pending: self.computing.contains(&repo.path),
+    /// What the shared statistics cells read from.
+    fn stats(&self) -> StatContext<'_> {
+        StatContext {
+            code: self.code,
+            git: self.git,
+            computing: self.computing,
+            spinner: self.spinner,
             now: self.now,
         }
     }
 
-    /// The rendered text of one statistics cell: the value, a spinner while its
-    /// worker runs, or a dash when nothing will ever fill it.
-    fn stat_text(&self, repo: &Repo, column: StatColumn) -> String {
-        match cell_text(column, self.cell_source(repo)) {
-            Some(text) => text,
-            None => self.spinner_frame().to_string(),
+    /// What the shared leading glyphs read from.
+    fn glyphs(&self) -> GlyphContext<'_> {
+        GlyphContext {
+            example_mode: self.example_mode,
+            missing: self.missing,
+            icons: self.icons,
+            colors: self.colors,
         }
     }
 
-    /// The current spinner glyph, or a dash outside a run.
-    fn spinner_frame(&self) -> &str {
-        self.spinner.map_or("-", |(_, glyph)| glyph)
+    /// The rendered text of one statistics cell.
+    fn stat_text(&self, repo: &Repo, column: StatColumn) -> String {
+        self.stats().text(repo, column)
     }
-}
-
-/// Predicts the scroll offset: keep the saved one unless the cursor fell off an
-/// edge of the viewport, then clamp it back just far enough to reveal it.
-fn settled_offset(
-    saved: usize,
-    cursor: usize,
-    row_count: usize,
-    viewport: usize,
-) -> usize {
-    let mut offset = saved.min(row_count.saturating_sub(1));
-    if cursor < offset {
-        offset = cursor;
-    } else if viewport > 0 && cursor >= offset + viewport {
-        offset = cursor + 1 - viewport;
-    }
-    offset
 }
 
 /// The name-cell spans: the name, fuzzy-highlighted when a query is active. The
@@ -180,8 +166,13 @@ pub fn render_table(
         .row_highlight_style(view.colors.selection_style());
     // Carry the offset across frames so the cursor moves within the viewport
     // without scrolling until it reaches an edge.
-    let offset =
-        settled_offset(view.offset.get(), cursor, repos.len(), viewport);
+    let offset = settled_offset(&ListScroll {
+        saved: view.offset.get(),
+        cursor,
+        row_count: repos.len(),
+        viewport,
+        first_entry_row: None,
+    });
     view.offset.set(offset);
     let mut state = TableState::default()
         .with_offset(offset)
@@ -375,17 +366,10 @@ fn section_label(repo: &Repo) -> String {
         .unwrap_or_else(|| UNGROUPED.to_string())
 }
 
-/// The header label and floor width of the Slug column.
-const SLUG_HEADER: &str = "Slug";
-/// The upper bound of the Slug column, so a long slug cannot dominate.
-const SLUG_MAX: usize = 20;
-
-/// The Slug column width, sized to the widest slug (floored at the header,
-/// capped at [`SLUG_MAX`]). Only meaningful while `show_slugs` is on.
+/// The Slug column width, sized to the widest slug. Only meaningful while
+/// `show_slugs` is on.
 fn slug_width(repos: &[&Repo]) -> u16 {
-    content_width(repos, slug_text)
-        .max(SLUG_HEADER.len())
-        .min(SLUG_MAX) as u16
+    slug_column_width(content_width(repos, slug_text)) as u16
 }
 
 /// Whether the layout adds a Slug column cell (0 or 1), for lead-cell counts.
@@ -515,35 +499,14 @@ fn selection_cell<'a>(selected: bool, colors: &Colors) -> Cell<'a> {
     ))
 }
 
-/// The marker cell: a red warning glyph when the entry has a path error, else
-/// blank. A git entry is flagged from its gathered git info (missing or invalid
-/// repository); a file/folder entry only once the on-demand existence check
-/// flagged its path.
+/// The marker cell, wrapping the shared error-marker span.
 fn marker_cell<'a>(repo: &Repo, view: &TableView) -> Cell<'a> {
-    let errored = git_marker_errored(repo, view.example_mode)
-        || view.missing.contains(&repo.path);
-    if errored {
-        Cell::from(Span::styled(
-            view.icons.missing.to_string(),
-            Style::default()
-                .fg(view.colors.danger)
-                .add_modifier(Modifier::BOLD),
-        ))
-    } else {
-        Cell::from(" ")
-    }
+    Cell::from(marker_span(repo, &view.glyphs()))
 }
 
-/// The favourite cell: a star when favourited, else blank.
+/// The favourite cell, wrapping the shared favourite-star span.
 fn fav_cell<'a>(repo: &Repo, view: &TableView) -> Cell<'a> {
-    if repo.fav {
-        Cell::from(Span::styled(
-            view.icons.favourite.to_string(),
-            Style::default().fg(view.colors.favourite),
-        ))
-    } else {
-        Cell::from(" ")
-    }
+    Cell::from(fav_span(repo, &view.glyphs()))
 }
 
 /// The status cell: a pending marker while this row still awaits a running
@@ -567,38 +530,9 @@ fn status_cell<'a>(
     Cell::from(status_span(info, view.icons, view.colors))
 }
 
-/// The detected type label for the Files and Folders tab.
-fn type_label(repo: &Repo) -> &'static str {
-    if is_dir_target(&repo.path) {
-        "folder"
-    } else {
-        "file"
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{github_width, settled_offset};
-
-    #[test]
-    fn settled_offset_stays_put_when_cursor_moves_up_but_is_visible() {
-        // Viewport of 5 showing rows 4..9; the cursor moves up from 8 to 5. It
-        // stays visible, so the offset must not move (the eager-scroll bug).
-        assert_eq!(settled_offset(4, 5, 20, 5), 4);
-        assert_eq!(settled_offset(4, 4, 20, 5), 4);
-    }
-
-    #[test]
-    fn settled_offset_scrolls_up_only_at_the_top_edge() {
-        // Only once the cursor crosses above the top visible row does it scroll.
-        assert_eq!(settled_offset(4, 3, 20, 5), 3);
-    }
-
-    #[test]
-    fn settled_offset_pages_down_at_the_bottom_edge() {
-        // Cursor past the bottom row scrolls down just enough to reveal it.
-        assert_eq!(settled_offset(4, 9, 20, 5), 5);
-    }
+    use super::github_width;
 
     #[test]
     fn github_keeps_content_width_when_there_is_room() {

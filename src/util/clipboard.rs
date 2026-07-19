@@ -10,6 +10,7 @@ use crate::domain::error::{Error, Result};
 /// Copies `text` to the system clipboard.
 ///
 /// # Errors
+///
 /// Returns an error when no clipboard tool is available or none accepted the
 /// text.
 pub fn copy(text: &str) -> Result<()> {

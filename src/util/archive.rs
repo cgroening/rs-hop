@@ -86,6 +86,7 @@ pub fn is_excluded(name: &str, exclude_dirs: &[String]) -> bool {
 /// build fails partway.
 ///
 /// # Errors
+///
 /// Returns an I/O error if the destination cannot be written or a source file
 /// cannot be read.
 pub fn write_zip(
@@ -204,6 +205,7 @@ fn archive_name(path: &Path, base: &Path) -> String {
 /// without building it.
 ///
 /// # Errors
+///
 /// Returns an I/O error if a source file cannot be read.
 pub fn source_manifest(
     root: &Path,
@@ -277,6 +279,7 @@ pub fn manifest_hash(manifest: &Manifest) -> u64 {
 /// directory (no decompression). Directory entries are skipped.
 ///
 /// # Errors
+///
 /// Returns an I/O error if the file cannot be read or is not a valid ZIP.
 pub fn zip_manifest(path: &Path) -> io::Result<Manifest> {
     let file = File::open(path)?;

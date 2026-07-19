@@ -78,6 +78,7 @@ pub fn load(path: &Path) -> GitInfoCache {
 /// fetched, preserved across non-fetching refreshes by the caller).
 ///
 /// # Errors
+///
 /// Returns an error if the directory or file cannot be written.
 pub fn save(
     path: &Path,

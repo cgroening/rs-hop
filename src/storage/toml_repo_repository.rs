@@ -1,15 +1,15 @@
 //! TOML-backed [`RepoRepository`]: reads the `[[repos]]` array and writes it
-//! back through the comment-preserving [`crate::config::writer`].
+//! back through the comment-preserving [`crate::storage::toml_writer`].
 
 use std::fs;
 use std::path::PathBuf;
 
 use serde::Deserialize;
 
-use crate::config::writer;
 use crate::domain::error::{Error, Result};
 use crate::domain::repo::{GitInfo, Repo, RepoKind};
 use crate::storage::repository::RepoRepository;
+use crate::storage::toml_writer;
 use crate::util::paths::expand_tilde;
 
 /// Reads/writes entries in the `config.toml` at `path`.
@@ -115,7 +115,7 @@ impl RepoRepository for TomlRepoRepository {
     }
 
     fn save_all(&self, repos: &[Repo]) -> Result<()> {
-        writer::save_repos(&self.path, repos)
+        toml_writer::save_repos(&self.path, repos)
     }
 
     fn find_sections(&self, kind: RepoKind) -> Result<Vec<String>> {
@@ -127,7 +127,7 @@ impl RepoRepository for TomlRepoRepository {
     }
 
     fn save_sections(&self, kind: RepoKind, sections: &[String]) -> Result<()> {
-        writer::save_sections(&self.path, sections_key(kind), sections)
+        toml_writer::save_sections(&self.path, sections_key(kind), sections)
     }
 }
 

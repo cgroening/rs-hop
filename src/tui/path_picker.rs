@@ -14,7 +14,6 @@ use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratada::input::InputField;
-use ratada::nav::cycle;
 use ratada::text::truncate;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -23,6 +22,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
 use crate::theme::Skin;
+use crate::tui::list_layout::moved_cursor;
 use crate::tui::presentation::{FieldView, field_spans};
 use crate::tui::skin::Colors;
 use crate::tui::widgets::centered_rect;
@@ -84,8 +84,7 @@ impl PathPicker {
     pub fn handle_key(&mut self, key: KeyEvent) -> PickerResult {
         match key.code {
             KeyCode::Esc => return PickerResult::Cancel,
-            KeyCode::Up => self.move_cursor(-1),
-            KeyCode::Down => self.move_cursor(1),
+            _ if self.navigate(key) => {}
             KeyCode::Right => self.descend(),
             KeyCode::Left => self.ascend(),
             KeyCode::Backspace if self.filter.value().is_empty() => {
@@ -210,9 +209,16 @@ impl PathPicker {
         );
     }
 
-    /// Moves the cursor cyclically within the visible entries.
-    fn move_cursor(&mut self, delta: isize) {
-        self.cursor = cycle(self.cursor, self.visible.len(), delta);
+    /// Applies a navigation key through the shared helper, reporting whether it
+    /// was one. Anything else falls through to the filter field.
+    fn navigate(&mut self, key: KeyEvent) -> bool {
+        match moved_cursor(key, self.cursor, self.visible.len()) {
+            Some(cursor) => {
+                self.cursor = cursor;
+                true
+            }
+            None => false,
+        }
     }
 
     /// Descends into the highlighted directory.

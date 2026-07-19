@@ -48,6 +48,7 @@ pub fn load_cache(path: &Path) -> GitInfoCache {
 /// was last fetched.
 ///
 /// # Errors
+///
 /// Returns an error if the cache file cannot be written.
 pub fn save_cache(
     path: &Path,

@@ -12,6 +12,7 @@ pub mod repository;
 pub mod stats_cache;
 pub mod subprocess_git_client;
 pub mod toml_repo_repository;
+pub mod toml_writer;
 pub mod ui_state;
 pub mod usage_state;
 pub mod zip_cache;

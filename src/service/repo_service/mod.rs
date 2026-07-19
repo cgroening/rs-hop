@@ -5,16 +5,19 @@
 //! hydrated onto it) and persists stored fields through the injected
 //! [`RepoRepository`]. Every config-mutating method records the pre-change list
 //! as a single undo frame and rolls back if the write fails.
+//!
+//! The per-kind section names are managed in [`section_names`], a sibling
+//! module with its own `impl RepoService` block.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::domain::error::{Error, Result};
 use crate::domain::repo::{GitInfo, Repo, RepoKind};
-use crate::domain::sections;
 use crate::domain::slug;
 use crate::storage::repository::RepoRepository;
 use crate::storage::usage_state;
+mod section_names;
 
 /// A captured entry list plus a human label, for one level of undo.
 struct UndoSnapshot {
@@ -37,6 +40,7 @@ impl RepoService {
     /// Loads entries through `repository` and hydrates usage from `usage_path`.
     ///
     /// # Errors
+    ///
     /// Returns an error if the entries cannot be read.
     pub fn new(
         repository: Box<dyn RepoRepository>,
@@ -76,6 +80,7 @@ impl RepoService {
     /// Adds `repo`, validating its slug when present.
     ///
     /// # Errors
+    ///
     /// Returns [`Error::Slug`] for an invalid or duplicate slug, or a write
     /// error if persistence fails.
     pub fn add(&mut self, repo: Repo) -> Result<()> {
@@ -92,6 +97,7 @@ impl RepoService {
     /// A no-op for an empty list.
     ///
     /// # Errors
+    ///
     /// Returns [`Error::Slug`] for an invalid or duplicate slug, or a write
     /// error if persistence fails.
     pub fn add_many(&mut self, repos: Vec<Repo>) -> Result<()> {
@@ -112,6 +118,7 @@ impl RepoService {
     /// Replaces the entry at `index` with `repo`, validating its slug.
     ///
     /// # Errors
+    ///
     /// Returns [`Error::NotFound`] for a bad index, [`Error::Slug`] for an
     /// invalid or duplicate slug, or a write error.
     pub fn update(&mut self, index: usize, repo: Repo) -> Result<()> {
@@ -128,6 +135,7 @@ impl RepoService {
     /// Removes the entry at `index`.
     ///
     /// # Errors
+    ///
     /// Returns [`Error::NotFound`] for a bad index, or a write error.
     pub fn delete(&mut self, index: usize) -> Result<()> {
         self.ensure_index(index)?;
@@ -140,6 +148,7 @@ impl RepoService {
     /// Toggles the favourite flag of the entry at `index`.
     ///
     /// # Errors
+    ///
     /// Returns [`Error::NotFound`] for a bad index, or a write error.
     pub fn toggle_fav(&mut self, index: usize) -> Result<()> {
         self.ensure_index(index)?;
@@ -152,6 +161,7 @@ impl RepoService {
     /// Sets the archived flag of the entry at `index`.
     ///
     /// # Errors
+    ///
     /// Returns [`Error::NotFound`] for a bad index, or a write error.
     pub fn set_archived(&mut self, index: usize, archived: bool) -> Result<()> {
         self.ensure_index(index)?;
@@ -169,6 +179,7 @@ impl RepoService {
     /// Sets or clears the slug of the entry at `index`.
     ///
     /// # Errors
+    ///
     /// Returns [`Error::NotFound`] for a bad index, [`Error::Slug`] for an
     /// invalid or duplicate slug, or a write error.
     pub fn set_slug(
@@ -189,6 +200,7 @@ impl RepoService {
     /// Deletes every entry in `indices` as one undo-able action.
     ///
     /// # Errors
+    ///
     /// Returns [`Error::NotFound`] for a bad index, or a write error.
     pub fn delete_many(&mut self, indices: &[usize]) -> Result<()> {
         for &index in indices {
@@ -209,6 +221,7 @@ impl RepoService {
     /// Sets the archived flag for every entry in `indices` as one action.
     ///
     /// # Errors
+    ///
     /// Returns [`Error::NotFound`] for a bad index, or a write error.
     pub fn set_archived_many(
         &mut self,
@@ -235,6 +248,7 @@ impl RepoService {
     /// Sets the favourite flag for every entry in `indices` as one action.
     ///
     /// # Errors
+    ///
     /// Returns [`Error::NotFound`] for a bad index, or a write error.
     pub fn set_fav_many(&mut self, indices: &[usize], fav: bool) -> Result<()> {
         for &index in indices {
@@ -253,6 +267,7 @@ impl RepoService {
     /// fields with no per-entry validation, e.g. section/kind/favourite/backup).
     ///
     /// # Errors
+    ///
     /// Returns [`Error::NotFound`] for a bad index, or a write error.
     pub fn update_many(
         &mut self,
@@ -274,6 +289,7 @@ impl RepoService {
     /// Swaps two entries' positions (the stored custom order), as one action.
     ///
     /// # Errors
+    ///
     /// Returns [`Error::NotFound`] for a bad index, or a write error.
     pub fn swap_entries(&mut self, a: usize, b: usize) -> Result<()> {
         self.ensure_index(a)?;
@@ -287,6 +303,7 @@ impl RepoService {
     /// Repoints the entry at `index` to `path` (used by the path-repair picker).
     ///
     /// # Errors
+    ///
     /// Returns [`Error::NotFound`] for a bad index, or a write error.
     pub fn set_path(&mut self, index: usize, path: PathBuf) -> Result<()> {
         self.ensure_index(index)?;
@@ -295,193 +312,10 @@ impl RepoService {
             Ok(())
         })
     }
-
-    /// The ordered list of section names for `kind` (each kind has its own
-    /// independent namespace).
-    pub fn sections(&self, kind: RepoKind) -> &[String] {
-        self.sections_of(kind)
-    }
-
-    /// Appends a new section to `kind`'s namespace, validating its name.
-    ///
-    /// # Errors
-    /// Returns [`Error::Invalid`] for an empty, reserved or duplicate name, or a
-    /// write error.
-    pub fn add_section(&mut self, kind: RepoKind, name: &str) -> Result<()> {
-        let name = name.trim();
-        self.validate_section_name(kind, name, None)?;
-        let mut next = self.sections_of(kind).to_vec();
-        next.push(name.to_string());
-        self.persist_sections(kind, next)
-    }
-
-    /// Registers `name` in `kind`'s namespace if it is non-empty and not already
-    /// known (case-insensitive), used when an entry is saved with a new section.
-    ///
-    /// # Errors
-    /// Returns a write error if persistence fails.
-    pub fn ensure_section(&mut self, kind: RepoKind, name: &str) -> Result<()> {
-        let name = name.trim();
-        if name.is_empty() || self.section_index(kind, name).is_some() {
-            return Ok(());
-        }
-        let mut next = self.sections_of(kind).to_vec();
-        next.push(name.to_string());
-        self.persist_sections(kind, next)
-    }
-
-    /// Renames the section `old` to `new` in `kind`'s namespace, updating every
-    /// entry of that kind which referenced it (one undo frame for the entries).
-    ///
-    /// # Errors
-    /// Returns [`Error::NotFound`] when `old` is unknown, [`Error::Invalid`] for
-    /// a bad `new` name, or a write error.
-    pub fn rename_section(
-        &mut self,
-        kind: RepoKind,
-        old: &str,
-        new: &str,
-    ) -> Result<()> {
-        let new = new.trim();
-        let pos = self
-            .section_index(kind, old)
-            .ok_or_else(|| Error::NotFound(format!("section '{old}'")))?;
-        self.validate_section_name(kind, new, Some(pos))?;
-        let old_name = self.sections_of(kind)[pos].clone();
-        let new_name = new.to_string();
-        self.mutate("rename section", |repos| {
-            for repo in repos.iter_mut() {
-                if repo.kind == kind
-                    && repo.section.as_deref() == Some(old_name.as_str())
-                {
-                    repo.section = Some(new_name.clone());
-                }
-            }
-            Ok(())
-        })?;
-        let mut next = self.sections_of(kind).to_vec();
-        next[pos] = new.to_string();
-        self.persist_sections(kind, next)
-    }
-
-    /// Deletes the section `name` from `kind`'s namespace, moving that kind's
-    /// entries in it to Ungrouped (one undo frame for the entries).
-    ///
-    /// # Errors
-    /// Returns [`Error::NotFound`] when `name` is unknown, or a write error.
-    pub fn delete_section(&mut self, kind: RepoKind, name: &str) -> Result<()> {
-        let pos = self
-            .section_index(kind, name)
-            .ok_or_else(|| Error::NotFound(format!("section '{name}'")))?;
-        let removed = self.sections_of(kind)[pos].clone();
-        self.mutate("delete section", |repos| {
-            for repo in repos.iter_mut() {
-                if repo.kind == kind
-                    && repo.section.as_deref() == Some(removed.as_str())
-                {
-                    repo.section = None;
-                }
-            }
-            Ok(())
-        })?;
-        let mut next = self.sections_of(kind).to_vec();
-        next.remove(pos);
-        self.persist_sections(kind, next)
-    }
-
-    /// Moves the section at `from` to position `to` in `kind`'s order.
-    ///
-    /// # Errors
-    /// Returns [`Error::NotFound`] for an out-of-range index, or a write error.
-    pub fn move_section(
-        &mut self,
-        kind: RepoKind,
-        from: usize,
-        to: usize,
-    ) -> Result<()> {
-        let len = self.sections_of(kind).len();
-        if from >= len || to >= len {
-            return Err(Error::NotFound(format!("section index {from}/{to}")));
-        }
-        let mut next = self.sections_of(kind).to_vec();
-        let name = next.remove(from);
-        next.insert(to, name);
-        self.persist_sections(kind, next)
-    }
-
-    /// The section list for `kind`.
-    fn sections_of(&self, kind: RepoKind) -> &Vec<String> {
-        match kind {
-            RepoKind::Git => &self.git_sections,
-            RepoKind::Path => &self.path_sections,
-        }
-    }
-
-    /// The mutable section list for `kind`.
-    fn sections_slot(&mut self, kind: RepoKind) -> &mut Vec<String> {
-        match kind {
-            RepoKind::Git => &mut self.git_sections,
-            RepoKind::Path => &mut self.path_sections,
-        }
-    }
-
-    /// The index of the section named `name` in `kind`'s namespace
-    /// (case-insensitive), if present.
-    fn section_index(&self, kind: RepoKind, name: &str) -> Option<usize> {
-        let name = name.trim();
-        self.sections_of(kind)
-            .iter()
-            .position(|section| section.eq_ignore_ascii_case(name))
-    }
-
-    /// Validates a section name in `kind`'s namespace: non-empty, not the
-    /// reserved Ungrouped label, and not a duplicate (case-insensitive).
-    fn validate_section_name(
-        &self,
-        kind: RepoKind,
-        name: &str,
-        except: Option<usize>,
-    ) -> Result<()> {
-        if name.is_empty() {
-            return Err(Error::invalid("section name must not be empty"));
-        }
-        if name.eq_ignore_ascii_case(sections::UNGROUPED) {
-            return Err(Error::invalid("'Ungrouped' is a reserved name"));
-        }
-        let clash =
-            self.sections_of(kind)
-                .iter()
-                .enumerate()
-                .any(|(index, sec)| {
-                    Some(index) != except && sec.eq_ignore_ascii_case(name)
-                });
-        if clash {
-            return Err(Error::invalid(format!(
-                "section '{name}' already exists"
-            )));
-        }
-        Ok(())
-    }
-
-    /// Replaces `kind`'s section list and persists it, rolling back on write
-    /// failure.
-    fn persist_sections(
-        &mut self,
-        kind: RepoKind,
-        next: Vec<String>,
-    ) -> Result<()> {
-        let previous = std::mem::replace(self.sections_slot(kind), next);
-        let write = self.repository.save_sections(kind, self.sections_of(kind));
-        if let Err(error) = write {
-            *self.sections_slot(kind) = previous;
-            return Err(error);
-        }
-        Ok(())
-    }
-
     /// Reverts the last config mutation, returning its label.
     ///
     /// # Errors
+    ///
     /// Returns a write error if persisting the reverted list fails.
     pub fn undo(&mut self) -> Result<Option<String>> {
         let Some(snapshot) = self.undo.take() else {
@@ -496,6 +330,7 @@ impl RepoService {
     /// Records an open of the entry at `index`: bumps its usage counters.
     ///
     /// # Errors
+    ///
     /// Returns [`Error::NotFound`] for a bad index, or a write error.
     pub fn mark_used(&mut self, index: usize) -> Result<()> {
         let repo = self
@@ -517,6 +352,7 @@ impl RepoService {
     /// Writes `repo_path` to the selected-repo handoff file the shell reads.
     ///
     /// # Errors
+    ///
     /// Returns a write error if the file cannot be written.
     pub fn write_selected(&self, repo_path: &Path) -> Result<()> {
         usage_state::write_selected_repo(&self.selected_repo_path, repo_path)
@@ -595,7 +431,6 @@ impl RepoService {
         Ok(())
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

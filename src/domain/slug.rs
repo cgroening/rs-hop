@@ -8,8 +8,18 @@ use crate::domain::error::{Error, Result};
 
 /// Subcommand names a slug must never shadow (`hop <reserved>` is a command).
 /// Kept in sync with the clap subcommands; a CLI test cross-checks it.
-pub const RESERVED: &[&str] =
-    &["add", "scan", "doctor", "list", "config-path", "help"];
+pub const RESERVED: &[&str] = &[
+    "add",
+    "scan",
+    "doctor",
+    "list",
+    "show-config",
+    // The former name of `show-config`, still accepted as an alias.
+    "config-path",
+    "completions",
+    "man",
+    "help",
+];
 
 /// Maximum slug length, keeping shortcuts terse.
 const MAX_LEN: usize = 40;
@@ -56,6 +66,7 @@ fn transliterate(ch: char) -> String {
 /// not a reserved subcommand name. Uniqueness is enforced by the caller.
 ///
 /// # Errors
+///
 /// Returns [`Error::Slug`] describing the first rule the slug breaks.
 pub fn validate_format(slug: &str) -> Result<()> {
     if slug.is_empty() {

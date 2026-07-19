@@ -21,18 +21,21 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::config::Config;
 use crate::domain::filter::{Tab, TabKind};
-use crate::domain::repo::{Repo, is_dir_target};
+use crate::domain::repo::Repo;
 use crate::domain::sections::SectionGroup;
 use crate::domain::stats::{CodeEntry, GitStats};
 use crate::theme::Skin;
-use crate::tui::columns::{
-    CellSource, ColumnSet, StatColumn, cell_text, stat_columns,
-};
+use crate::tui::columns::{ColumnSet, StatColumn, stat_columns};
 use crate::tui::git_columns::{
-    branch_text, effective_info, git_marker_errored, github_text,
-    status_display, zip_date_text,
+    branch_text, effective_info, github_text, status_display, zip_date_text,
+};
+use crate::tui::list_layout::{
+    ListScroll, SLUG_HEADER, settled_offset, slug_column_width,
 };
 use crate::tui::presentation::{IconSet, slug_style, status_span};
+use crate::tui::row_cells::{
+    GlyphContext, StatContext, fav_span, marker_span, type_label,
+};
 use crate::tui::skin::Colors;
 
 /// The lower and upper bound for the auto-sized name column.
@@ -49,10 +52,6 @@ const BRANCH_MAX: usize = 20;
 /// "Status" header).
 const STATUS_MIN: usize = 6;
 const STATUS_MAX: usize = 12;
-/// Header label and bounds of the Slug column (the floor fits the header).
-const SLUG_HEADER: &str = "Slug";
-const SLUG_MAX: usize = 20;
-
 /// The styling context for a sectioned render, bundled to keep the parameter
 /// count low.
 pub struct SectionedView<'a> {
@@ -101,29 +100,40 @@ pub struct SectionedView<'a> {
 }
 
 impl SectionedView<'_> {
+    /// What the shared statistics cells read from.
+    fn stats(&self) -> StatContext<'_> {
+        StatContext {
+            code: self.code,
+            git: self.git,
+            computing: self.computing,
+            spinner: self.spinner,
+            now: self.now,
+        }
+    }
+
+    /// What the shared leading glyphs read from.
+    fn glyphs(&self) -> GlyphContext<'_> {
+        GlyphContext {
+            example_mode: self.example_mode,
+            missing: self.missing,
+            icons: self.icons,
+            colors: self.colors,
+        }
+    }
+
     /// The rendered text of one statistics cell.
     fn stat_text(&self, repo: &Repo, column: StatColumn) -> String {
-        let source = CellSource {
-            code: self.code.get(&repo.path),
-            git: self.git.get(&repo.path),
-            open_count: repo.open_count,
-            last_used: repo.last_used,
-            pending: self.computing.contains(&repo.path),
-            now: self.now,
-        };
-        cell_text(column, source)
-            .unwrap_or_else(|| self.spinner_glyph().to_string())
+        self.stats().text(repo, column)
     }
 
     /// The current spinner glyph, or a dash outside a run.
     fn spinner_glyph(&self) -> &str {
-        self.spinner.map_or("-", |(_, glyph)| glyph)
+        self.stats().spinner_glyph()
     }
 
     /// Whether `repo` is still in flight in the running refresh.
     fn is_in_flight(&self, repo: &Repo) -> bool {
-        self.spinner
-            .is_some_and(|(in_flight, _)| in_flight.contains(&repo.path))
+        self.stats().is_in_flight(repo)
     }
 }
 
@@ -167,13 +177,13 @@ pub fn render(
     let (items, cursor_row, first_entry_row) =
         build_items(view, cursor, content_width);
 
-    let offset = settled_offset(
-        view.offset.get(),
-        cursor_row,
-        first_entry_row,
+    let offset = settled_offset(&ListScroll {
+        saved: view.offset.get(),
+        cursor: cursor_row,
         row_count,
         viewport,
-    );
+        first_entry_row: Some(first_entry_row),
+    });
     view.offset.set(offset);
 
     let list = List::new(items).highlight_style(view.colors.selection_style());
@@ -230,27 +240,6 @@ fn build_items<'a>(
         }
     }
     (items, cursor_row, first_entry_row)
-}
-
-/// Predicts the scroll offset: keep the saved one unless the cursor fell off an
-/// edge, then clamp it back; snap to the top when only header rows would hide.
-fn settled_offset(
-    saved: usize,
-    cursor_row: usize,
-    first_entry_row: usize,
-    row_count: usize,
-    viewport: usize,
-) -> usize {
-    let mut offset = saved.min(row_count.saturating_sub(1));
-    if cursor_row < offset {
-        offset = cursor_row;
-    } else if viewport > 0 && cursor_row >= offset + viewport {
-        offset = cursor_row + 1 - viewport;
-    }
-    if offset <= first_entry_row {
-        offset = 0;
-    }
-    offset
 }
 
 /// The column-title row drawn above the sectioned list. Its columns are sized
@@ -371,10 +360,11 @@ fn entry_item<'a>(
         Span::raw("  ")
     };
     let name_field = name_field_spans(&repo.display_name(), name_width);
+    let glyphs = view.glyphs();
     let mut spans = vec![
         lead,
-        marker_span(repo, view),
-        fav_span(repo, view),
+        marker_span(repo, &glyphs),
+        fav_span(repo, &glyphs),
         Span::raw(" "),
     ];
     spans.extend(name_field);
@@ -517,36 +507,6 @@ where
         .unwrap_or(0)
 }
 
-/// The error marker glyph (red) when the entry has a path/repo error, else
-/// blank: a git entry is flagged from its gathered info, a path entry once the
-/// existence check flagged it.
-fn marker_span(repo: &Repo, view: &SectionedView) -> Span<'static> {
-    let errored = git_marker_errored(repo, view.example_mode)
-        || view.missing.contains(&repo.path);
-    if errored {
-        Span::styled(
-            view.icons.missing.to_string(),
-            Style::default()
-                .fg(view.colors.danger)
-                .add_modifier(Modifier::BOLD),
-        )
-    } else {
-        Span::raw(" ")
-    }
-}
-
-/// The favourite star glyph when favourited, else blank.
-fn fav_span(repo: &Repo, view: &SectionedView) -> Span<'static> {
-    if repo.fav {
-        Span::styled(
-            view.icons.favourite.to_string(),
-            Style::default().fg(view.colors.favourite),
-        )
-    } else {
-        Span::raw(" ")
-    }
-}
-
 /// The auto-sized name column width: the widest display name, bounded.
 fn name_width(view: &SectionedView) -> usize {
     view.groups
@@ -560,13 +520,14 @@ fn name_width(view: &SectionedView) -> usize {
         .clamp(NAME_MIN, NAME_MAX)
 }
 
-/// The Slug column width: the widest entry slug, floored at the "Slug" header
-/// and capped, or 0 when slugs are hidden.
+/// The Slug column width: the widest entry slug, bounded by the shared rule, or
+/// 0 when slugs are hidden.
 fn slug_col_width(view: &SectionedView) -> usize {
     if !view.show_slugs {
         return 0;
     }
-    view.groups
+    let widest = view
+        .groups
         .iter()
         .flat_map(|group| group.items.iter())
         .map(|&index| {
@@ -576,9 +537,8 @@ fn slug_col_width(view: &SectionedView) -> usize {
                 .map_or(0, UnicodeWidthStr::width)
         })
         .max()
-        .unwrap_or(0)
-        .max(SLUG_HEADER.len())
-        .min(SLUG_MAX)
+        .unwrap_or(0);
+    slug_column_width(widest)
 }
 
 /// The row prefix width before the kind columns: the name column plus the
@@ -626,30 +586,9 @@ fn zip_cell_text(repo: &Repo, view: &SectionedView) -> String {
     zip_date_text(repo, view.icons, view.zip_backups)
 }
 
-/// The detected type label for an entry on the Files tab.
-fn type_label(repo: &Repo) -> &'static str {
-    if is_dir_target(&repo.path) {
-        "folder"
-    } else {
-        "file"
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn settled_offset_pages_and_snaps() {
-        // Cursor visible near the top: snap to 0 (only headers would hide).
-        assert_eq!(settled_offset(0, 1, 1, 10, 5), 0);
-        // Cursor below the viewport: scroll so it is the last visible row.
-        assert_eq!(settled_offset(0, 8, 1, 20, 5), 4);
-        // Cursor above the saved offset: scroll back up to it.
-        assert_eq!(settled_offset(6, 2, 1, 20, 5), 2);
-        // An offset at/under the first entry row snaps to the very top.
-        assert_eq!(settled_offset(1, 1, 2, 10, 5), 0);
-    }
 
     #[test]
     fn pad_fills_or_truncates() {

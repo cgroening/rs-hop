@@ -188,6 +188,7 @@ fn view_doc(view: &TabView) -> TabViewDoc {
 /// Saves the UI state to `path`.
 ///
 /// # Errors
+///
 /// Returns an error if the directory or file cannot be written.
 pub fn save(path: &Path, state: &UiState) -> Result<()> {
     let doc = UiStateDoc {

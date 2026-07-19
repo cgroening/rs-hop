@@ -18,6 +18,7 @@ use crate::domain::error::{Error, Result};
 /// the error, so a failure says which write went wrong.
 ///
 /// # Errors
+///
 /// Returns an error when the parent directory, the temp file or the rename
 /// fails.
 pub fn write_atomic(path: &Path, contents: &str, what: &str) -> Result<()> {

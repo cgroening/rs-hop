@@ -19,6 +19,7 @@ use crate::util::fs::write_atomic;
 /// block and creating the file (and parent directory) when absent.
 ///
 /// # Errors
+///
 /// Returns an error if the file cannot be read, is not valid TOML, or cannot be
 /// written.
 pub fn save_repos(path: &Path, repos: &[Repo]) -> Result<()> {
@@ -37,6 +38,7 @@ pub fn save_repos(path: &Path, repos: &[Repo]) -> Result<()> {
 /// the rest of the document (settings and their comments) untouched.
 ///
 /// # Errors
+///
 /// Returns [`Error::Config`] when `existing` is not valid TOML.
 pub fn repos_to_toml(existing: &str, repos: &[Repo]) -> Result<String> {
     let mut doc = existing
@@ -55,6 +57,7 @@ pub fn repos_to_toml(existing: &str, repos: &[Repo]) -> Result<String> {
 /// file when absent.
 ///
 /// # Errors
+///
 /// Returns an error if the file cannot be read, is not valid TOML, or cannot be
 /// written.
 pub fn save_sections(
@@ -77,6 +80,7 @@ pub fn save_sections(
 /// when empty), leaving the rest of the document untouched.
 ///
 /// # Errors
+///
 /// Returns [`Error::Config`] when `existing` is not valid TOML.
 pub fn sections_to_toml(
     existing: &str,

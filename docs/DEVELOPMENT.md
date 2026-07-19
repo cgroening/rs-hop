@@ -23,7 +23,8 @@ src/
     path_repair.rs        nearest_existing ancestor (predicate-injected)
   storage/                ports + adapters
     repository.rs         RepoRepository trait (port)
-    toml_repo_repository.rs  read [[repos]] (serde DTO), write via config::writer
+    toml_repo_repository.rs  read [[repos]] (serde DTO), write via toml_writer
+    toml_writer.rs           toml_edit rewrite of [[repos]] (comment-preserving)
     in_memory_repository.rs  test fake / --demo backend
     git_client.rs         GitClient trait (port) + parse_github_name
     subprocess_git_client.rs  git via std::process::Command
@@ -33,7 +34,9 @@ src/
     ui_state.rs           persisted sort / tab / slugs / panel / columns
     zip_cache.rs          ZIP-backup fingerprint cache (skip iCloud re-download)
   service/                use cases over the ports
-    repo_service.rs       CRUD, fav/archive, slug, path repair, usage, undo
+    repo_service/
+      mod.rs              CRUD, fav/archive, slug, path repair, usage, undo
+      section_names.rs    the per-kind section lists (add/rename/delete/move)
     status_service.rs     collect_all (sync) + spawn_refresh (bg) + its cache
     stats_service.rs      spawn_code_stats (tokei) + spawn_git_stats + its cache
     preview_service.rs    spawn_logs: background git log for the preview panel
@@ -43,13 +46,33 @@ src/
     mod.rs                Config + palette()/skin()/theme_registry()/keymap()
     appearance.rs         [appearance]: theme name, colour overrides, glyphs
     loader.rs             defaults -> config.toml -> HOP_* env
-    writer.rs             comment-preserving toml_edit rewrite of [[repos]]/sections
   cli/
-    mod.rs                clap Cli/Command + dispatch + apply_sparcli_theme
-    output.rs             error/status reporting via sparcli alerts
+    mod.rs                clap Cli/Command + dispatch (the composition root)
+    context.rs            CliContext: the TTY gate, resolved once
+    output.rs             Streams, CliError + exit codes, the sparcli theme
+    list.rs               hop list: table / plain lines / --json
+    scan.rs               hop add, hop scan (TTY gate + --yes), hop doctor
+    jump.rs               hop <slug>: the fast jump
     demo.rs               sample entries for --demo
   tui/
-    mod.rs                App + run loop (poll + drain background) + key handling + render
+    mod.rs                module wiring + the App/run re-exports
+    app/                  the application screen, split by responsibility
+      mod.rs              App + its enums + new() + the run loop
+      keys.rs             key -> use case routing
+      view.rs             what is visible, and the per-kind view settings
+      navigate.rs         cursor, tab and selection movement
+      lenses.rs           the view toggles and the sort picker
+      open.rs             leaving the TUI for something else
+      edit.rs             mutating entries: the modals and the writers
+      section_manager.rs  the section jump and manage overlays
+      refresh.rs          the git-status workers + the path-error state
+      stats.rs            the code/history statistics workers
+      zip.rs              the ZIP-backup worker
+      panel.rs            the detail panel
+      render.rs           state -> frame
+      hints.rs            footer/help metadata, resolved from the keymap
+      progress.rs         the progress bar
+      tests.rs            the App-level tests
     appframe.rs           the panel app-frame (bands + grouped hints + dim backdrop)
     bindings.rs           per-tab footer hint groups (Action lists -> keymap.hints)
     skin.rs               Colors::from_palette: hop colour roles from the palette
@@ -60,12 +83,17 @@ src/
     scroll.rs             scroll offset shared by help and the detail panel
     table.rs              repo table rendering (git tabs)
     sections_view.rs      Files-tab sectioned list (headers + entry rows)
+    git_columns.rs        shared git-column text
+    row_cells.rs          shared per-entry cells: glyphs, type label, statistics
+    list_layout.rs        shared scroll offset, slug width, overlay navigation
     preview.rs            detail panel (layout, statistics, git log)
-    form.rs               add/edit form (RepoForm)
+    form/                 add/edit form (RepoForm)
+      mod.rs              state, fields and key handling
+      render.rs           how the form draws itself
     widgets.rs            confirm / text prompt / single-select modals
     path_picker.rs        filesystem picker (repair / form path)
     sections_modal.rs     manage-sections overlay
-    help.rs               non-blocking help overlay (?), styled like ratada::help
+    help.rs               non-blocking help overlay (?), fuzzy-filterable
   util/
     paths.rs              XDG (Unix) / %APPDATA% (Windows) + ~ expansion
     fs.rs                 write_atomic: temp file + rename for config and state
@@ -147,6 +175,24 @@ hop keeps the list responsive by doing git and archive work off the main thread.
 
 **How to adopt the blocking `ratada` widgets later, if wanted.** The precedent exists: the inline git tool (`l`) suspends the TUI with `tui.suspend(…)`, runs an external program, and resumes (`App::run_git_inline`). A blocking `ratada` widget fits the same shape: (1) the key handler returns an outcome instead of setting `self.overlay`; (2) the run loop (which holds `&mut Tui`) calls the blocking widget – e.g. `ratada::path_picker::path_picker(tui, …)` – and applies the result; (3) accept that the background workers pause while the widget is open. This could be done for the path picker alone (the `p` repair flow and the form's `^O` path pick) or for all dialogs at once; either is a conscious behaviour change and belongs in its own step.
 
+### `App` is split across child modules, not into smaller types
+
+**Status:** accepted.
+
+**Context.** `tui/mod.rs` had grown to just over 4000 lines - a fifth of the codebase in one file - holding `App` with 54 fields and 147 methods. The obvious reflex is to cut the type into smaller ones (`RefreshState`, `StatsState`, `PreviewState`, …).
+
+**Decision.** Split the `impl` block, not the type. `App` and its enums stay in `tui/app/mod.rs`; the methods moved by responsibility into sibling modules (`keys`, `view`, `navigate`, `lenses`, `open`, `edit`, `section_manager`, `refresh`, `stats`, `zip`, `panel`, `render`, `hints`, `progress`), each with its own `impl App` block. Private items - fields included - stay visible in descendant modules, so the public API did not grow; methods reached from a sibling or the parent are `pub(super)`. The App-level tests moved to `app/tests.rs` unchanged, since they drive the whole screen rather than any one module.
+
+**Consequences.** No file in `tui/app/` exceeds ~470 lines and each has a one-sentence responsibility, while the type keeps its single source of truth for state. The alternative - sub-state structs - was measured and rejected for five of the seven candidate clusters: they carry no invariant the code does not already enforce, and each would have added an indirection at 15-30 render sites for nothing. `Progress` (the four `loading_*` fields, which are meaningless unless `loading` is `Some`) and the preview worker fields remain worthwhile follow-ups, now that both are local to a single module.
+
+### `doctor` keeps its noun name
+
+**Status:** accepted.
+
+**Context.** The style guide asks for command names to be verbs. `hop doctor` is a noun.
+
+**Decision.** Keep it. `doctor` is an established CLI idiom (`brew doctor`, `flutter doctor`) that users recognise, and the name is published. `config-path` was renamed to `show-config` in the same pass, keeping the old name as a hidden alias, because it had neither of those defences.
+
 ## Common commands
 
 ```bash
@@ -166,7 +212,7 @@ When changing widget or theming behaviour that lives in `ratada`/`sparcli`, work
 
 **Logging** (`util/logging.rs`). hop logs to a **file only** (`<state_dir>/hop/hop.log`) and never to stderr, because the TUI owns the terminal and stray stderr would corrupt the alternate screen. Diagnostics use the `log` facade (`log::{info, debug, warn, error}`) at the layer where the event happens – never `println!`, which is reserved for user-facing CLI output.
 
-**Configuration.** Settings resolve as defaults → `config.toml` → `HOP_*` env vars (`config/loader.rs`: `HOP_GIT_PROGRAM`, `HOP_EDITOR`, `HOP_THEME`, `HOP_GLYPHS`, `HOP_CONFIRM_QUIT`; `HOP_CONFIG` picks the file itself). A boolean env value must spell out a yes or a no – a typo leaves the setting alone rather than silently reading as `false`. The same `config.toml` holds both the settings and the `[[repos]]` entries, read by two layers (the loader for settings, `storage::toml_repo_repository` for entries) and written back comment-preservingly through `config::writer` (`toml_edit`) so the settings block and its comments survive, always through `util::fs::write_atomic`. On-disk formats stay backward compatible: new fields are `#[serde(default)]`, and old files (including the legacy `[icons]` block) load unchanged – there are loader tests for this. `examples/config.toml` documents every setting, including the `[appearance]`/`[themes.*]`/`[keys]` sections.
+**Configuration.** Settings resolve as defaults → `config.toml` → `HOP_*` env vars (`config/loader.rs`: `HOP_GIT_PROGRAM`, `HOP_EDITOR`, `HOP_THEME`, `HOP_GLYPHS`, `HOP_CONFIRM_QUIT`; `HOP_CONFIG` picks the file itself). A boolean env value must spell out a yes or a no – a typo leaves the setting alone rather than silently reading as `false`. The same `config.toml` holds both the settings and the `[[repos]]` entries, read by two layers (the loader for settings, `storage::toml_repo_repository` for entries) and written back comment-preservingly through `storage::toml_writer` (`toml_edit`) so the settings block and its comments survive, always through `util::fs::write_atomic`. On-disk formats stay backward compatible: new fields are `#[serde(default)]`, and old files (including the legacy `[icons]` block) load unchanged – there are loader tests for this. `examples/config.toml` documents every setting, including the `[appearance]`/`[themes.*]`/`[keys]` sections.
 
 **Tests.** Unit tests sit beside their code under `#[cfg(test)]`; integration tests live in `tests/` and drive the public library API. There are no doctests. The pure layers (domain, config, storage, service) carry the automated coverage; the TUI is verified with headless `ratatui::TestBackend` render checks (assert on the rendered buffer) for structure, and **manually in a real terminal** for the visual result – there are no snapshot fixtures. After any change, run the full check list above and keep it green; a pure refactor must not change behaviour.
 

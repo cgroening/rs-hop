@@ -6,7 +6,6 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratada::input::InputField;
-use ratada::nav::cycle;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -14,6 +13,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
 use crate::theme::Skin;
+use crate::tui::list_layout::moved_cursor;
 use crate::tui::presentation::{FieldView, field_spans};
 use crate::tui::skin::Colors;
 
@@ -198,17 +198,22 @@ impl SelectModal {
     /// Handles navigation and selection keys.
     pub fn handle_key(&mut self, key: KeyEvent) -> SelectResult {
         match key.code {
-            KeyCode::Up => {
-                self.cursor = cycle(self.cursor, self.items.len(), -1);
-                SelectResult::Pending
-            }
-            KeyCode::Down => {
-                self.cursor = cycle(self.cursor, self.items.len(), 1);
-                SelectResult::Pending
-            }
             KeyCode::Enter => SelectResult::Selected(self.cursor),
             KeyCode::Esc => SelectResult::Cancel,
+            _ if self.navigate(key) => SelectResult::Pending,
             _ => SelectResult::Pending,
+        }
+    }
+
+    /// Applies a navigation key through the shared helper, reporting whether it
+    /// was one.
+    fn navigate(&mut self, key: KeyEvent) -> bool {
+        match moved_cursor(key, self.cursor, self.items.len()) {
+            Some(cursor) => {
+                self.cursor = cursor;
+                true
+            }
+            None => false,
         }
     }
 

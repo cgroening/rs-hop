@@ -113,6 +113,7 @@ impl RawColumnWidth {
 /// file does not exist.
 ///
 /// # Errors
+///
 /// Returns [`Error::Config`] if the file exists but cannot be read or parsed.
 pub fn load_config(path: &Path) -> Result<Config> {
     let raw = read_raw(path)?;

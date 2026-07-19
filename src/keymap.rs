@@ -52,6 +52,10 @@ pub enum Action {
     ExtendUp,
     /// Extend the multi-selection to the row below.
     ExtendDown,
+    /// Extend the selection up by a page.
+    ExtendPageUp,
+    /// Extend the selection down by a page.
+    ExtendPageDown,
     /// Jump: write the cd path and exit.
     Jump,
     /// Open the entry (git tool / cd / editor / default app).
@@ -76,6 +80,10 @@ pub enum Action {
     PreviewScrollUp,
     /// Scroll the detail panel down.
     PreviewScrollDown,
+    /// Scroll the detail panel up by a page.
+    PreviewPageUp,
+    /// Scroll the detail panel down by a page.
+    PreviewPageDown,
     /// Make the detail panel smaller.
     PreviewShrink,
     /// Make the detail panel bigger.
@@ -165,13 +173,13 @@ const ACTIONS: &[ActionSpec] = &[
         action: Action::Top,
         config_name: "top",
         description: "top",
-        default_keys: &["g"],
+        default_keys: &["home", "g"],
     },
     ActionSpec {
         action: Action::Bottom,
         config_name: "bottom",
         description: "bottom",
-        default_keys: &["G"],
+        default_keys: &["end", "G"],
     },
     ActionSpec {
         action: Action::PageUp,
@@ -226,6 +234,18 @@ const ACTIONS: &[ActionSpec] = &[
         config_name: "extend_down",
         description: "extend",
         default_keys: &["shift+down"],
+    },
+    ActionSpec {
+        action: Action::ExtendPageUp,
+        config_name: "extend_page_up",
+        description: "extend a page",
+        default_keys: &["shift+pgup"],
+    },
+    ActionSpec {
+        action: Action::ExtendPageDown,
+        config_name: "extend_page_down",
+        description: "extend a page",
+        default_keys: &["shift+pgdn"],
     },
     ActionSpec {
         action: Action::Jump,
@@ -298,6 +318,18 @@ const ACTIONS: &[ActionSpec] = &[
         config_name: "preview_scroll_down",
         description: "scroll panel",
         default_keys: &["ctrl+down"],
+    },
+    ActionSpec {
+        action: Action::PreviewPageUp,
+        config_name: "preview_page_up",
+        description: "panel page up",
+        default_keys: &["ctrl+pgup"],
+    },
+    ActionSpec {
+        action: Action::PreviewPageDown,
+        config_name: "preview_page_down",
+        description: "panel page down",
+        default_keys: &["ctrl+pgdn"],
     },
     ActionSpec {
         action: Action::PreviewShrink,
@@ -682,6 +714,8 @@ mod tests {
                 | Action::ToggleSelect
                 | Action::ExtendUp
                 | Action::ExtendDown
+                | Action::ExtendPageUp
+                | Action::ExtendPageDown
                 | Action::Jump
                 | Action::Open
                 | Action::GitTool
@@ -694,6 +728,8 @@ mod tests {
                 | Action::PreviewPosition
                 | Action::PreviewScrollUp
                 | Action::PreviewScrollDown
+                | Action::PreviewPageUp
+                | Action::PreviewPageDown
                 | Action::PreviewShrink
                 | Action::PreviewGrow
                 | Action::Columns

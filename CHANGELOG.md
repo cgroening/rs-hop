@@ -8,14 +8,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **`Shift+↑` / `Shift+↓` (extend the selection) are now rebindable**, as the `extend_up` / `extend_down` actions in `[keys]`. They used to sit hard-wired beside the keymap, because hop's own chord parser could not tell `Shift`+arrow from a bare arrow and would have resolved it to a plain cursor move. The default keys are unchanged.
+- **`Home` / `End` jump to the ends of the list**, alongside the existing `g` / `G`. Both spellings reach the same action, so the keys most terminals send for "go to the start/end" now work.
+- **`Shift+PageUp` / `Shift+PageDown` extend the selection by a page**, the page-sized counterpart to `Shift+↑/↓`. Rebindable as `extend_page_up` / `extend_page_down`.
+- **`Ctrl+PageUp` / `Ctrl+PageDown` scroll the detail panel by a page** (`preview_page_up` / `preview_page_down`).
+- **The help overlay filters as you type.** `?` opens it as before; typing narrows the list fuzzily over both the keys and their descriptions, `Esc` clears the filter and only closes the overlay once it is empty.
+- **`PageUp` / `PageDown` / `Home` / `End` work in every overlay list** – the path picker, the section picker, the sections manager and the select modals. They all route through one shared helper now, so none of them can end up supporting a different subset of the movement keys.
+- **`hop list --json`** prints the entries as a JSON document, replacing the previously undocumented ad-hoc tab-separated format as the way to consume `hop list` from a script. The field names are part of the public interface.
+- **`hop completions <shell>` and `hop man`** generate the shell completion script and the manpage, instead of either being maintained by hand.
+- **`hop scan --yes`** imports everything found without asking. It is also the way to run `scan` without a terminal, which previously had no way through at all.
+- **`-v`/`--verbose`, `-q`/`--quiet` and `--no-color`.** Verbosity affects the log file only, never what a caller reads from stdout.
+- **`--no-fetch`** skips the startup fetch even when `fetch_on_start` is enabled, so the command line can always override the config file in both directions.
+- **`Examples:` and `Exit codes:` in `hop --help`.** The two forms a command list cannot show – the bare TUI and `hop <slug>` – are finally discoverable without the README.
 
 ### Changed
 
-- **The help overlay (`?`) shows the keys that are actually bound** for selecting and extending, instead of fixed `Space` / `Shift+↑↓` labels – so a `[keys]` override reaches the overlay too, as it already did the footer hints.
+- **stdout now carries only payload; every hint, confirmation, warning and error moved to stderr.** This is visible to scripts: `hop list > entries.txt` no longer writes "No entries yet" into the file, and `hop scan --dry-run | …` no longer mixes "N already in hop." into the path list. Piped output is otherwise unchanged.
+- **Errors are reported as a single `hop: error: <what happened>` line on stderr**, instead of a drawn box that could not be grepped and overflowed the terminal on long messages.
+- **Exit codes now follow the usual contract**: `0` success, `1` runtime error, `2` usage error, `130` after `Ctrl+C`. `hop scan` without a terminal exits `2` (it exited `1` before) and its message names `--yes`. The codes are documented in `hop --help` and in the README.
+- **`hop config-path` is now `hop show-config`.** The old name keeps working as a hidden alias, so existing scripts are unaffected.
+- **`hop add --kind` only accepts `git` or `path`.** An unrecognised value used to fall back to a path entry silently, so `hop add --kind gti .` quietly created the wrong kind; it is now rejected by the parser.
+- **The help overlay resolves its keys from the keymap.** They used to be written out as literals, so a `[keys]` override moved the key everywhere except in the overlay describing it.
+- **`XDG_CONFIG_HOME` / `XDG_STATE_HOME` are ignored when relative.** The specification calls a non-absolute value invalid; honouring it scattered state through whatever directory hop happened to start in.
 
 ### Fixed
 
+- **`$EDITOR` with arguments works.** `EDITOR="code --wait"` or `"emacsclient -nw"` looked for a binary of that literal name and failed; the arguments are now passed as separate arguments. No shell is involved, so a hostile value still cannot inject a command.
+- **`Ctrl+C` ends the run with 130 and cleans up.** There was no signal handling at all, so an interrupt could skip the terminal restore and leave a half-written `.part` backup file behind.
+- **The sections manager and the add/edit form scroll and show a scrollbar** when they outgrow the screen, instead of silently cutting off the rest.
+- **`Shift+↑` / `Shift+↓` (extend the selection) are now rebindable**, as the `extend_up` / `extend_down` actions in `[keys]`. They used to sit hard-wired beside the keymap, because hop's own chord parser could not tell `Shift`+arrow from a bare arrow and would have resolved it to a plain cursor move. The default keys are unchanged.
 - **`AltGr` types again in the add/edit form and the path picker.** `AltGr` is reported as `Control`+`Alt`, so a bare Control check mistook it for a command: `AltGr+h` in the picker toggled the hidden entries instead of typing an `h`, and the form's Control shortcuts fired the same way. Both now test for a real command chord.
 
 ## [0.3.0] - 2026-07-16

@@ -111,6 +111,7 @@ pub fn load(path: &Path) -> StatsCache {
 /// Writes `cache` to `path`, creating the state directory if needed.
 ///
 /// # Errors
+///
 /// Returns an error if the directory or file cannot be written.
 pub fn save(path: &Path, cache: &StatsCache) -> Result<()> {
     let mut code: Vec<CodeRow> = cache.code.iter().map(from_code).collect();

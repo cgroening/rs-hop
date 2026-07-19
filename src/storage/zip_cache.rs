@@ -75,6 +75,7 @@ pub fn load(path: &Path) -> ZipCache {
 /// Writes `cache` to `path`, creating the state directory if needed.
 ///
 /// # Errors
+///
 /// Returns an error if the directory or file cannot be written.
 pub fn save(path: &Path, cache: &ZipCache) -> Result<()> {
     let mut entries: Vec<CacheEntry> = cache
