@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-19
+
 ### Fixed
 
 - **The progress bar spans the full width of the terminal.** It left one blank cell at each side, which read as a notch next to the status band below it rather than as padding.
@@ -139,7 +141,8 @@ First public release. A fuzzy-finder TUI to jump between git repositories and fo
 - **Cross-platform paths** (XDG on Unix, `%APPDATA%`/`%LOCALAPPDATA%` on Windows) and openers/clipboard.
 - Unicode and ASCII icon tiers (`config.icons.variant`).
 
-[Unreleased]: https://github.com/cgroening/rs-hop/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/cgroening/rs-hop/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/cgroening/rs-hop/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/cgroening/rs-hop/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/cgroening/rs-hop/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/cgroening/rs-hop/compare/v0.1.0...v0.2.0
