@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **The progress bar spans the full width of the terminal.** It left one blank cell at each side, which read as a notch next to the status band below it rather than as padding.
+
 ## [0.4.0] - 2026-07-19
 
 ### Added

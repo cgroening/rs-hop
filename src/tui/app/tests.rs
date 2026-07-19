@@ -446,11 +446,18 @@ fn progress_bar_paints_accent_fill_and_label() {
         })
         .unwrap();
     let buf = terminal.backend().buffer().clone();
-    // A cell early in the bar (inside the padded, filled region) is accent.
+    // A cell early in the bar (inside the filled region) is accent.
     assert_eq!(buf.cell((2, 0)).unwrap().style().bg, Some(colors.accent));
     // A cell near the right end (past the half fill) is the track colour.
     assert_eq!(
         buf.cell((38, 0)).unwrap().style().bg,
+        Some(colors.selection_bg)
+    );
+    // The bar runs edge to edge: the first cell is filled and the last one
+    // carries the track, so neither side is left blank.
+    assert_eq!(buf.cell((0, 0)).unwrap().style().bg, Some(colors.accent));
+    assert_eq!(
+        buf.cell((39, 0)).unwrap().style().bg,
         Some(colors.selection_bg)
     );
     let text: String = buf

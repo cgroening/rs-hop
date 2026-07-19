@@ -69,18 +69,14 @@ impl ProgressText<'_> {
 }
 
 /// Renders a solid progress bar for an in-flight operation (status refresh or
-/// ZIP backup) across `area`, leaving one blank cell of padding on each side.
+/// ZIP backup) across the full width of `area`, edge to edge like the status
+/// band below it.
 pub(super) fn render_progress(
     frame: &mut Frame,
     area: Rect,
     skin: &Skin,
     text: ProgressText,
 ) {
-    let area = Rect {
-        x: area.x.saturating_add(1),
-        width: area.width.saturating_sub(2),
-        ..area
-    };
     ratada::gauge::render(
         frame,
         area,
