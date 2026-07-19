@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-19
+
 ### Added
 
 - **`Home` / `End` jump to the ends of the list**, alongside the existing `g` / `G`. Both spellings reach the same action, so the keys most terminals send for "go to the start/end" now work.
@@ -133,7 +135,8 @@ First public release. A fuzzy-finder TUI to jump between git repositories and fo
 - **Cross-platform paths** (XDG on Unix, `%APPDATA%`/`%LOCALAPPDATA%` on Windows) and openers/clipboard.
 - Unicode and ASCII icon tiers (`config.icons.variant`).
 
-[Unreleased]: https://github.com/cgroening/rs-hop/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/cgroening/rs-hop/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/cgroening/rs-hop/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/cgroening/rs-hop/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/cgroening/rs-hop/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/cgroening/rs-hop/releases/tag/v0.1.0
