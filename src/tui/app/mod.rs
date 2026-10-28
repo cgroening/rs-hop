@@ -33,7 +33,7 @@ mod zip;
 
 use super::app::progress::REFRESH_LABEL;
 use crate::tui::terminal::{Tui, TuiEvent};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -268,7 +268,7 @@ pub struct App {
 
 /// The view settings a kind remembers, shared between its active and archive
 /// views (persisted per kind in the UI state).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct TabState {
     /// The list sort mode.
     sort: SortMode,
@@ -280,6 +280,8 @@ struct TabState {
     grouped: bool,
     /// Whether favourites float to the top of each group.
     fav_float: bool,
+    /// The labels of the sections folded down to their header.
+    collapsed: BTreeSet<String>,
 }
 
 /// Builds a [`TabState`] from a persisted per-kind [`TabView`], resolving the
@@ -292,6 +294,7 @@ fn tab_state_from(view: &TabView, kind: TabKind) -> TabState {
             .available_on(kind.active_tab()),
         grouped: view.grouped,
         fav_float: view.fav_float,
+        collapsed: view.collapsed.iter().cloned().collect(),
     }
 }
 
@@ -523,3 +526,6 @@ impl App {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod section_tests;

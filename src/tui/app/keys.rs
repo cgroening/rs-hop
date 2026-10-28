@@ -190,15 +190,7 @@ impl App {
             }
             Overlay::SectionDelete(confirm, name) => {
                 match confirm.handle_key(key) {
-                    ConfirmResult::Yes => {
-                        let repo_kind = self.tab.repo_kind();
-                        if let Err(error) =
-                            self.service.delete_section(repo_kind, &name)
-                        {
-                            self.set_status(format!("{error}"));
-                        }
-                        self.open_sections_manager();
-                    }
+                    ConfirmResult::Yes => self.delete_section(&name),
                     ConfirmResult::No => self.open_sections_manager(),
                     ConfirmResult::Pending => {
                         self.overlay = Overlay::SectionDelete(confirm, name);
@@ -283,8 +275,9 @@ impl App {
     ///
     /// The context-dependent actions branch on the active tab here rather than
     /// on the key, so a rebound key keeps its meaning: `SectionJump` only jumps
-    /// where the list is sectioned, and `Reload`/`ReloadFetch` re-check paths on
-    /// the files tabs but refresh git status on the git tabs.
+    /// where the list is sectioned (as do the section moves and folds), and
+    /// `Reload`/`ReloadFetch` re-check paths on the files tabs but refresh git
+    /// status on the git tabs.
     pub(super) fn run_action(&mut self, action: Action) -> Option<RunOutcome> {
         match action {
             Action::Up => self.move_cursor(-1),
@@ -302,6 +295,10 @@ impl App {
             Action::ExtendDown => self.extend_selection(1),
             Action::ExtendPageUp => self.extend_selection_page(-1),
             Action::ExtendPageDown => self.extend_selection_page(1),
+            // Enter on a collapsed header unfolds it instead of jumping.
+            Action::Jump if self.is_cursor_on_collapsed() => {
+                self.expand_at_cursor();
+            }
             Action::Jump | Action::JumpCd => return self.open_selected(false),
             Action::Open => return self.open_selected(true),
             Action::GitTool => return self.open_git_inline(),
@@ -325,6 +322,22 @@ impl App {
                 self.open_section_jump();
             }
             Action::SectionJump => {}
+            Action::SectionPrev if self.is_sectioned() => {
+                self.jump_to_prev_section();
+            }
+            Action::SectionNext if self.is_sectioned() => {
+                self.jump_to_next_section();
+            }
+            Action::ToggleCollapse if self.is_sectioned() => {
+                self.toggle_collapse();
+            }
+            Action::ToggleCollapseAll if self.is_sectioned() => {
+                self.toggle_collapse_all();
+            }
+            Action::SectionPrev
+            | Action::SectionNext
+            | Action::ToggleCollapse
+            | Action::ToggleCollapseAll => {}
             Action::ManageSections => self.open_sections_manager(),
             Action::ReorderUp => self.move_entry(-1),
             Action::ReorderDown => self.move_entry(1),

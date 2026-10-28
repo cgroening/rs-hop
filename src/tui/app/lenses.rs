@@ -11,8 +11,7 @@ impl App {
     pub(super) fn toggle_grouping(&mut self) {
         let grouped = self.view().grouped;
         self.view_mut().grouped = !grouped;
-        let len = self.ordered_view().len();
-        self.clamp_cursor(len);
+        self.clamp_cursor_to_rows();
         self.save_ui_state();
     }
 
@@ -20,8 +19,7 @@ impl App {
     pub(super) fn toggle_fav_float(&mut self) {
         let fav_float = self.view().fav_float;
         self.view_mut().fav_float = !fav_float;
-        let len = self.ordered_view().len();
-        self.clamp_cursor(len);
+        self.clamp_cursor_to_rows();
         self.save_ui_state();
     }
 
@@ -93,8 +91,7 @@ impl App {
     pub(super) fn toggle_changes_only(&mut self) {
         self.changes_only = !self.changes_only;
         self.clear_selection();
-        let len = self.ordered_view().len();
-        self.clamp_cursor(len);
+        self.clamp_cursor_to_rows();
         self.set_status(if self.changes_only {
             "showing changed repos only"
         } else {

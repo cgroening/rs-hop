@@ -11,7 +11,7 @@ use ratada::shortcut_hints;
 
 use crate::domain::filter::{TabKind, belongs_to_tab, fuzzy_indices};
 use crate::domain::repo::{Repo, RepoKind};
-use crate::domain::sections;
+use crate::domain::sections::{self, Row};
 use crate::domain::sort::{
     SortContext, SortDir, SortMode, StatsLookup, sort_indices,
 };
@@ -88,7 +88,8 @@ impl App {
         } else if self.is_sectioned() {
             // Grouped view: entries by section, sorted within each group by the
             // active sort mode (favourites floated per the fav-float toggle).
-            sections::flatten(&self.section_groups())
+            // Collapsed sections still count: folding is not a filter.
+            sections::flatten(&self.visible_groups())
         } else {
             // Flat view: the chosen sort mode over the whole tab.
             let mut indices = tab_indices;
@@ -132,18 +133,73 @@ impl App {
         )
     }
 
-    /// The selected service index, if the view is non-empty.
-    pub(super) fn selected_index(&self) -> Option<usize> {
-        self.ordered_view().get(self.cursor).copied()
+    /// The sections the grouped view shows: [`App::section_groups`] narrowed
+    /// by the changes-only filter, dropping the groups it empties. The single
+    /// source for the rows, the renderer and the section jumps, so they agree.
+    pub(super) fn visible_groups(&self) -> Vec<sections::SectionGroup> {
+        let mut groups = self.section_groups();
+        if !self.changes_only {
+            return groups;
+        }
+        let repos = self.service.repos();
+        for group in &mut groups {
+            group.items.retain(|&i| self.shows_change(&repos[i]));
+        }
+        groups.retain(|group| !group.items.is_empty());
+        groups
     }
 
-    /// Clamps the cursor into the current view length.
-    pub(super) fn clamp_cursor(&mut self, view_len: usize) {
-        if view_len == 0 {
-            self.cursor = 0;
-        } else if self.cursor >= view_len {
-            self.cursor = view_len - 1;
+    /// Whether the section labelled `label` is collapsed in the current kind.
+    pub(super) fn is_collapsed(&self, label: &str) -> bool {
+        self.view().collapsed.contains(label)
+    }
+
+    /// The rows the cursor moves over: in the grouped view the entries of the
+    /// expanded sections and one header row per collapsed one, otherwise every
+    /// visible entry.
+    pub(super) fn cursor_rows(&self) -> Vec<Row> {
+        if !self.is_sectioned() {
+            return self.ordered_view().into_iter().map(Row::Entry).collect();
         }
+        sections::rows(&self.visible_groups(), |label| self.is_collapsed(label))
+    }
+
+    /// The number of rows the cursor moves over.
+    pub(super) fn row_count(&self) -> usize {
+        self.cursor_rows().len()
+    }
+
+    /// The row under the cursor, if the view is non-empty.
+    pub(super) fn cursor_row(&self) -> Option<Row> {
+        self.cursor_rows().get(self.cursor).copied()
+    }
+
+    /// The selected service index: the cursor entry, or `None` on an empty
+    /// view or a collapsed section header.
+    pub(super) fn selected_index(&self) -> Option<usize> {
+        match self.cursor_row()? {
+            Row::Entry(index) => Some(index),
+            Row::Collapsed(_) => None,
+        }
+    }
+
+    /// The row showing the entry `index`: its own row, or the header of the
+    /// collapsed section hiding it.
+    pub(super) fn row_of(&self, index: usize) -> Option<usize> {
+        let rows = self.cursor_rows();
+        if let Some(pos) = rows.iter().position(|&row| row == Row::Entry(index))
+        {
+            return Some(pos);
+        }
+        let groups = self.visible_groups();
+        let group = groups.iter().position(|g| g.items.contains(&index))?;
+        rows.iter().position(|&row| row == Row::Collapsed(group))
+    }
+
+    /// Clamps the cursor into the current row count.
+    pub(super) fn clamp_cursor_to_rows(&mut self) {
+        let rows = self.row_count();
+        self.cursor = self.cursor.min(rows.saturating_sub(1));
     }
 
     /// Everything a sort needs, borrowed from the statistics caches.
@@ -169,6 +225,7 @@ impl App {
             columns: state.columns.as_key().to_string(),
             grouped: state.grouped,
             fav_float: state.fav_float,
+            collapsed: state.collapsed.iter().cloned().collect(),
         }
     }
 
@@ -218,15 +275,31 @@ impl App {
             .map(|repo| repo.path.clone())
     }
 
-    /// Moves the cursor onto the entry with `path`, if it is still visible.
+    /// The path that brings the cursor back to where it is: the cursor entry,
+    /// or on a collapsed header the first entry it hides (which
+    /// [`App::refocus`] maps back onto that header).
+    pub(super) fn focus_path(&self) -> Option<PathBuf> {
+        let index = match self.cursor_row()? {
+            Row::Entry(index) => index,
+            Row::Collapsed(group) => {
+                *self.visible_groups().get(group)?.items.first()?
+            }
+        };
+        self.service.get(index).map(|repo| repo.path.clone())
+    }
+
+    /// Moves the cursor onto the entry with `path` (or the collapsed header
+    /// hiding it), if it is still visible.
     pub(super) fn refocus(&mut self, path: Option<PathBuf>) {
         let Some(path) = path else {
             return;
         };
-        let view = self.ordered_view();
-        let repos = self.service.repos();
-        if let Some(pos) = view.iter().position(|&i| repos[i].path == path) {
-            self.cursor = pos;
+        let index = self
+            .ordered_view()
+            .into_iter()
+            .find(|&i| self.service.repos()[i].path == path);
+        if let Some(row) = index.and_then(|index| self.row_of(index)) {
+            self.cursor = row;
         }
     }
 }

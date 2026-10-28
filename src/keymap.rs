@@ -98,6 +98,14 @@ pub enum Action {
     ToggleFavFloat,
     /// Jump to a section.
     SectionJump,
+    /// Jump to the start of the current (then the previous) section.
+    SectionPrev,
+    /// Jump to the start of the next section.
+    SectionNext,
+    /// Collapse the cursor's section onto its header, or expand it again.
+    ToggleCollapse,
+    /// Collapse every section, or expand them all when none is open.
+    ToggleCollapseAll,
     /// Manage sections.
     ManageSections,
     /// Reorder the cursor entry up (custom sort / within a section).
@@ -372,6 +380,30 @@ const ACTIONS: &[ActionSpec] = &[
         config_name: "section_jump",
         description: "jump to section",
         default_keys: &["s"],
+    },
+    ActionSpec {
+        action: Action::SectionPrev,
+        config_name: "section_prev",
+        description: "previous section",
+        default_keys: &["left"],
+    },
+    ActionSpec {
+        action: Action::SectionNext,
+        config_name: "section_next",
+        description: "next section",
+        default_keys: &["right"],
+    },
+    ActionSpec {
+        action: Action::ToggleCollapse,
+        config_name: "collapse_section",
+        description: "fold section",
+        default_keys: &["-"],
+    },
+    ActionSpec {
+        action: Action::ToggleCollapseAll,
+        config_name: "collapse_all",
+        description: "fold all",
+        default_keys: &["_"],
     },
     ActionSpec {
         action: Action::ManageSections,
@@ -737,6 +769,10 @@ mod tests {
                 | Action::ToggleGrouping
                 | Action::ToggleFavFloat
                 | Action::SectionJump
+                | Action::SectionPrev
+                | Action::SectionNext
+                | Action::ToggleCollapse
+                | Action::ToggleCollapseAll
                 | Action::ManageSections
                 | Action::ReorderUp
                 | Action::ReorderDown

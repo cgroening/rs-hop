@@ -18,6 +18,8 @@ const SECTIONS_GROUP: (&str, &[Action]) = (
     &[
         Action::ManageSections,
         Action::SectionJump,
+        Action::SectionNext,
+        Action::ToggleCollapse,
         Action::ToggleGrouping,
         Action::ReorderUp,
         Action::ReorderDown,
@@ -261,6 +263,19 @@ pub const HELP_SECTIONS: &[(&str, &[(Action, &str)])] = &[
             (
                 Action::SectionJump,
                 "jump to a section (in the grouped view)",
+            ),
+            (
+                Action::SectionPrev,
+                "go to the start of the section, then the previous one",
+            ),
+            (Action::SectionNext, "go to the next section (wraps)"),
+            (
+                Action::ToggleCollapse,
+                "fold the section onto its header / unfold it (enter too)",
+            ),
+            (
+                Action::ToggleCollapseAll,
+                "fold every section, or unfold all when none is open",
             ),
             (
                 Action::ManageSections,

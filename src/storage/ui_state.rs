@@ -36,6 +36,8 @@ pub struct TabView {
     pub grouped: bool,
     /// Whether favourites float to the top (off = pure sort).
     pub fav_float: bool,
+    /// The labels of the collapsed sections, in no particular order.
+    pub collapsed: Vec<String>,
 }
 
 impl Default for TabView {
@@ -47,6 +49,7 @@ impl Default for TabView {
             columns: "standard".to_string(),
             grouped: true,
             fav_float: true,
+            collapsed: Vec::new(),
         }
     }
 }
@@ -98,6 +101,7 @@ struct TabViewDoc {
     columns: Option<String>,
     grouped: Option<bool>,
     fav_float: Option<bool>,
+    collapsed: Option<Vec<String>>,
 }
 
 /// The two per-kind blocks, serialised as `[tabs.git]` / `[tabs.files]`.
@@ -143,6 +147,7 @@ fn tab_view(block: Option<TabViewDoc>, legacy: &UiStateDoc) -> TabView {
         columns: columns.unwrap_or_else(|| "standard".to_string()),
         grouped: block.grouped.unwrap_or(true),
         fav_float: block.fav_float.unwrap_or(true),
+        collapsed: block.collapsed.unwrap_or_default(),
     }
 }
 
@@ -182,6 +187,7 @@ fn view_doc(view: &TabView) -> TabViewDoc {
         columns: Some(view.columns.clone()),
         grouped: Some(view.grouped),
         fav_float: Some(view.fav_float),
+        collapsed: Some(view.collapsed.clone()),
     }
 }
 
@@ -231,6 +237,7 @@ mod tests {
                 columns: "code".to_string(),
                 grouped: false,
                 fav_float: false,
+                collapsed: Vec::new(),
             },
             files: TabView {
                 sort: SortMode::Recent,
@@ -238,6 +245,7 @@ mod tests {
                 columns: "standard".to_string(),
                 grouped: true,
                 fav_float: false,
+                collapsed: vec!["Work".to_string(), "Ungrouped".to_string()],
             },
             tab: Tab::FilesArchive,
             show_slugs: true,
@@ -289,6 +297,8 @@ mod tests {
         assert_eq!(state.files.columns, "code");
         // The new per-kind toggles default on.
         assert!(state.git.grouped && state.git.fav_float);
+        // A file from before collapsing existed has every section open.
+        assert!(state.git.collapsed.is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
 

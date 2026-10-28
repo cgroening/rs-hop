@@ -50,8 +50,7 @@ impl App {
         match self.service.undo() {
             Ok(Some(label)) => {
                 self.clear_selection();
-                let len = self.ordered_view().len();
-                self.clamp_cursor(len);
+                self.clamp_cursor_to_rows();
                 self.set_status(format!("undid: {label}"));
             }
             Ok(None) => self.set_status("nothing to undo"),
@@ -292,8 +291,7 @@ impl App {
             self.set_status(format!("could not change archive: {error}"));
         }
         self.clear_selection();
-        let len = self.ordered_view().len();
-        self.clamp_cursor(len);
+        self.clamp_cursor_to_rows();
     }
 
     /// Deletes the confirmed target entries.
@@ -301,8 +299,7 @@ impl App {
         match self.service.delete_many(&targets) {
             Ok(()) => {
                 self.clear_selection();
-                let len = self.ordered_view().len();
-                self.clamp_cursor(len);
+                self.clamp_cursor_to_rows();
                 let count = targets.len();
                 self.set_status(if count == 1 {
                     "deleted entry".to_string()
@@ -421,8 +418,7 @@ impl App {
         let count = indices.len();
         self.report(result, &format!("updated {count} entries"));
         self.clear_selection();
-        let len = self.ordered_view().len();
-        self.clamp_cursor(len);
+        self.clamp_cursor_to_rows();
         self.start_stats();
     }
 

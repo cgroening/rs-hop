@@ -17,7 +17,7 @@ Pick an entry and hop writes its path to a handoff file your shell reads to `cd`
 - **Fuzzy finder** over all visible columns (name, branch, status, GitHub name, path).
 - **Live git status** (branch, uncommitted changes, ahead/behind, GitHub repo name), gathered in the background and cached so the list shows instantly.
 - **Two tabs, each with its own archive**: Git Repos and Files and Folders. Press a tab's key (`1` / `2`) again to toggle into that kind's archive; `Tab`/`Shift+Tab` cycle the two active tabs. Each kind remembers its own sort, columns, grouping and fav-float across runs.
-- **Sections** on both kinds: group entries under named, reorderable section headers (Git and Files each keep their own section list; an archived entry keeps its group). `.` toggles the grouped view (off = a flat, globally sorted list with a Section column), `s` jumps to a section, `M` manages them, and inside a group entries follow the active sort mode.
+- **Sections** on both kinds: group entries under named, reorderable section headers (Git and Files each keep their own section list; an archived entry keeps its group). `.` toggles the grouped view (off = a flat, globally sorted list with a Section column), `s` jumps to a section, `←`/`→` step between sections, `-`/`_` fold one or all sections down to their header (remembered across runs), `M` manages them, and inside a group entries follow the active sort mode.
 - **In-app management**: add, edit, delete, favourite, archive/restore, set a slug - the config is written back preserving its comments. The add/edit form picks a section from a fuzzy-searchable list (type a new name to create it). Selecting several entries and pressing `e` bulk-edits their Section/Favourite/Backup/Kind at once, changing only the fields you touch and marking differing values as *mixed*.
 - **Content-aware open**: a file/folder entry auto-detects its target – a folder `cd`s, a text file (by extension; configurable via `editor_extensions`) opens in the editor, and any other file (image, PDF, …) opens with the system's default app.
 - **Slugs**: `hop <slug>` jumps straight to an entry from the shell; `hop add [PATH]` registers one without opening the TUI.
@@ -236,6 +236,9 @@ HOP_CONFIRM_QUIT    true | false: ask before quitting with `q`
 | `f` | live fuzzy filter (`Esc` clears; matched characters are highlighted) |
 | `F` | toggle showing only git repos with a status change |
 | `s` | jump to a section (in the grouped view) |
+| `←` / `→` | go to the start of the section, then the previous one / go to the next section (wraps; grouped view) |
+| `-` | fold the section onto its header, or unfold it (`Enter` on a folded header unfolds too); remembered across runs |
+| `_` | fold every section, or unfold all when none is open |
 | `M` | manage sections (add / rename / delete / reorder) |
 | `Alt+↑/↓` | reorder the entry within its group (custom sort; favourites stay on top) |
 | `n` | add an entry (fill the form; `^O` opens the path picker) |

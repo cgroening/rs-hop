@@ -5,6 +5,7 @@ use super::*;
 use ratada::nav::cycle;
 
 use crate::domain::filter::{Tab, TabKind};
+use crate::domain::sections::Row;
 use crate::domain::sort::SortMode;
 
 impl App {
@@ -53,10 +54,7 @@ impl App {
 
     /// Records the current tab's cursor entry by path, to restore on return.
     pub(super) fn remember_focus(&mut self) {
-        if let Some(index) = self.selected_index()
-            && let Some(repo) = self.service.get(index)
-        {
-            let path = repo.path.clone();
+        if let Some(path) = self.focus_path() {
             self.tab_focus.insert(self.tab, path);
         }
     }
@@ -65,14 +63,8 @@ impl App {
     /// path), or the top when none is remembered or it is no longer visible.
     pub(super) fn restore_focus(&mut self) {
         self.cursor = 0;
-        let Some(path) = self.tab_focus.get(&self.tab).cloned() else {
-            return;
-        };
-        let view = self.ordered_view();
-        let repos = self.service.repos();
-        if let Some(pos) = view.iter().position(|&i| repos[i].path == path) {
-            self.cursor = pos;
-        }
+        let remembered = self.tab_focus.get(&self.tab).cloned();
+        self.refocus(remembered);
     }
 
     /// Runs the per-tab first-visit work: the files tabs check that their paths
@@ -100,14 +92,14 @@ impl App {
     /// Moves the cursor cyclically within the current view; a plain move drops
     /// the range anchor so the next `Shift`-move re-anchors at the cursor.
     pub(super) fn move_cursor(&mut self, delta: isize) {
-        let len = self.ordered_view().len();
+        let len = self.row_count();
         self.cursor = cycle(self.cursor, len, delta);
         self.anchor = None;
     }
 
     /// Moves the cursor by `delta` without wrapping, clamped into the view.
     pub(super) fn move_clamped(&mut self, delta: isize) {
-        let len = self.ordered_view().len();
+        let len = self.row_count();
         if len == 0 {
             return;
         }
@@ -117,7 +109,7 @@ impl App {
 
     /// Jumps the cursor to the first (`g`) or last (`G`) entry.
     pub(super) fn cursor_to_edge(&mut self, to_end: bool) {
-        let len = self.ordered_view().len();
+        let len = self.row_count();
         self.cursor = if to_end { len.saturating_sub(1) } else { 0 };
         self.anchor = None;
     }
@@ -149,17 +141,24 @@ impl App {
     /// Extends the range selection by moving the cursor (clamped, not cyclic)
     /// and selecting every row between the anchor and the cursor.
     pub(super) fn extend_selection(&mut self, delta: isize) {
-        let view = self.ordered_view();
-        if view.is_empty() {
+        let rows = self.cursor_rows();
+        if rows.is_empty() {
             return;
         }
         let anchor = *self.anchor.get_or_insert(self.cursor);
-        let last = view.len() - 1;
+        let last = rows.len() - 1;
         let new =
             (self.cursor as isize + delta).clamp(0, last as isize) as usize;
         self.cursor = new;
         let (lo, hi) = (anchor.min(new).min(last), anchor.max(new).min(last));
-        self.selected = view[lo..=hi].iter().copied().collect();
+        // Only visible entries join the range; a collapsed header is skipped.
+        self.selected = rows[lo..=hi]
+            .iter()
+            .filter_map(|row| match row {
+                Row::Entry(index) => Some(*index),
+                Row::Collapsed(_) => None,
+            })
+            .collect();
     }
 
     /// Extends the range selection by a whole screen page, the `Shift`+page
@@ -177,16 +176,18 @@ impl App {
             self.set_status("switch to custom sort (t) to reorder");
             return;
         }
-        let view = self.ordered_view();
-        if view.is_empty() {
+        let rows = self.cursor_rows();
+        let neighbor = self.cursor as isize + delta;
+        if neighbor < 0 || neighbor as usize >= rows.len() {
             return;
         }
-        let cur = self.cursor.min(view.len() - 1);
-        let neighbor = cur as isize + delta;
-        if neighbor < 0 || neighbor as usize >= view.len() {
+        // Both ends must be entries: a collapsed header never swaps.
+        let (Some(Row::Entry(a)), Some(Row::Entry(b))) =
+            (rows.get(self.cursor), rows.get(neighbor as usize))
+        else {
             return;
-        }
-        let (a, b) = (view[cur], view[neighbor as usize]);
+        };
+        let (a, b) = (*a, *b);
         let repos = self.service.repos();
         // While favourites float, stay within the fav / non-fav segment.
         if self.fav_float() && repos[a].fav != repos[b].fav {
@@ -197,13 +198,8 @@ impl App {
             return;
         }
         let moved = repos[a].path.clone();
-        if self.service.swap_entries(a, b).is_ok()
-            && let Some(pos) = self
-                .ordered_view()
-                .iter()
-                .position(|&i| self.service.repos()[i].path == moved)
-        {
-            self.cursor = pos;
+        if self.service.swap_entries(a, b).is_ok() {
+            self.refocus(Some(moved));
         }
     }
 }

@@ -46,6 +46,10 @@ pub struct IconSet {
     pub remote: &'static str,
     /// Marker shown when an entry is excluded from the "backup all" (`Z`) run.
     pub excluded: &'static str,
+    /// Prefix of an expanded section's header bar.
+    pub section_open: &'static str,
+    /// Prefix of a collapsed section's header bar.
+    pub section_closed: &'static str,
 }
 
 impl IconSet {
@@ -53,17 +57,19 @@ impl IconSet {
     pub fn new(variant: GlyphVariant) -> Self {
         match variant {
             GlyphVariant::Unicode => IconSet {
-                missing: "\u{2717}",   // ✗
-                favourite: "\u{2605}", // ★
-                clean: "\u{2713}",     // ✓
-                changes: "\u{2260}",   // ≠
-                ahead: "\u{2191}",     // ↑
-                behind: "\u{2193}",    // ↓
-                count: "\u{2261}",     // ≡
-                sort: "\u{2195}",      // ↕
-                clock: "\u{21bb}",     // ↻
-                remote: "\u{21a7}",    // ↧
-                excluded: "\u{2298}",  // ⊘
+                missing: "\u{2717}",        // ✗
+                favourite: "\u{2605}",      // ★
+                clean: "\u{2713}",          // ✓
+                changes: "\u{2260}",        // ≠
+                ahead: "\u{2191}",          // ↑
+                behind: "\u{2193}",         // ↓
+                count: "\u{2261}",          // ≡
+                sort: "\u{2195}",           // ↕
+                clock: "\u{21bb}",          // ↻
+                remote: "\u{21a7}",         // ↧
+                excluded: "\u{2298}",       // ⊘
+                section_open: "\u{25be}",   // ▾
+                section_closed: "\u{25b8}", // ▸
             },
             GlyphVariant::Ascii => IconSet {
                 missing: "!",
@@ -77,6 +83,8 @@ impl IconSet {
                 clock: "@",
                 remote: "v",
                 excluded: "x",
+                section_open: "v",
+                section_closed: ">",
             },
         }
     }

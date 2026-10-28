@@ -30,7 +30,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crate::domain::stats::GitStats;
 
 /// A git client that does nothing (the smoke test runs in example mode).
-struct NoGit;
+pub(super) struct NoGit;
 
 impl GitClient for NoGit {
     fn collect(&self, _path: &Path) -> GitInfo {
@@ -57,7 +57,7 @@ fn app_with_keys(overrides: BTreeMap<String, Vec<String>>) -> App {
 }
 
 /// The demo settings every sample app shares: example mode, ASCII glyphs.
-fn sample_config() -> Config {
+pub(super) fn sample_config() -> Config {
     Config {
         example_mode: true,
         appearance: Appearance {

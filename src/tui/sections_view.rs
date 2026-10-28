@@ -3,11 +3,12 @@
 //! Unlike the git table, sections interleave non-selectable header rows with
 //! entry rows, so a `Table` cannot carry the cursor cleanly. Following mdtask's
 //! finder, the scroll offset is kept across frames (`offset`) so the cursor
-//! pages within the viewport and the list only scrolls at the edges; the
-//! cursor itself is an entry display position (headers are purely visual).
+//! pages within the viewport and the list only scrolls at the edges. The
+//! cursor is a [`Row`](crate::domain::sections::Row) position: an expanded
+//! section's header is purely visual, a collapsed one is a row of its own.
 
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 
 use chrono::{DateTime, Local};
@@ -59,6 +60,8 @@ pub struct SectionedView<'a> {
     pub tab: Tab,
     /// The display-ordered sections with their entry service indices.
     pub groups: &'a [SectionGroup],
+    /// The labels of the sections folded down to their header.
+    pub collapsed: &'a BTreeSet<String>,
     /// All service entries (indexed by the groups' items).
     pub repos: &'a [Repo],
     /// The resolved settings (branch column cap).
@@ -137,8 +140,8 @@ impl SectionedView<'_> {
     }
 }
 
-/// Renders the sectioned list into `area`, highlighting the entry at display
-/// position `cursor`.
+/// Renders the sectioned list into `area`, highlighting the cursor row at
+/// position `cursor` (see [`crate::domain::sections::rows`]).
 pub fn render(
     frame: &mut Frame,
     area: Rect,
@@ -156,7 +159,7 @@ pub fn render(
         ..area
     };
 
-    let row_count = view.groups.len() + entry_count(view.groups);
+    let row_count = item_count(view);
     let viewport = list_full.height as usize;
     let overflow = viewport > 0 && row_count > viewport;
     // Reserve the rightmost column for the scrollbar when the list overflows.
@@ -206,13 +209,20 @@ pub fn render(
     }
 }
 
-/// The total number of entry rows across `groups`.
-fn entry_count(groups: &[SectionGroup]) -> usize {
-    groups.iter().map(|group| group.items.len()).sum()
+/// The number of list items: one header per section, plus the entries of the
+/// expanded ones.
+fn item_count(view: &SectionedView) -> usize {
+    let entries: usize = view
+        .groups
+        .iter()
+        .filter(|group| !view.collapsed.contains(&group.label))
+        .map(|group| group.items.len())
+        .sum();
+    view.groups.len() + entries
 }
 
-/// Builds the list items and returns them with the cursor's row index and the
-/// first entry row index (used to snap the offset to the very top).
+/// Builds the list items and returns them with the cursor's item index and the
+/// first cursor row's item index (used to snap the offset to the very top).
 fn build_items<'a>(
     view: &SectionedView,
     cursor: usize,
@@ -220,26 +230,23 @@ fn build_items<'a>(
 ) -> (Vec<ListItem<'a>>, usize, usize) {
     let name_width = name_width(view);
     let mut items: Vec<ListItem> = Vec::new();
-    let mut cursor_row = 0;
-    let mut first_entry_row = 0;
-    let mut entry_pos = 0;
-    let mut seen_entry = false;
+    // The item index of every cursor row, in row order.
+    let mut row_items: Vec<usize> = Vec::new();
     for group in view.groups {
-        items.push(header_item(&group.label, width, view.colors));
+        if view.collapsed.contains(&group.label) {
+            row_items.push(items.len());
+            items.push(collapsed_header_item(view, group, width));
+            continue;
+        }
+        items.push(header_item(view, &group.label, width));
         for &index in &group.items {
-            let row = items.len();
-            if !seen_entry {
-                first_entry_row = row;
-                seen_entry = true;
-            }
-            if entry_pos == cursor {
-                cursor_row = row;
-            }
+            row_items.push(items.len());
             items.push(entry_item(view, index, name_width, width));
-            entry_pos += 1;
         }
     }
-    (items, cursor_row, first_entry_row)
+    let cursor_item = row_items.get(cursor).copied().unwrap_or(0);
+    let first_row_item = row_items.first().copied().unwrap_or(0);
+    (items, cursor_item, first_row_item)
 }
 
 /// The column-title row drawn above the sectioned list. Its columns are sized
@@ -322,9 +329,38 @@ fn stat_spans(view: &SectionedView, repo: &Repo) -> Vec<Span<'static>> {
     spans
 }
 
-/// A full-width section-header bar: the bold accent label then a dim rule.
-fn header_item<'a>(label: &str, width: usize, colors: &Colors) -> ListItem<'a> {
-    let title = format!(" {label} ");
+/// An expanded section's header bar (open marker, label, rule).
+fn header_item<'a>(
+    view: &SectionedView,
+    label: &str,
+    width: usize,
+) -> ListItem<'a> {
+    let title = format!(" {} {label} ", view.icons.section_open);
+    header_bar(title, width, view.colors)
+}
+
+/// A collapsed section's header bar: closed marker, label and the number of
+/// entries it hides.
+fn collapsed_header_item<'a>(
+    view: &SectionedView,
+    group: &SectionGroup,
+    width: usize,
+) -> ListItem<'a> {
+    let title = format!(
+        " {} {} ({}) ",
+        view.icons.section_closed,
+        group.label,
+        group.items.len(),
+    );
+    header_bar(title, width, view.colors)
+}
+
+/// A full-width section-header bar: the bold accent `title` then a dim rule.
+fn header_bar<'a>(
+    title: String,
+    width: usize,
+    colors: &Colors,
+) -> ListItem<'a> {
     let used = UnicodeWidthStr::width(title.as_str());
     let rule = "\u{2500}".repeat(width.saturating_sub(used));
     ListItem::new(Line::from(vec![

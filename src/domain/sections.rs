@@ -63,15 +63,70 @@ pub fn flatten(groups: &[SectionGroup]) -> Vec<usize> {
         .collect()
 }
 
-/// The display position (into the flattened list) at which each section starts.
-pub fn section_starts(groups: &[SectionGroup]) -> Vec<usize> {
+/// One cursor row of the grouped view: an entry, or the header of a collapsed
+/// section (which stands in for its hidden entries). An expanded section's
+/// header is purely visual and never a row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Row {
+    /// The entry with this (opaque, caller-owned) item index.
+    Entry(usize),
+    /// The collapsed section at this index into the groups.
+    Collapsed(usize),
+}
+
+/// The cursor rows across `groups`, in display order: one [`Row::Collapsed`]
+/// for each group `is_collapsed` reports by label, its entries otherwise.
+pub fn rows(
+    groups: &[SectionGroup],
+    is_collapsed: impl Fn(&str) -> bool,
+) -> Vec<Row> {
+    let mut rows = Vec::new();
+    for (pos, group) in groups.iter().enumerate() {
+        if is_collapsed(&group.label) {
+            rows.push(Row::Collapsed(pos));
+        } else {
+            rows.extend(group.items.iter().map(|&item| Row::Entry(item)));
+        }
+    }
+    rows
+}
+
+/// The row position at which each section starts: its collapsed header, or
+/// its first entry.
+pub fn row_starts(
+    groups: &[SectionGroup],
+    is_collapsed: impl Fn(&str) -> bool,
+) -> Vec<usize> {
     let mut starts = Vec::with_capacity(groups.len());
     let mut pos = 0;
     for group in groups {
         starts.push(pos);
-        pos += group.items.len();
+        pos += if is_collapsed(&group.label) {
+            1
+        } else {
+            group.items.len()
+        };
     }
     starts
+}
+
+/// The start of the section after the one holding `cursor`, wrapping from the
+/// last section to the first. `None` when there are no sections.
+pub fn next_start(starts: &[usize], cursor: usize) -> Option<usize> {
+    let current = current_section(starts, cursor)?;
+    Some(starts[(current + 1) % starts.len()])
+}
+
+/// The start of the section holding `cursor` when the cursor sits past it,
+/// else the start of the previous section (wrapping from the first to the
+/// last). `None` when there are no sections.
+pub fn prev_start(starts: &[usize], cursor: usize) -> Option<usize> {
+    let current = current_section(starts, cursor)?;
+    if starts[current] < cursor {
+        return Some(starts[current]);
+    }
+    let previous = (current + starts.len() - 1) % starts.len();
+    Some(starts[previous])
 }
 
 /// The index of the section containing the entry at display position `cursor`:
@@ -120,26 +175,73 @@ mod tests {
         assert_eq!(groups[0].label, UNGROUPED);
     }
 
+    /// Three sections of sizes 2, 1, 3 labelled a, b, c.
+    fn three_groups() -> Vec<SectionGroup> {
+        let group = |label: &str, items: Vec<usize>| SectionGroup {
+            label: label.to_string(),
+            items,
+        };
+        vec![
+            group("a", vec![0, 1]),
+            group("b", vec![2]),
+            group("c", vec![3, 4, 5]),
+        ]
+    }
+
     #[test]
-    fn starts_and_jump_move_between_sections() {
-        // Three sections of sizes 2,1,3 -> starts at 0,2,3.
-        let groups = vec![
-            SectionGroup {
-                label: "a".to_string(),
-                items: vec![0, 1],
-            },
-            SectionGroup {
-                label: "b".to_string(),
-                items: vec![2],
-            },
-            SectionGroup {
-                label: "c".to_string(),
-                items: vec![3, 4, 5],
-            },
-        ];
-        let starts = section_starts(&groups);
-        assert_eq!(starts, vec![0, 2, 3]);
-        assert_eq!(current_section(&starts, 1), Some(0));
-        assert_eq!(current_section(&starts, 4), Some(2));
+    fn rows_list_every_entry_when_nothing_is_collapsed() {
+        let rows = rows(&three_groups(), |_| false);
+        let expected: Vec<Row> = (0..6).map(Row::Entry).collect();
+        assert_eq!(rows, expected);
+    }
+
+    #[test]
+    fn a_collapsed_section_becomes_one_header_row() {
+        let rows = rows(&three_groups(), |label| label == "a");
+        assert_eq!(
+            rows,
+            vec![
+                Row::Collapsed(0),
+                Row::Entry(2),
+                Row::Entry(3),
+                Row::Entry(4),
+                Row::Entry(5),
+            ],
+        );
+    }
+
+    #[test]
+    fn row_starts_count_a_collapsed_section_as_one_row() {
+        let groups = three_groups();
+        assert_eq!(row_starts(&groups, |_| false), vec![0, 2, 3]);
+        assert_eq!(row_starts(&groups, |label| label == "a"), vec![0, 1, 2]);
+        assert_eq!(current_section(&[0, 2, 3], 1), Some(0));
+        assert_eq!(current_section(&[0, 2, 3], 4), Some(2));
+    }
+
+    #[test]
+    fn next_start_moves_on_and_wraps() {
+        let starts = [0, 2, 3];
+        assert_eq!(next_start(&starts, 1), Some(2));
+        assert_eq!(next_start(&starts, 2), Some(3));
+        assert_eq!(next_start(&starts, 5), Some(0));
+    }
+
+    #[test]
+    fn prev_start_goes_to_the_own_start_first() {
+        let starts = [0, 2, 3];
+        assert_eq!(prev_start(&starts, 5), Some(3));
+        assert_eq!(prev_start(&starts, 3), Some(2));
+    }
+
+    #[test]
+    fn prev_start_wraps_from_the_first_section() {
+        assert_eq!(prev_start(&[0, 2, 3], 0), Some(3));
+    }
+
+    #[test]
+    fn jumps_need_sections() {
+        assert_eq!(next_start(&[], 0), None);
+        assert_eq!(prev_start(&[], 0), None);
     }
 }

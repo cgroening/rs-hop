@@ -262,7 +262,7 @@ impl App {
             return;
         }
         if self.is_sectioned() {
-            self.render_sections(frame, area, view.len());
+            self.render_sections(frame, area);
             return;
         }
         let repos = self.service.repos();
@@ -308,20 +308,16 @@ impl App {
         );
     }
 
-    /// Renders the current tab as a sectioned list (`view_len` entries total).
-    pub(super) fn render_sections(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        view_len: usize,
-    ) {
-        let groups = self.section_groups();
-        let cursor = self.cursor.min(view_len.saturating_sub(1));
+    /// Renders the current tab as a sectioned list.
+    pub(super) fn render_sections(&self, frame: &mut Frame, area: Rect) {
+        let groups = self.visible_groups();
+        let cursor = self.cursor.min(self.row_count().saturating_sub(1));
         let spinner =
             self.spinner_frame().map(|glyph| (&self.refreshing, glyph));
         let view = crate::tui::sections_view::SectionedView {
             tab: self.tab,
             groups: &groups,
+            collapsed: &self.view().collapsed,
             repos: self.service.repos(),
             config: &self.config,
             icons: &self.icons,

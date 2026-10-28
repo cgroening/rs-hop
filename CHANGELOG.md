@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **`←` / `→` step between sections in the grouped view.** `→` goes to the next section, `←` to the start of the current one and then to the previous one; both wrap at the ends. Rebindable as `section_prev` / `section_next`.
+- **Sections can be folded down to their header.** `-` folds the cursor's section (the header then shows how many entries it hides, and the cursor sits on it) and unfolds it again; `Enter` on a folded header unfolds it too, and `_` folds or unfolds every section at once. Folds are kept per kind (Git / Files, shared by the active and archive tab) in `ui-state.toml` and survive a restart; renaming a section keeps its fold. Folding only hides rows – the entry count and the totals row still include the folded entries. Rebindable as `collapse_section` / `collapse_all`.
+
+### Fixed
+
+- **The changes-only filter (`F`) no longer desyncs the cursor in the grouped view.** The grouped list drew every entry while the cursor moved over the filtered ones, so the highlight and the entry an action hit could differ.
+
 ## [0.4.1] - 2026-07-19
 
 ### Fixed
