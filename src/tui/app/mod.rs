@@ -178,10 +178,8 @@ pub struct App {
     filtering: bool,
     filter: InputField,
     overlay: Overlay,
-    /// The help overlay's scroll position, kept across frames.
-    help_scroll: crate::tui::scroll::Scroll,
-    /// The help overlay's fuzzy filter, kept while the overlay is open.
-    help_query: InputField,
+    /// The help overlay's query, cursor and scroll, kept while it is open.
+    help: ratada::help::HelpState,
     status_msg: Option<(String, Instant)>,
     loading: Option<(usize, usize)>,
     /// The progress-bar label for the current `loading` operation (a refresh or
@@ -441,8 +439,7 @@ impl App {
             filtering: false,
             filter: InputField::new(""),
             overlay: Overlay::None,
-            help_scroll: crate::tui::scroll::Scroll::default(),
-            help_query: InputField::new(""),
+            help: ratada::help::HelpState::new(),
             status_msg: None,
             loading: None,
             loading_label: REFRESH_LABEL,

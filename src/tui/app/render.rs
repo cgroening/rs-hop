@@ -11,7 +11,6 @@ use ratatui::text::{Line, Span};
 
 use crate::domain::filter::{Tab, TabKind};
 use crate::domain::repo::Repo;
-use crate::tui::help::HelpView;
 use crate::tui::presentation::{FieldView, field_spans, render_empty_hint};
 
 /// The label in front of the live filter in the status band.
@@ -354,11 +353,8 @@ impl App {
                 frame,
                 area,
                 skin,
-                &HelpView {
-                    sections: &self.help_sections(),
-                    query: self.help_query.value(),
-                },
-                &self.help_scroll,
+                &self.help_sections(),
+                &self.help,
             ),
             Overlay::Confirm(modal, _) => modal.render(frame, area, skin),
             Overlay::Prompt(prompt, _) => prompt.render(frame, area, skin),

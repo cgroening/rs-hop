@@ -609,6 +609,26 @@ fn filter_and_help_overlay_render() {
     terminal.draw(|frame| app.render(frame)).unwrap();
 }
 
+/// The help overlay used to show its filter only as a footer hint, so typing
+/// narrowed the list without any visible input.
+#[test]
+fn typing_in_the_help_overlay_shows_the_query_on_its_search_line() {
+    let mut app = sample_app();
+    press(&mut app, KeyCode::Char('?'));
+    for ch in "quit".chars() {
+        press(&mut app, KeyCode::Char(ch));
+    }
+    assert!(matches!(app.overlay, Overlay::Help), "typing keeps it open");
+    let shown = screen(&app, 100, 30);
+    assert!(
+        shown.contains("search quit"),
+        "no visible query in:\n{shown}"
+    );
+
+    press(&mut app, KeyCode::Esc);
+    assert!(matches!(app.overlay, Overlay::None), "Esc closes the help");
+}
+
 #[test]
 fn pressing_shift_l_on_a_git_repo_returns_launch_outcome() {
     let mut app = sample_app();

@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **The help overlay (`?`) shows what you type.** The filter used to appear only as a hint in the footer, so typing narrowed the list with no visible input. The overlay is now the same one mdtask uses: a `search` line with a caret at the top, matches highlighted, a cursor row (`↑`/`↓`, `PgUp`/`PgDn`, `Home`/`End`), `Tab`/`Shift+Tab` to jump between sections and a position badge. `Esc` now closes it directly instead of clearing the filter first; the background refresh keeps running behind it as before.
 - **The changes-only filter (`F`) no longer desyncs the cursor in the grouped view.** The grouped list drew every entry while the cursor moved over the filtered ones, so the highlight and the entry an action hit could differ.
 
 ## [0.4.1] - 2026-07-19

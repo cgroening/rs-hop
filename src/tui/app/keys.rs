@@ -10,12 +10,14 @@ use super::*;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
+use ratada::help::{HelpFlow, HelpState};
 use ratada::input::InputField;
 use ratada::shortcut_hints;
 
 use crate::domain::filter::TabKind;
 use crate::keymap::Action;
 use crate::tui::form::FormResult;
+use crate::tui::help::as_help_sections;
 use crate::tui::path_picker::PickerResult;
 use crate::tui::section_picker::SectionPickResult;
 use crate::tui::widgets::{ConfirmResult, PromptResult, SelectResult};
@@ -57,6 +59,7 @@ impl App {
             Overlay::SectionPrompt(prompt, _) => prompt.paste(text),
             Overlay::SectionPicker(picker, ..) => picker.paste(text),
             Overlay::Picker(picker, _) => picker.paste(text),
+            Overlay::Help => self.help.paste(text),
             _ => {}
         }
     }
@@ -203,34 +206,25 @@ impl App {
 
     /// Routes a key inside the help overlay.
     ///
-    /// `?` closes it. `Esc` clears a typed filter first and only closes once
-    /// the filter is empty, so narrowing down and backing out are one key.
-    /// A plain character types into the fuzzy filter; everything else scrolls.
+    /// The overlay is `ratada::help`'s: `Esc` and `?` close it, the arrows and
+    /// `Tab` move through it, and a typed character filters it.
     fn handle_help_key(&mut self, key: KeyEvent) {
-        self.overlay = Overlay::Help;
-        match key.code {
-            KeyCode::Char('?') => self.close_help(),
-            KeyCode::Esc if self.help_query.value().is_empty() => {
-                self.close_help();
-            }
-            KeyCode::Esc => self.help_query = InputField::new(""),
-            KeyCode::Backspace => {
-                self.help_query.handle_key(key);
-                self.help_scroll.reset();
-            }
-            _ if ratada::input::is_bare_character(key) => {
-                self.help_query.handle_key(key);
-                self.help_scroll.reset();
-            }
-            _ => self.help_scroll.handle_key(key),
+        let sections = self.help_sections();
+        let flow = ratada::help::handle_key(
+            &mut self.help,
+            key,
+            &as_help_sections(&sections),
+        );
+        match flow {
+            HelpFlow::Continue => self.overlay = Overlay::Help,
+            HelpFlow::Close => self.close_help(),
         }
     }
 
     /// Closes the help overlay and forgets its filter.
     fn close_help(&mut self) {
         self.overlay = Overlay::None;
-        self.help_query = InputField::new("");
-        self.help_scroll.reset();
+        self.help = HelpState::new();
     }
 
     /// Handles a key for the list view (no overlay open).
@@ -364,8 +358,7 @@ impl App {
             Action::RefreshOne => self.refresh_targets(false),
             Action::RefreshOneFetch => self.refresh_targets(true),
             Action::Help => {
-                self.help_scroll.reset();
-                self.help_query = InputField::new("");
+                self.help = HelpState::new();
                 self.overlay = Overlay::Help;
             }
             Action::Quit => return Some(RunOutcome::Quit),
