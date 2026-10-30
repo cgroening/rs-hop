@@ -125,7 +125,11 @@ impl App {
             self.loading_name_width = 0;
         }
         if self.status_jobs.is_empty() {
-            self.refreshing.clear();
+            // Keep the rows a running pull or push still owes spinning.
+            match &self.sync_job {
+                Some(job) => self.refreshing.retain(|path| job.owes(path)),
+                None => self.refreshing.clear(),
+            }
             // A tab switched to mid-refresh deferred its first-visit refresh;
             // run it now that every refresh has drained.
             self.refresh_tab_on_first_visit();

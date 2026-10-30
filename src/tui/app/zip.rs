@@ -62,8 +62,8 @@ impl App {
     /// Starts a background ZIP backup of the repos at `indices`, showing the
     /// progress bar. Refuses to start while another refresh or backup runs.
     pub(super) fn start_zip(&mut self, indices: &[usize]) {
-        if self.loading.is_some() {
-            self.set_status("busy: a refresh or backup is running");
+        if self.loading.is_some() || self.is_syncing() {
+            self.set_status("busy: a refresh, backup, pull or push is running");
             return;
         }
         let Some(folder) = self.config.zip_backup_folder.as_deref() else {

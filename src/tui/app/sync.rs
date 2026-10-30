@@ -1,15 +1,22 @@
 //! Pulling and pushing git entries from the list: the confirmation for a whole
 //! tab, the background worker, and how its result is reported.
 //!
-//! A run owns the progress bar like a refresh or a ZIP backup does, so only one
-//! of them runs at a time. Each repository's status is updated as soon as it is
-//! done; skips and failures open a result list once the run ends.
+//! Like a refresh, every repository in flight shows the row spinner; a
+//! whole-tab run (`D`/`U`) also drives the progress bar, as `R` does, while a
+//! run over the selection or cursor (`p`/`P`) stays on the rows, as `x` does.
+//! Only one pull or push runs at a time, and never next to a refresh or a ZIP
+//! backup. Each repository's status is updated as soon as it is done; skips
+//! and failures open a result list once the run ends.
 
 use super::*;
 use unicode_width::UnicodeWidthStr;
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
+use std::time::Instant;
+
+use ratada::spinner::Spinner;
 
 use chrono::Local;
 
@@ -38,6 +45,13 @@ enum SyncScope {
     WholeTab,
 }
 
+impl SyncScope {
+    /// Whether the run drives the progress bar (only a whole-tab run does).
+    fn has_bar(self) -> bool {
+        self == SyncScope::WholeTab
+    }
+}
+
 /// One in-flight pull or push run.
 pub(super) struct SyncJob {
     /// Receives the worker's updates.
@@ -49,6 +63,16 @@ pub(super) struct SyncJob {
     scope: SyncScope,
     /// The finished repositories so far, as (display name, outcome).
     results: Vec<(String, SyncOutcome)>,
+    /// Paths not reported yet, so their spinners can be cleared if the worker
+    /// ends early (and a refresh finishing meanwhile leaves them spinning).
+    remaining: HashSet<PathBuf>,
+}
+
+impl SyncJob {
+    /// Whether `path` still waits for its pull or push.
+    pub(super) fn owes(&self, path: &Path) -> bool {
+        self.remaining.contains(path)
+    }
 }
 
 impl App {
@@ -101,7 +125,9 @@ impl App {
         loop {
             match job.rx.try_recv() {
                 Ok(SyncUpdate::Started { path }) => {
-                    self.loading_detail = Some(self.name_for_path(&path));
+                    if job.scope.has_bar() {
+                        self.loading_detail = Some(self.name_for_path(&path));
+                    }
                 }
                 Ok(SyncUpdate::Done(report)) => {
                     self.apply_sync(&mut job, report)
@@ -128,7 +154,10 @@ impl App {
             Some(GIT_TABS_ONLY)
         } else if self.config.example_mode {
             Some("example mode: live status is off")
-        } else if self.loading.is_some() || self.is_refreshing() {
+        } else if self.loading.is_some()
+            || self.is_refreshing()
+            || self.is_syncing()
+        {
             Some(BUSY)
         } else {
             None
@@ -152,18 +181,29 @@ impl App {
             .collect()
     }
 
-    /// Hands `paths` to the background worker and shows the progress bar.
+    /// Hands `paths` to the background worker: their rows spin, and a
+    /// whole-tab run also shows the progress bar.
     fn start_sync(
         &mut self,
         op: SyncOp,
         paths: Vec<PathBuf>,
         scope: SyncScope,
     ) {
-        self.set_status(format!("{}…", op.progressive()));
-        self.loading = Some((0, paths.len()));
-        self.loading_label = op.progressive();
-        self.loading_detail = None;
-        self.loading_name_width = self.max_name_width(&paths);
+        self.set_status(self.start_message(op, &paths));
+        // Start the spinner only when nothing is animating, so it keeps its
+        // rhythm (the same rule as a refresh).
+        if self.refreshing.is_empty() {
+            self.spinner = Spinner::new();
+            self.spinner_at = Instant::now();
+        }
+        self.refreshing.extend(paths.iter().cloned());
+        if scope.has_bar() {
+            self.loading = Some((0, paths.len()));
+            self.loading_label = op.progressive();
+            self.loading_detail = None;
+            self.loading_name_width = self.max_name_width(&paths);
+        }
+        let remaining = paths.iter().cloned().collect();
         let plan = SyncPlan {
             op,
             options: SyncOptions {
@@ -175,25 +215,47 @@ impl App {
             op,
             scope,
             results: Vec::new(),
+            remaining,
         });
     }
 
-    /// Records one finished repository: its fresh status, the bar, the result.
+    /// "pulling hop…" for one repository, "pulling 3 entries…" for several.
+    fn start_message(&self, op: SyncOp, paths: &[PathBuf]) -> String {
+        match paths {
+            [path] => {
+                format!("{} {}…", op.progressive(), self.name_for_path(path))
+            }
+            _ => format!("{} {} entries…", op.progressive(), paths.len()),
+        }
+    }
+
+    /// Records one finished repository: its fresh status, its spinner, the
+    /// bar, the result.
     fn apply_sync(&mut self, job: &mut SyncJob, report: SyncReport) {
         let name = self.name_for_path(&report.path);
+        self.refreshing.remove(&report.path);
+        job.remaining.remove(&report.path);
         self.service.set_git_info(&report.path, report.info);
-        if let Some((done, _)) = &mut self.loading {
+        if job.scope.has_bar()
+            && let Some((done, _)) = &mut self.loading
+        {
             *done += 1;
         }
         job.results.push((name, report.outcome));
     }
 
-    /// Ends a run: clears the bar, persists the fresh status, and reports.
+    /// Ends a run: stops its spinners and the bar, persists the fresh status,
+    /// and reports.
     fn finish_sync(&mut self, job: SyncJob) {
-        self.loading = None;
-        self.loading_label = REFRESH_LABEL;
-        self.loading_detail = None;
-        self.loading_name_width = 0;
+        for path in &job.remaining {
+            self.refreshing.remove(path);
+        }
+        if job.scope.has_bar() {
+            self.loading = None;
+            self.loading_label = REFRESH_LABEL;
+            self.loading_detail = None;
+            self.loading_name_width = 0;
+        }
         let has_fetched =
             job.op == SyncOp::Pull && job.scope == SyncScope::WholeTab;
         self.finish_refresh(has_fetched);

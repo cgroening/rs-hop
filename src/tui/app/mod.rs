@@ -209,8 +209,9 @@ pub struct App {
     /// All in-flight background status refreshes, drained each loop. Several may
     /// run at once, so starting one never cancels another.
     status_jobs: Vec<RefreshJob>,
-    /// Paths across all active refreshes that have not been updated yet (drive
-    /// the per-row spinner). Empty when no refresh is running.
+    /// Paths across all active refreshes and the running pull/push that have
+    /// not been updated yet (drive the per-row spinner). Empty when nothing is
+    /// in flight.
     refreshing: HashSet<PathBuf>,
     /// The per-row refresh spinner, stepped by [`App::tick`].
     spinner: Spinner,

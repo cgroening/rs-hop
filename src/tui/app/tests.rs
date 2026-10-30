@@ -811,3 +811,69 @@ fn the_results_list_closes_on_esc() {
     press(&mut app, KeyCode::Esc);
     assert!(matches!(app.overlay, Overlay::None));
 }
+
+/// A sample app on live (non-example) git status, with the start-up refresh
+/// already drained so a pull or push may start.
+fn live_app() -> App {
+    let mut config = sample_config();
+    config.example_mode = false;
+    let mut app = app_with(config);
+    settle(&mut app);
+    app
+}
+
+/// Drains the background workers until nothing is in flight.
+fn settle(app: &mut App) {
+    for _ in 0..400 {
+        app.drain_status();
+        app.drain_sync();
+        if !app.is_refreshing() && !app.is_syncing() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    panic!("the background workers never finished");
+}
+
+#[test]
+fn pulling_the_cursor_repo_spins_its_row_without_the_progress_bar() {
+    let mut app = live_app();
+    press(&mut app, KeyCode::Char('p'));
+    assert!(app.is_syncing());
+    assert_eq!(app.refreshing.len(), 1, "only the cursor row spins");
+    assert!(app.loading.is_none(), "no progress bar for a target run");
+
+    settle(&mut app);
+    assert!(
+        app.refreshing.is_empty(),
+        "the spinner stops when it is done"
+    );
+    assert!(app.loading.is_none());
+}
+
+#[test]
+fn pulling_the_whole_tab_shows_the_bar_and_spins_every_row() {
+    let mut app = live_app();
+    press(&mut app, KeyCode::Char('D'));
+    assert!(matches!(app.overlay, Overlay::SyncConfirm(..)));
+    press(&mut app, KeyCode::Char('y'));
+    assert!(app.is_syncing());
+    assert_eq!(app.loading, Some((0, 2)), "both active git repos");
+    assert!(app.refreshing.contains(Path::new("/code/hop")));
+    assert!(app.refreshing.contains(Path::new("/code/gone")));
+
+    settle(&mut app);
+    assert!(app.loading.is_none());
+    assert!(app.refreshing.is_empty());
+}
+
+#[test]
+fn a_running_target_pull_blocks_another_sync_and_a_backup() {
+    let mut app = live_app();
+    press(&mut app, KeyCode::Char('p'));
+    for key in ['P', 'z'] {
+        press(&mut app, KeyCode::Char(key));
+        assert!(status_text(&app).starts_with("busy:"), "{key}");
+    }
+    settle(&mut app);
+}
