@@ -29,6 +29,9 @@ const GLYPHS_ENV: &str = "HOP_GLYPHS";
 /// Environment override for the quit confirmation.
 const CONFIRM_QUIT_ENV: &str = "HOP_CONFIRM_QUIT";
 
+/// Environment override for the pull/push stall timeout, in seconds.
+const GIT_TIMEOUT_ENV: &str = "HOP_GIT_TIMEOUT_SECS";
+
 /// Raw settings as read from TOML; the `repos` array is intentionally ignored.
 #[derive(Debug, Default, Deserialize)]
 struct RawConfig {
@@ -36,6 +39,7 @@ struct RawConfig {
     github_username: Option<String>,
     example_mode: Option<bool>,
     fetch_on_start: Option<bool>,
+    git_timeout_secs: Option<u64>,
     confirm_quit: Option<bool>,
     editor: Option<String>,
     editor_extensions: Option<Vec<String>>,
@@ -143,6 +147,10 @@ fn build(raw: RawConfig) -> Config {
         github_username: raw.github_username.or(defaults.github_username),
         example_mode: raw.example_mode.unwrap_or(defaults.example_mode),
         fetch_on_start: raw.fetch_on_start.unwrap_or(defaults.fetch_on_start),
+        git_timeout_secs: raw
+            .git_timeout_secs
+            .filter(|secs| *secs > 0)
+            .unwrap_or(defaults.git_timeout_secs),
         confirm_quit: raw.confirm_quit.unwrap_or(defaults.confirm_quit),
         editor: raw.editor.or(defaults.editor),
         editor_extensions: raw
@@ -320,6 +328,17 @@ fn apply_env(config: &mut Config) {
     {
         config.confirm_quit = flag;
     }
+    if let Ok(value) = env::var(GIT_TIMEOUT_ENV)
+        && let Some(secs) = parse_timeout(&value)
+    {
+        config.git_timeout_secs = secs;
+    }
+}
+
+/// Parses a positive number of seconds. Zero or anything unreadable leaves the
+/// setting alone: a zero timeout would make every pull and push fail at once.
+fn parse_timeout(value: &str) -> Option<u64> {
+    value.trim().parse::<u64>().ok().filter(|secs| *secs > 0)
 }
 
 /// Parses a boolean environment value. Anything else leaves the setting alone,
@@ -335,6 +354,7 @@ fn parse_bool(value: &str) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::DEFAULT_GIT_TIMEOUT_SECS;
 
     /// The `(section, name)` pairs `content` reports as unusable.
     fn unknown(content: &str) -> Vec<(String, String)> {
@@ -416,9 +436,25 @@ mod tests {
         assert_eq!(config.git_program.as_deref(), Some("lazygit"));
         assert!(!config.example_mode);
         assert!(!config.fetch_on_start);
+        assert_eq!(config.git_timeout_secs, DEFAULT_GIT_TIMEOUT_SECS);
         assert_eq!(config.appearance.glyphs, GlyphVariant::Unicode);
         assert_eq!(config.column_widths, ColumnWidths::default());
         assert!(config.editor_extensions.iter().any(|e| e == "rs"));
+    }
+
+    #[test]
+    fn git_timeout_is_read_and_a_zero_keeps_the_default() {
+        let raw: RawConfig = toml::from_str("git_timeout_secs = 40\n").unwrap();
+        assert_eq!(build(raw).git_timeout_secs, 40);
+        let raw: RawConfig = toml::from_str("git_timeout_secs = 0\n").unwrap();
+        assert_eq!(build(raw).git_timeout_secs, DEFAULT_GIT_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn a_timeout_from_the_environment_must_be_a_positive_number() {
+        assert_eq!(parse_timeout(" 30 "), Some(30));
+        assert_eq!(parse_timeout("0"), None);
+        assert_eq!(parse_timeout("soon"), None);
     }
 
     #[test]

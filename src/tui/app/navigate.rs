@@ -83,7 +83,7 @@ impl App {
             }
             return;
         }
-        if !self.auto_refresh || self.is_refreshing() {
+        if !self.auto_refresh || self.is_refreshing() || self.is_syncing() {
             return;
         }
         self.start_refresh(false);

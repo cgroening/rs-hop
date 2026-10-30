@@ -12,6 +12,8 @@ pub const RESERVED: &[&str] = &[
     "add",
     "scan",
     "doctor",
+    "pull",
+    "push",
     "list",
     "show-config",
     // The former name of `show-config`, still accepted as an alias.

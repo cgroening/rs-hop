@@ -5,6 +5,7 @@ pub mod archive;
 pub mod clipboard;
 pub mod diskusage;
 pub mod fs;
+pub mod interrupt;
 pub mod logging;
 pub mod opener;
 pub mod paths;

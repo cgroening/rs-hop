@@ -9,7 +9,8 @@
 //! [`open`] (leaving the TUI for something else), [`edit`] (mutating entries),
 //! [`section_manager`] (the section overlays), [`refresh`] (the git-status
 //! workers and the path-error state they feed), [`stats`] (the statistics
-//! workers), [`zip`] (the ZIP-backup worker), [`panel`] (the detail panel),
+//! workers), [`sync`] (pulling and pushing), [`zip`] (the ZIP-backup worker),
+//! [`panel`] (the detail panel),
 //! [`render`] (state to frame), [`hints`] (footer/help metadata) and
 //! [`progress`] (the progress bar).
 //!
@@ -28,6 +29,7 @@ mod refresh;
 mod render;
 mod section_manager;
 mod stats;
+mod sync;
 mod view;
 mod zip;
 
@@ -51,6 +53,7 @@ use ratada::spinner::Spinner;
 use crate::config::Config;
 use crate::domain::filter::{Tab, TabKind};
 use crate::domain::sort::{SortDir, SortMode};
+use crate::domain::sync::SyncOp;
 use crate::keymap::Keymap;
 use crate::service::preview_service::PreviewLog;
 use crate::service::repo_service::RepoService;
@@ -124,6 +127,10 @@ enum Overlay {
     SectionDelete(ConfirmModal, String),
     /// The sort picker; the vec maps rows to modes.
     Sort(SelectModal, Vec<SortMode>),
+    /// Asks before pulling or pushing every git entry of the tab (these paths).
+    SyncConfirm(ConfirmModal, SyncOp, Vec<PathBuf>),
+    /// The outcome of each repository of the last pull or push run.
+    SyncResults(SelectModal),
 }
 
 /// Why the section prompt is open.
@@ -192,6 +199,8 @@ pub struct App {
     loading_name_width: usize,
     /// Receives background ZIP-backup progress, drained each loop.
     zip_rx: Option<Receiver<ZipUpdate>>,
+    /// The running pull or push, drained each loop.
+    sync_job: Option<sync::SyncJob>,
     /// Last ZIP-backup time per repo path, shown in the "ZIP Backup" column.
     /// Loaded once at start and after each backup (no per-frame filesystem I/O).
     zip_backups: HashMap<PathBuf, DateTime<Local>>,
@@ -331,6 +340,7 @@ pub fn run(mut app: App, tui: &mut Tui) -> io::Result<RunOutcome> {
     loop {
         app.drain_status();
         app.drain_zip();
+        app.drain_sync();
         app.drain_preview();
         app.drain_code_stats();
         app.drain_git_stats();
@@ -338,14 +348,17 @@ pub fn run(mut app: App, tui: &mut Tui) -> io::Result<RunOutcome> {
         tui.draw(|frame| app.render(frame))?;
         // Poll faster while a refresh or backup runs (progress bar) or while a
         // preview log is being debounced/fetched, so updates land promptly.
-        let timeout =
-            if app.is_refreshing() || app.is_zipping() || app.is_computing() {
-                80
-            } else if app.preview_busy() {
-                60
-            } else {
-                150
-            };
+        let timeout = if app.is_refreshing()
+            || app.is_zipping()
+            || app.is_syncing()
+            || app.is_computing()
+        {
+            80
+        } else if app.preview_busy() {
+            60
+        } else {
+            150
+        };
         let outcome = match tui.poll_event(Duration::from_millis(timeout))? {
             // The hard `Ctrl+Q` is the escape hatch and never asks.
             Some(TuiEvent::Quit) => Some(RunOutcome::Quit),
@@ -446,6 +459,7 @@ impl App {
             loading_detail: None,
             loading_name_width: 0,
             zip_rx: None,
+            sync_job: None,
             zip_backups: HashMap::new(),
             cache_generated_at: cached.generated_at,
             last_fetched: cached.fetched_at,

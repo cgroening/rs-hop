@@ -4,7 +4,8 @@
 //! A bare invocation opens the interactive TUI; `hop <slug>` jumps straight to
 //! an entry. This module resolves the config path, wires the TOML repository
 //! into the [`RepoService`] and the subprocess git client, then dispatches. The
-//! handlers themselves live in [`list`], [`scan`] and [`jump`]; they return a
+//! handlers themselves live in [`list`], [`scan`], [`sync`] and [`jump`]; they
+//! return a
 //! [`CliResult`] and never exit the process, so the translation into a message
 //! and an exit code happens exactly once, in [`run`].
 
@@ -14,13 +15,14 @@ mod jump;
 mod list;
 pub mod output;
 mod scan;
+mod sync;
 
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 
 use crate::cli::context::CliContext;
@@ -28,10 +30,13 @@ use crate::cli::output::{
     CliError, CliResult, EXIT_OK, Streams, apply_sparcli_theme, report,
 };
 use crate::cli::scan::{AddRequest, KindArg, ScanRequest};
+use crate::cli::sync::SyncRequest;
 use crate::config::Config;
 use crate::config::loader::load_config;
 use crate::domain::repo::RepoKind;
+use crate::domain::sync::SyncOp;
 use crate::service::repo_service::RepoService;
+use crate::service::sync_service::{SyncOptions, SyncPlan};
 use crate::storage::in_memory_repository::InMemoryRepoRepository;
 use crate::storage::repository::RepoRepository;
 use crate::storage::subprocess_git_client::SubprocessGitClient;
@@ -55,6 +60,7 @@ Examples:
   hop myrepo               Jumps to the entry with the slug 'myrepo'
   hop add ~/code/project   Registers a path, detecting whether it is a repo
   hop scan ~/code --yes    Imports every git repo found, without asking
+  hop pull --yes           Pulls every active git repo, without asking
   hop list --json | jq .   Prints the entries as machine-readable JSON
 
 Exit codes:
@@ -174,6 +180,12 @@ enum Command {
     },
     /// Reports problems with the entries (missing paths, bad/duplicate slugs).
     Doctor,
+    /// Pulls git repos (fast-forward only): the given slugs, else every
+    /// active one.
+    Pull(SyncArgs),
+    /// Pushes git repos with commits ahead: the given slugs, else every
+    /// active one.
+    Push(SyncArgs),
     /// Prints a shell completion script.
     Completions {
         /// The shell to generate for.
@@ -185,6 +197,53 @@ enum Command {
     /// Jumps to a slug (`hop <slug>`).
     #[command(external_subcommand)]
     Jump(Vec<String>),
+}
+
+impl Command {
+    /// The direction and arguments of a pull or push; `None` for any other
+    /// command.
+    fn sync(&self) -> Option<(SyncOp, &SyncArgs)> {
+        match self {
+            Command::Pull(args) => Some((SyncOp::Pull, args)),
+            Command::Push(args) => Some((SyncOp::Push, args)),
+            _ => None,
+        }
+    }
+}
+
+/// The arguments `hop pull` and `hop push` share.
+#[derive(Debug, Args)]
+struct SyncArgs {
+    /// Slugs of the repos to sync (default: every active git repo).
+    slugs: Vec<String>,
+    /// Include archived repos (only without slugs).
+    #[arg(long, conflicts_with = "slugs")]
+    archive: bool,
+    /// Sync every repo without asking (also the way to run this without a
+    /// terminal).
+    #[arg(short = 'y', long)]
+    yes: bool,
+    /// Only show what would happen; do not pull or push.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+impl SyncArgs {
+    /// The handler's request for an `op` run under `config`.
+    fn request(&self, op: SyncOp, config: &Config) -> SyncRequest {
+        SyncRequest {
+            plan: SyncPlan {
+                op,
+                options: SyncOptions {
+                    timeout_secs: config.git_timeout_secs,
+                },
+            },
+            slugs: self.slugs.clone(),
+            is_including_archived: self.archive,
+            assume_yes: self.yes,
+            dry_run: self.dry_run,
+        }
+    }
 }
 
 /// Parses arguments and runs the requested command.
@@ -251,6 +310,16 @@ fn dispatch(cli: &Cli, streams: &mut Streams) -> Result<Outcome, CliError> {
     }
     let mut service = build_service(&config_path)?;
 
+    if let Some((op, args)) = cli.command.as_ref().and_then(Command::sync) {
+        let client = git_client(&config);
+        let repos = sync::Repos {
+            service: &service,
+            client: &client,
+        };
+        sync::run(repos, args.request(op, &config), ctx, streams)?;
+        return Ok(Outcome::Code(EXIT_OK));
+    }
+
     match &cli.command {
         None => {
             let startup = startup_status(cli, &config);
@@ -309,6 +378,8 @@ fn dispatch(cli: &Cli, streams: &mut Streams) -> Result<Outcome, CliError> {
             scan::run_doctor(&service, streams)?;
             Ok(Outcome::Code(EXIT_OK))
         }
+        // Handled above, as one arm for both directions.
+        Some(Command::Pull(_) | Command::Push(_)) => Ok(Outcome::Code(EXIT_OK)),
         // Handled above, before the config is loaded.
         Some(
             Command::ShowConfig | Command::Completions { .. } | Command::Man,
@@ -344,6 +415,12 @@ fn resolve_config_path(cli: &Cli) -> PathBuf {
         return PathBuf::from(value);
     }
     paths::config_file()
+}
+
+/// The git client every command shares, stripping the configured GitHub user
+/// from remote names.
+fn git_client(config: &Config) -> SubprocessGitClient {
+    SubprocessGitClient::new(config.github_username.clone())
 }
 
 /// Builds a [`RepoService`] backed by the TOML file at `config_path`.

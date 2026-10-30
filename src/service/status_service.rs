@@ -115,6 +115,8 @@ mod tests {
 
     /// A fake client returning a fixed branch, recording fetches.
     use crate::domain::stats::GitStats;
+    use crate::domain::sync::SyncOutcome;
+    use crate::storage::git_client::SyncOptions;
 
     struct FakeClient;
 
@@ -128,6 +130,12 @@ mod tests {
             }
         }
         fn fetch(&self, _path: &Path) {}
+        fn pull(&self, _path: &Path, _options: SyncOptions) -> SyncOutcome {
+            SyncOutcome::UpToDate
+        }
+        fn push(&self, _path: &Path, _options: SyncOptions) -> SyncOutcome {
+            SyncOutcome::UpToDate
+        }
         fn log(&self, _path: &Path, _max: usize) -> Vec<String> {
             Vec::new()
         }

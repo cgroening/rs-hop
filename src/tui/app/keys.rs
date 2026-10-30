@@ -15,6 +15,7 @@ use ratada::input::InputField;
 use ratada::shortcut_hints;
 
 use crate::domain::filter::TabKind;
+use crate::domain::sync::SyncOp;
 use crate::keymap::Action;
 use crate::tui::form::FormResult;
 use crate::tui::help::as_help_sections;
@@ -191,6 +192,21 @@ impl App {
                     }
                 }
             }
+            Overlay::SyncConfirm(modal, op, paths) => {
+                match modal.handle_key(key) {
+                    ConfirmResult::Yes => self.sync_confirmed(op, paths),
+                    ConfirmResult::No => {}
+                    ConfirmResult::Pending => {
+                        self.overlay = Overlay::SyncConfirm(modal, op, paths);
+                    }
+                }
+            }
+            Overlay::SyncResults(mut modal) => match modal.handle_key(key) {
+                SelectResult::Selected(_) | SelectResult::Cancel => {}
+                SelectResult::Pending => {
+                    self.overlay = Overlay::SyncResults(modal);
+                }
+            },
             Overlay::SectionDelete(confirm, name) => {
                 match confirm.handle_key(key) {
                     ConfirmResult::Yes => self.delete_section(&name),
@@ -357,6 +373,10 @@ impl App {
             Action::ReloadFetch => self.reload_status(true),
             Action::RefreshOne => self.refresh_targets(false),
             Action::RefreshOneFetch => self.refresh_targets(true),
+            Action::Pull => self.sync_targets(SyncOp::Pull),
+            Action::Push => self.sync_targets(SyncOp::Push),
+            Action::PullAll => self.confirm_sync_all(SyncOp::Pull),
+            Action::PushAll => self.confirm_sync_all(SyncOp::Push),
             Action::Help => {
                 self.help = HelpState::new();
                 self.overlay = Overlay::Help;

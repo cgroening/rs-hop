@@ -146,6 +146,14 @@ pub enum Action {
     RefreshOne,
     /// Refresh only the selection or cursor, with `git fetch`.
     RefreshOneFetch,
+    /// `git pull --ff-only` the selection or cursor entry (git tabs).
+    Pull,
+    /// `git push` the selection or cursor entry (git tabs).
+    Push,
+    /// `git pull --ff-only` every git entry of the current tab, after asking.
+    PullAll,
+    /// `git push` every git entry of the current tab, after asking.
+    PushAll,
     /// Toggle the help overlay.
     Help,
     /// Quit the application.
@@ -493,7 +501,7 @@ const ACTIONS: &[ActionSpec] = &[
         action: Action::RepairPath,
         config_name: "repair_path",
         description: "fix path",
-        default_keys: &["p"],
+        default_keys: &["ctrl+p"],
     },
     ActionSpec {
         action: Action::Errors,
@@ -524,6 +532,30 @@ const ACTIONS: &[ActionSpec] = &[
         config_name: "refresh_one_fetch",
         description: "refresh+fetch",
         default_keys: &["X"],
+    },
+    ActionSpec {
+        action: Action::Pull,
+        config_name: "pull",
+        description: "pull",
+        default_keys: &["p"],
+    },
+    ActionSpec {
+        action: Action::Push,
+        config_name: "push",
+        description: "push",
+        default_keys: &["P"],
+    },
+    ActionSpec {
+        action: Action::PullAll,
+        config_name: "pull_all",
+        description: "pull all",
+        default_keys: &["D"],
+    },
+    ActionSpec {
+        action: Action::PushAll,
+        config_name: "push_all",
+        description: "push all",
+        default_keys: &["U"],
     },
     ActionSpec {
         action: Action::Help,
@@ -793,6 +825,10 @@ mod tests {
                 | Action::ReloadFetch
                 | Action::RefreshOne
                 | Action::RefreshOneFetch
+                | Action::Pull
+                | Action::Push
+                | Action::PullAll
+                | Action::PushAll
                 | Action::Help
                 | Action::Quit => {}
             }

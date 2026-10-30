@@ -10,3 +10,4 @@ pub mod sections;
 pub mod slug;
 pub mod sort;
 pub mod stats;
+pub mod sync;

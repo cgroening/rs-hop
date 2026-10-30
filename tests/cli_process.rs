@@ -207,6 +207,52 @@ fn scan_dry_run_prints_the_paths_as_payload_and_changes_nothing() {
 }
 
 #[test]
+fn pull_all_without_a_terminal_fails_with_usage_and_names_the_flag_to_use() {
+    // Syncing every repo asks first; off a TTY that question cannot be
+    // answered, so the run refuses early instead of touching anything.
+    let (config, _dir) = config_with(
+        "pull-no-tty",
+        "[[repos]]\npath = \"/tmp/hop-pull-no-tty\"\nkind = \"git\"\n",
+    );
+    for command in ["pull", "push"] {
+        let run = hop(&config, &[command]);
+        assert_eq!(run.code, 2, "`hop {command}` needs --yes off a TTY");
+        assert!(run.stdout.is_empty());
+        assert!(run.stderr.contains("--yes"), "got {:?}", run.stderr);
+    }
+}
+
+#[test]
+fn pull_dry_run_reports_on_stderr_and_keeps_stdout_empty() {
+    let (config, _dir) = config_with(
+        "pull-dry",
+        "[[repos]]\npath = \"/tmp/hop-pull-dry-missing\"\nkind = \"git\"\n\
+         slug = \"gone\"\n",
+    );
+    let run = hop(&config, &["pull", "--dry-run"]);
+    assert_eq!(run.code, 0, "a preview never fails");
+    assert!(run.stdout.is_empty(), "nothing here is payload");
+    assert!(
+        run.stderr.contains("path not found"),
+        "got {:?}",
+        run.stderr
+    );
+}
+
+#[test]
+fn pull_with_an_unknown_slug_is_a_usage_error() {
+    let (config, _dir) = config_with("pull-unknown", "");
+    let run = hop(&config, &["pull", "nope"]);
+    assert_eq!(run.code, 2);
+    assert!(run.stdout.is_empty());
+    assert!(
+        run.stderr.starts_with("hop: error:"),
+        "got {:?}",
+        run.stderr
+    );
+}
+
+#[test]
 fn show_config_prints_the_path_and_still_answers_to_its_old_name() {
     let (config, _dir) = config_with("show-config", "");
     let run = hop(&config, &["show-config"]);
@@ -251,6 +297,8 @@ fn the_readme_documents_every_command_and_option() {
         "add",
         "scan",
         "doctor",
+        "pull",
+        "push",
         "list",
         "show-config",
         "completions",
@@ -280,6 +328,7 @@ fn the_readme_documents_every_command_and_option() {
         "--dry-run",
         "--depth",
         "--nested",
+        "--archive",
     ] {
         assert!(
             readme.contains(option),

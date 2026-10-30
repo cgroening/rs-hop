@@ -20,6 +20,10 @@ use ratada::spinner::Spinner;
 use crate::domain::repo::{self, Repo, RepoKind};
 use crate::service::status_service::{self, StatusUpdate, spawn_refresh};
 
+/// Status message for a refresh asked for while a pull or push runs: both
+/// would drive the one progress bar.
+const SYNC_BUSY: &str = "busy: a pull or push is running";
+
 impl App {
     /// Starts a background refresh over the current tab's entries (with the
     /// progress bar).
@@ -193,6 +197,10 @@ impl App {
             self.set_status("example mode: live status is off");
             return;
         }
+        if self.is_syncing() {
+            self.set_status(SYNC_BUSY);
+            return;
+        }
         self.set_status(if fetch {
             "fetching and reloading status…"
         } else {
@@ -221,6 +229,10 @@ impl App {
     pub(super) fn refresh_targets(&mut self, fetch: bool) {
         if self.config.example_mode {
             self.set_status("example mode: live status is off");
+            return;
+        }
+        if self.is_syncing() {
+            self.set_status(SYNC_BUSY);
             return;
         }
         let targets = self.targets();

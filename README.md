@@ -110,6 +110,7 @@ git_program = "lazygit"        # tool launched for git repos; omit to disable
 github_username = "you"        # stripped from displayed remote names
 example_mode = false           # show example_git_info instead of real status
 fetch_on_start = false         # git fetch in the background when hop starts
+git_timeout_secs = 15          # pull/push give up after a stall this long
 confirm_quit = false           # ask before quitting with `q` (Ctrl+Q never asks)
 # editor = "nvim"              # for opening text files; else $VISUAL / $EDITOR
 # editor_extensions = ["rs", "md", "txt"]  # override the built-in text list
@@ -163,6 +164,10 @@ hop add [PATH]      add an entry (default: the current dir; --slug/--section/--n
 hop scan [DIR]      find git repos under DIR and import the chosen ones
                     (--depth N / --nested / --dry-run / --yes)
 hop doctor          report problems (missing paths, bad/duplicate slugs)
+hop pull [SLUG...]  git pull --ff-only the given repos, else every active one
+                    (--archive / --dry-run / --yes)
+hop push [SLUG...]  git push the given repos, else every active one with
+                    commits ahead (--archive / --dry-run / --yes)
 hop list            list entries (a table on a terminal, plain lines when piped)
 hop list --json     list entries as JSON, for scripts
 hop show-config     print the resolved config file path (was: config-path)
@@ -181,6 +186,15 @@ hop man             print the manpage in roff format
 ```
 
 `hop scan` needs a terminal to show its picker. Without one it exits 2 and names the way out: pass `--yes` to import everything it found, or `--dry-run` to only list it.
+
+### Pull and push
+
+`hop pull` and `hop push` work through the repos one after another and write one line per repo plus a summary to stderr. Without slugs they cover every active git repo (`--archive` adds the archived ones) and ask first; off a terminal that question needs `--yes`. Naming slugs never asks.
+
+- Pull is fast-forward only (`git pull --ff-only`). A repo with uncommitted changes is skipped, and so is a branch without an upstream or a detached HEAD.
+- Push (`git push`, never forced) only touches repos with commits ahead of their upstream. If the remote has newer commits, git rejects the push and hop reports it as failed.
+- git never prompts: credential prompts are off and ssh runs in batch mode, so a missing key or password shows up as "authentication required" instead of a hang. A connection that stalls for `git_timeout_secs` (default 15) fails as "timeout".
+- The run exits 1 when any repo failed; skips alone keep it at 0.
 
 ### Streams and exit codes
 
@@ -206,6 +220,7 @@ HOP_EDITOR          the editor for text files
 HOP_THEME           the active theme name
 HOP_GLYPHS          unicode | ascii
 HOP_CONFIRM_QUIT    true | false: ask before quitting with `q`
+HOP_GIT_TIMEOUT_SECS  seconds a pull or push may stall before it fails
 ```
 
 ## Keyboard shortcuts
@@ -252,7 +267,11 @@ HOP_CONFIRM_QUIT    true | false: ask before quitting with `q`
 | `S` | set or change the slug |
 | `i` | toggle the slug column (dim, italic) after the name |
 | `y` | copy the selected entry's path to the clipboard |
-| `p` | repair a missing path |
+| `p` | git tabs: pull the selection, else the cursor repo (fast-forward only) |
+| `P` | git tabs: push the selection, else the cursor repo |
+| `D` | git tabs: pull every repo of the tab (asks first) |
+| `U` | git tabs: push every repo of the tab with commits ahead (asks first) |
+| `Ctrl+P` | repair a missing path |
 | `!` | list entries with path errors, then repair / edit / delete |
 | `r` | git tabs: reload status (`R`: + `git fetch`) · Files tab: check that paths still exist |
 | `x` | refresh selection/cursor   ·   `X`: with `git fetch` |

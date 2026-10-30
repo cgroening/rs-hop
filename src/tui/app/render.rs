@@ -374,6 +374,8 @@ impl App {
             Overlay::SectionDelete(confirm, _) => {
                 confirm.render(frame, area, skin)
             }
+            Overlay::SyncConfirm(modal, ..) => modal.render(frame, area, skin),
+            Overlay::SyncResults(modal) => modal.render(frame, area, skin),
         }
     }
 }

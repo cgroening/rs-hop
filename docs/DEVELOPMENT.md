@@ -21,12 +21,14 @@ src/
     backup.rs             backup_filename: unique slugified ZIP name per repo
     doctor.rs             diagnose(repos, exists, is_git) -> Vec<Issue>
     path_repair.rs        nearest_existing ancestor (predicate-injected)
+    sync.rs               pull/push: decide, SyncOutcome, Summary
   storage/                ports + adapters
     repository.rs         RepoRepository trait (port)
     toml_repo_repository.rs  read [[repos]] (serde DTO), write via toml_writer
     toml_writer.rs           toml_edit rewrite of [[repos]] (comment-preserving)
     in_memory_repository.rs  test fake / --demo backend
-    git_client.rs         GitClient trait (port) + parse_github_name
+    git_client.rs         GitClient trait (port) + parse_github_name,
+                          classify_git_failure
     subprocess_git_client.rs  git via std::process::Command
     cache.rs              git-info cache (TOML)
     stats_cache.rs        statistics cache (code and git, two tables)
@@ -38,6 +40,7 @@ src/
       mod.rs              CRUD, fav/archive, slug, path repair, usage, undo
       section_names.rs    the per-kind section lists (add/rename/delete/move)
     status_service.rs     collect_all (sync) + spawn_refresh (bg) + its cache
+    sync_service.rs       sync_one / preview_one (CLI) + spawn_sync (bg)
     stats_service.rs      spawn_code_stats (tokei) + spawn_git_stats + its cache
     preview_service.rs    spawn_logs: background git log for the preview panel
     ui_state_service.rs   the TUI's persisted view state, over storage::ui_state
@@ -52,6 +55,7 @@ src/
     output.rs             Streams, CliError + exit codes, the sparcli theme
     list.rs               hop list: table / plain lines / --json
     scan.rs               hop add, hop scan (TTY gate + --yes), hop doctor
+    sync.rs               hop pull / hop push (TTY gate + --yes, --dry-run)
     jump.rs               hop <slug>: the fast jump
     demo.rs               sample entries for --demo
   tui/
@@ -67,6 +71,7 @@ src/
       section_manager.rs  the section jump and manage overlays
       refresh.rs          the git-status workers + the path-error state
       stats.rs            the code/history statistics workers
+      sync.rs             the pull/push worker, its confirm and result list
       zip.rs              the ZIP-backup worker
       panel.rs            the detail panel
       render.rs           state -> frame
@@ -97,6 +102,7 @@ src/
   util/
     paths.rs              XDG (Unix) / %APPDATA% (Windows) + ~ expansion
     fs.rs                 write_atomic: temp file + rename for config and state
+    interrupt.rs          the process-wide Ctrl+C flag
     logging.rs            file-only log backend (never stderr)
     clipboard.rs          copy over ratada::clipboard, as a domain Result
     opener.rs             launch git tool / editor / default app / url
@@ -173,7 +179,7 @@ hop keeps the list responsive by doing git and archive work off the main thread.
 
 **Consequences.** The form cannot be left open across a tab switch, and there is no per-tab "reopen the form I had" state to carry. What hop keeps is one uniform overlay mechanism for all eleven dialogs and the background workers running behind every one of them. Adopting the inline form would mean either giving up the non-blocking overlays or reimplementing clibase's tab-switch signal without a loop to raise it from; both are larger changes than the layout gain justifies, and both belong in their own step.
 
-**How to adopt the blocking `ratada` widgets later, if wanted.** The precedent exists: the inline git tool (`l`) suspends the TUI with `tui.suspend(…)`, runs an external program, and resumes (`App::run_git_inline`). A blocking `ratada` widget fits the same shape: (1) the key handler returns an outcome instead of setting `self.overlay`; (2) the run loop (which holds `&mut Tui`) calls the blocking widget – e.g. `ratada::path_picker::path_picker(tui, …)` – and applies the result; (3) accept that the background workers pause while the widget is open. This could be done for the path picker alone (the `p` repair flow and the form's `^O` path pick) or for all dialogs at once; either is a conscious behaviour change and belongs in its own step.
+**How to adopt the blocking `ratada` widgets later, if wanted.** The precedent exists: the inline git tool (`l`) suspends the TUI with `tui.suspend(…)`, runs an external program, and resumes (`App::run_git_inline`). A blocking `ratada` widget fits the same shape: (1) the key handler returns an outcome instead of setting `self.overlay`; (2) the run loop (which holds `&mut Tui`) calls the blocking widget – e.g. `ratada::path_picker::path_picker(tui, …)` – and applies the result; (3) accept that the background workers pause while the widget is open. This could be done for the path picker alone (the `Ctrl+P` repair flow and the form's `^O` path pick) or for all dialogs at once; either is a conscious behaviour change and belongs in its own step.
 
 ### `App` is split across child modules, not into smaller types
 

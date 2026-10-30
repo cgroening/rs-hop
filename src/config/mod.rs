@@ -31,6 +31,10 @@ pub const DEFAULT_EDITOR_EXTENSIONS: &[&str] = &[
     "tsv", "sql", "tex", "log", "make", "mk",
 ];
 
+/// Seconds a pull or push may stall (connect, or no data) before git gives up.
+/// Overridable via the `git_timeout_secs` config key.
+pub const DEFAULT_GIT_TIMEOUT_SECS: u64 = 15;
+
 /// Directory names excluded from a repo ZIP backup (`z`/`Z`): build artefacts
 /// and caches that are regenerated and would only bloat the archive. Matched as
 /// a name prefix at any depth (so `target` also covers `target.nosync`).
@@ -146,6 +150,8 @@ pub struct Config {
     pub example_mode: bool,
     /// When true, run `git fetch` before the initial status refresh on start.
     pub fetch_on_start: bool,
+    /// Seconds a pull or push may stall before it is reported as a timeout.
+    pub git_timeout_secs: u64,
     /// When true, quitting with `q` asks for confirmation first. `Ctrl+Q`
     /// always quits at once.
     pub confirm_quit: bool,
@@ -176,6 +182,7 @@ impl Default for Config {
             github_username: None,
             example_mode: false,
             fetch_on_start: false,
+            git_timeout_secs: DEFAULT_GIT_TIMEOUT_SECS,
             confirm_quit: false,
             editor: None,
             editor_extensions: DEFAULT_EDITOR_EXTENSIONS

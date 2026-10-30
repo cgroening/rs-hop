@@ -49,6 +49,8 @@ mod tests {
 
     /// A fake client returning a fixed log line per path.
     use crate::domain::stats::GitStats;
+    use crate::domain::sync::SyncOutcome;
+    use crate::storage::git_client::SyncOptions;
 
     struct FakeClient;
 
@@ -57,6 +59,12 @@ mod tests {
             GitInfo::default()
         }
         fn fetch(&self, _path: &Path) {}
+        fn pull(&self, _path: &Path, _options: SyncOptions) -> SyncOutcome {
+            SyncOutcome::UpToDate
+        }
+        fn push(&self, _path: &Path, _options: SyncOptions) -> SyncOutcome {
+            SyncOutcome::UpToDate
+        }
         fn log(&self, _path: &Path, _max: usize) -> Vec<String> {
             vec!["abc123 commit".to_string()]
         }

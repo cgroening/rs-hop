@@ -8,6 +8,19 @@ use std::path::Path;
 
 use crate::domain::repo::GitInfo;
 use crate::domain::stats::GitStats;
+use crate::domain::sync::SyncOutcome;
+
+/// The longest failure text kept from git's output, in characters, so one
+/// chatty error cannot blow up a status line or a result row.
+const MAX_FAILURE_CHARS: usize = 120;
+
+/// How a pull or push talks to the network.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SyncOptions {
+    /// Seconds a connection may stall (connect, or no data) before git gives
+    /// up on it.
+    pub timeout_secs: u64,
+}
 
 /// Gathers git status for repositories. Implementations never error out: a
 /// failure is encoded in the returned [`GitInfo`] (`valid = false`).
@@ -18,6 +31,14 @@ pub trait GitClient: Send + Sync {
     fn collect(&self, path: &Path) -> GitInfo;
     /// Fetches the remote for `path` (best-effort; ignores failures).
     fn fetch(&self, path: &Path);
+    /// Fast-forwards `path` to its upstream (`git pull --ff-only`), never
+    /// prompting for credentials. Yields [`SyncOutcome::Updated`],
+    /// [`SyncOutcome::UpToDate`] or [`SyncOutcome::Failed`].
+    fn pull(&self, path: &Path, options: SyncOptions) -> SyncOutcome;
+    /// Pushes the current branch of `path` to its upstream (`git push`, never
+    /// forced), never prompting for credentials. Yields the same outcomes as
+    /// [`GitClient::pull`].
+    fn push(&self, path: &Path, options: SyncOptions) -> SyncOutcome;
     /// The most recent `max` commits as one-line summaries (best-effort; empty
     /// when `path` is not a repository).
     fn log(&self, path: &Path, max: usize) -> Vec<String>;
@@ -25,6 +46,77 @@ pub trait GitClient: Send + Sync {
     /// first and last commit, branches and tags. A path that is not a
     /// repository, or one without commits, yields the default (all zero).
     fn stats(&self, path: &Path) -> GitStats;
+}
+
+/// Turns the output of a failed `git pull`/`git push` into a short reason.
+///
+/// The common failures get a fixed phrase, so they read the same whichever
+/// remote produced them; anything else keeps git's own first line, without
+/// its `fatal:`/`error:` prefix. git must run with `LC_ALL=C` for the phrases
+/// to match.
+pub fn classify_git_failure(output: &str) -> String {
+    const PATTERNS: &[(&[&str], &str)] = &[
+        (
+            &[
+                "timed out",
+                "Operation too slow",
+                "Timeout, server",
+                "not responding",
+            ],
+            "timeout",
+        ),
+        (
+            &["Could not resolve host", "Could not resolve hostname"],
+            "network unreachable",
+        ),
+        (
+            &[
+                "terminal prompts disabled",
+                "Permission denied (publickey",
+                "Authentication failed",
+                "Host key verification failed",
+                "could not read Username",
+            ],
+            "authentication required",
+        ),
+        (
+            &["Not possible to fast-forward", "Diverging branches"],
+            "diverged from upstream (no fast-forward)",
+        ),
+        (
+            &["[rejected]", "non-fast-forward", "fetch first"],
+            "rejected: remote has newer commits",
+        ),
+        (
+            &["would be overwritten"],
+            "local changes would be overwritten",
+        ),
+    ];
+    for (needles, reason) in PATTERNS {
+        if needles.iter().any(|needle| output.contains(needle)) {
+            return (*reason).to_string();
+        }
+    }
+    first_message_line(output)
+}
+
+/// git's first non-empty output line without its `fatal:`/`error:` prefix,
+/// cut to [`MAX_FAILURE_CHARS`]; a generic phrase when git said nothing.
+fn first_message_line(output: &str) -> String {
+    let Some(line) = output.lines().map(str::trim).find(|l| !l.is_empty())
+    else {
+        return "git exited with an error".to_string();
+    };
+    let line = ["fatal:", "error:"]
+        .iter()
+        .find_map(|prefix| line.strip_prefix(prefix))
+        .unwrap_or(line)
+        .trim();
+    if line.chars().count() <= MAX_FAILURE_CHARS {
+        return line.to_string();
+    }
+    let cut: String = line.chars().take(MAX_FAILURE_CHARS - 1).collect();
+    format!("{cut}…")
 }
 
 /// Counts commits and distinct authors from `git shortlog -sne HEAD` output,
@@ -131,6 +223,60 @@ pub fn git_info_from_counts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn common_sync_failures_get_a_fixed_reason() {
+        let cases = [
+            (
+                "ssh: connect to host github.com port 22: Operation timed out",
+                "timeout",
+            ),
+            ("error: RPC failed; curl 28 Operation too slow.", "timeout"),
+            (
+                "fatal: could not read Username for 'https://github.com': \
+                 terminal prompts disabled",
+                "authentication required",
+            ),
+            (
+                "git@github.com: Permission denied (publickey).",
+                "authentication required",
+            ),
+            (
+                "fatal: Not possible to fast-forward, aborting.",
+                "diverged from upstream (no fast-forward)",
+            ),
+            (
+                " ! [rejected]        main -> main (fetch first)",
+                "rejected: remote has newer commits",
+            ),
+            (
+                "ssh: Could not resolve hostname github.com",
+                "network unreachable",
+            ),
+        ];
+        for (output, reason) in cases {
+            assert_eq!(classify_git_failure(output), reason, "{output}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_failure_keeps_gits_first_line() {
+        assert_eq!(
+            classify_git_failure(
+                "\nfatal: 'origin' does not appear to be a git repository\n\
+                 fatal: Could not read from remote repository."
+            ),
+            "'origin' does not appear to be a git repository"
+        );
+        assert_eq!(classify_git_failure(""), "git exited with an error");
+    }
+
+    #[test]
+    fn a_long_failure_line_is_cut_with_an_ellipsis() {
+        let reason = classify_git_failure(&"x".repeat(500));
+        assert_eq!(reason.chars().count(), MAX_FAILURE_CHARS);
+        assert!(reason.ends_with('…'));
+    }
 
     #[test]
     fn parse_shortlog_sums_commits_and_counts_authors() {

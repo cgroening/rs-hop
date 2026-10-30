@@ -16,6 +16,7 @@ git_program = "lazygit"
 github_username = "cgroening"
 example_mode = false
 # fetch_on_start = false   # git fetch in the background when hop starts
+# git_timeout_secs = 15     # pull/push give up after a stall this long
 # editor_extensions = ["rs", "md", "txt"]   # override the built-in text list
 
 # ZIP backups: z zips the selected/cursor git repo, Z zips all git repos, into

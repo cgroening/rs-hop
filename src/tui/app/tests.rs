@@ -28,6 +28,8 @@ use crate::tui::help::Section;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::domain::stats::GitStats;
+use crate::domain::sync::SyncOutcome;
+use crate::storage::git_client::SyncOptions;
 
 /// A git client that does nothing (the smoke test runs in example mode).
 pub(super) struct NoGit;
@@ -37,6 +39,12 @@ impl GitClient for NoGit {
         GitInfo::default()
     }
     fn fetch(&self, _path: &Path) {}
+    fn pull(&self, _path: &Path, _options: SyncOptions) -> SyncOutcome {
+        SyncOutcome::UpToDate
+    }
+    fn push(&self, _path: &Path, _options: SyncOptions) -> SyncOutcome {
+        SyncOutcome::UpToDate
+    }
     fn log(&self, _path: &Path, _max: usize) -> Vec<String> {
         Vec::new()
     }
@@ -355,20 +363,28 @@ fn every_overlay_renders_at_a_normal_and_a_cramped_size() {
     // Each case is the keys that open the overlay; `M` is Files-tab only.
     // The error list is left out: it needs a failing entry, and it is the
     // same `SelectModal` the sort picker already covers.
+    let plain = |keys: &str| -> Vec<KeyEvent> {
+        keys.chars()
+            .map(|key| KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE))
+            .collect()
+    };
     let openers = [
-        ("n", "add form"),
-        ("e", "edit form"),
-        ("d", "delete confirm"),
-        ("S", "slug prompt"),
-        ("p", "path picker"),
-        ("2M", "manage sections"),
-        ("t", "sort picker"),
-        ("?", "help"),
+        (plain("n"), "add form"),
+        (plain("e"), "edit form"),
+        (plain("d"), "delete confirm"),
+        (plain("S"), "slug prompt"),
+        (
+            vec![KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)],
+            "path picker",
+        ),
+        (plain("2M"), "manage sections"),
+        (plain("t"), "sort picker"),
+        (plain("?"), "help"),
     ];
     for (keys, what) in openers {
         let mut app = sample_app();
-        for key in keys.chars() {
-            press(&mut app, KeyCode::Char(key));
+        for key in &keys {
+            app.handle_key(*key);
         }
         assert!(
             !matches!(app.overlay, Overlay::None),
@@ -725,4 +741,73 @@ fn changes_filter_keeps_non_git_and_dirty_git() {
         ..GitInfo::default()
     });
     assert!(repo_has_change(&dirty, false));
+}
+
+/// The transient status message, or an empty string when none is shown.
+fn status_text(app: &App) -> String {
+    app.status_msg
+        .as_ref()
+        .map(|(message, _)| message.clone())
+        .unwrap_or_default()
+}
+
+#[test]
+fn pull_and_push_keys_only_work_on_the_git_tabs() {
+    let mut app = sample_app();
+    press(&mut app, KeyCode::Char('2'));
+    for key in ['p', 'P', 'D', 'U'] {
+        press(&mut app, KeyCode::Char(key));
+        assert_eq!(status_text(&app), "pull/push: git tabs only", "{key}");
+        assert!(matches!(app.overlay, Overlay::None), "{key}");
+    }
+}
+
+#[test]
+fn pull_and_push_never_run_git_in_example_mode() {
+    // The sample app is in example mode: the git tab shows curated data, so
+    // nothing may be pulled or pushed - not even after confirming.
+    let mut app = sample_app();
+    for key in ['p', 'P', 'D', 'U'] {
+        press(&mut app, KeyCode::Char(key));
+        assert!(status_text(&app).starts_with("example mode"), "{key}");
+        assert!(!app.is_syncing(), "{key}");
+    }
+}
+
+#[test]
+fn the_sync_overlays_render_at_a_normal_and_a_cramped_size() {
+    let rows = vec![
+        "hop     pulled".to_string(),
+        "mdtask  failed: timeout".to_string(),
+    ];
+    let overlays = [
+        Overlay::SyncResults(SelectModal::new(" Pull results ", rows, 0)),
+        Overlay::SyncConfirm(
+            ConfirmModal::new(" Push all ", "Push 2 repos?"),
+            SyncOp::Push,
+            vec![PathBuf::from("/a"), PathBuf::from("/b")],
+        ),
+    ];
+    for overlay in overlays {
+        let mut app = sample_app();
+        app.overlay = overlay;
+        let normal = screen(&app, 100, 30);
+        assert!(
+            normal.contains("Pull results") || normal.contains("Push 2 repos?"),
+            "the overlay is drawn"
+        );
+        let _ = screen(&app, 20, 6);
+    }
+}
+
+#[test]
+fn the_results_list_closes_on_esc() {
+    let mut app = sample_app();
+    app.overlay = Overlay::SyncResults(SelectModal::new(
+        " Pull results ",
+        vec!["hop  pulled".to_string()],
+        0,
+    ));
+    press(&mut app, KeyCode::Esc);
+    assert!(matches!(app.overlay, Overlay::None));
 }

@@ -9,7 +9,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - **`←` / `→` step between sections in the grouped view.** `→` goes to the next section, `←` to the start of the current one and then to the previous one; both wrap at the ends. Rebindable as `section_prev` / `section_next`.
+- **Pull and push git repos from the TUI.** On the git tabs `p` pulls and `P` pushes the selection (else the cursor repo); `D` pulls and `U` pushes every repo of the tab after a confirmation. They run in the background behind the progress bar, one repo after another, and each row's status updates as soon as its repo is done. Pull is fast-forward only and skips repos with uncommitted changes; push only touches repos with commits ahead and is never forced; branches without an upstream are skipped. If anything was skipped or failed, a list with the reason per repo opens. Rebindable as `pull` / `push` / `pull_all` / `push_all`.
+- **`hop pull` and `hop push`.** The same from the command line, for the given slugs or every active git repo (`--archive` adds the archived ones). Without slugs they ask first (`--yes` skips the question and is required without a terminal); `--dry-run` shows what would happen. One line per repo plus a summary go to stderr, and the run exits 1 when any repo failed.
+- **`git_timeout_secs` (default 15, also `HOP_GIT_TIMEOUT_SECS`).** A pull or push whose connection stalls this long fails as "timeout" instead of hanging. git never prompts during a pull or push: a missing key or password shows up as "authentication required".
 - **Sections can be folded down to their header.** `-` folds the cursor's section (the header then shows how many entries it hides, and the cursor sits on it) and unfolds it again; `Enter` on a folded header unfolds it too, and `_` folds or unfolds every section at once. Folds are kept per kind (Git / Files, shared by the active and archive tab) in `ui-state.toml` and survive a restart; renaming a section keeps its fold. Folding only hides rows – the entry count and the totals row still include the folded entries. Rebindable as `collapse_section` / `collapse_all`.
+
+### Changed
+
+- **Repairing a missing path moved from `p` to `Ctrl+P`**, so `p` can pull. Rebind it with `repair_path = "p"` under `[keys]` to keep the old key.
 
 ### Fixed
 
