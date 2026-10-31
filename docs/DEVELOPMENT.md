@@ -195,7 +195,7 @@ hop keeps the list responsive by doing git and archive work off the main thread.
 
 **Status:** accepted.
 
-**Context.** The style guide asks for command names to be verbs. `hop doctor` is a noun.
+**Context.** Command names should be verbs. `hop doctor` is a noun.
 
 **Decision.** Keep it. `doctor` is an established CLI idiom (`brew doctor`, `flutter doctor`) that users recognise, and the name is published. `config-path` was renamed to `show-config` in the same pass, keeping the old name as a hidden alias, because it had neither of those defences.
 

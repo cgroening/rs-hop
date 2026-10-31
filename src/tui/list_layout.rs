@@ -69,7 +69,7 @@ const OVERLAY_PAGE: isize = 10;
 /// Where a navigation key moves the cursor of a list of `len` rows, or `None`
 /// when the key is not a navigation key.
 ///
-/// Arrows wrap, page jumps and `Home`/`End` clamp - the split §1.7 prescribes.
+/// Arrows wrap, page jumps and `Home`/`End` clamp.
 /// Every overlay list routes through this, so none of them can end up
 /// supporting a different subset of the movement keys.
 pub fn moved_cursor(key: KeyEvent, cursor: usize, len: usize) -> Option<usize> {
@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn page_jumps_and_home_end_clamp_rather_than_wrapping() {
-        // §1.7: arrows are cyclic, page jumps and Home/End are not.
+        // Arrows are cyclic, page jumps and Home/End are not
         assert_eq!(moved_cursor(press(KeyCode::PageUp), 2, 100), Some(0));
         assert_eq!(moved_cursor(press(KeyCode::PageDown), 98, 100), Some(99));
         assert_eq!(moved_cursor(press(KeyCode::Home), 40, 100), Some(0));

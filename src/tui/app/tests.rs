@@ -576,7 +576,7 @@ fn help_section_keys_follow_a_keys_override() {
     assert_eq!(row(&custom, add), Some("N".to_string()));
 }
 
-/// Home and End are what §1.7 requires; g and G are the optional vim addition,
+/// Home and End are required; g and G are the optional vim addition,
 /// so both must reach the same action.
 #[test]
 fn the_list_ends_are_reachable_by_home_end_and_by_g() {

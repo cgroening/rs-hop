@@ -1,6 +1,6 @@
 # CLAUDE.md – hop (Rust)
 
-Context for Claude Code sessions in this directory. It carries what you need to keep developing the project **and** the binding coding rules (so the external style guide need not be opened each time).
+Context for Claude Code sessions in this directory. It carries what you need to keep developing the project.
 
 ## 1. What this is
 
@@ -190,40 +190,6 @@ HOP_CONFIG=examples/config.toml cargo run -- list   # plain list
 HOP_CONFIG=examples/config.toml cargo run            # TUI (needs a real TTY)
 ```
 
----
+## 7. Changelog
 
-# Coding rules (binding)
-
-These reproduce the project style guide (general + Rust). On conflict the more specific (language) rule wins; these documented rules take precedence over rustfmt/clippy defaults.
-
-## G. General (all languages)
-
-- **KISS / YAGNI**; **DRY** (code) and **SSOT** (data); **consistency**; no magic numbers/strings (named constants).
-- **SLAP** – one level of abstraction per function. **Max two nesting levels** (early returns / guard clauses). **No flag arguments** – split into two well-named functions. Command–Query separation; prefer pure functions.
-- Polymorphism over type switching; composition over inheritance; Tell-Don't-Ask; **SOLID** (DIP via injection); high cohesion, loose coupling.
-- **Naming**: booleans as yes/no questions (`is_`/`has_`/`can_`/`should_`, never negative); methods = verbs, types = nouns, no `Manager`/`Data`/`Helper`; `snake_case` vars/functions, `UPPER_CASE` consts, `PascalCase` types; files `snake_case`. Acronyms as words (`UserId`).
-- **Errors**: fail fast; don't signal "nothing" with `null`/`None` where an empty collection / error fits; errors carry context (what/where/why). Validate at trust boundaries; fail loudly over silent-wrong.
-- **Logging** via the `log` facade, never `println!` for diagnostics (visible CLI/TUI output is not logging).
-- **Formatting**: 4-space indent, **max 80 columns** (`.rs`); operators at line start on wraps; trailing commas in multi-line; spaces only; one final newline; UTF-8/LF. **Never use `–` (em dash) anywhere.** As the dash (Gedankenstrich): in code files use `-` (hyphen), in `.md` files use `–` (en dash). Markdown prose: one line per paragraph/item, no hard wraps. Straight quotes only.
-- **Comments** explain the **why**, moderately; everything in **English**.
-- **Types**: `bool` not int flags; enums over magic strings; structs over loose tuples; newtypes where useful; immutable where sensible; don't mutate inputs needlessly.
-- **Functions** small (SRP); **few parameters (≤3, group related into a struct)**; pass named/explicit; helpers below callers; public before private.
-- **Architecture**: layer by responsibility; DI through constructors/parameters; depend on abstractions; composition root in `main`. Prefer stdlib; **agree before adding a dependency**.
-- **Tests** always ship (FIRST; one concept each; fakes over mocks; names describe behaviour). **Run all tests after every change.** Measure before optimising.
-- **Maintenance**: respect local style; minimal focused changes; keep refactoring separate from behaviour changes; update call sites, tests and docs; remove dead code; fix root causes.
-
-## R. Rust-specific
-
-- **Edition 2024**; rustfmt with import grouping; **clippy `-D warnings` must pass**; `log` for diagnostics.
-- Submodules via `mod`; abstract behaviour with **traits**, inject via generics or `dyn`.
-- **Errors**: `Result<T, E>` + `?`; **`thiserror`** for the domain error enum (one per crate/domain, `#[from]` for foreign errors); **`anyhow`** only at the binary edge with `.context()`; **`unwrap()` forbidden, `expect()` only at provably-infallible points** with a reason; **no `panic!` in normal flow**; avoid `unsafe`.
-- **Docs**: `///` on every public item (one-sentence first line, prose, no `# Arguments` lists); `# Errors`/`# Panics`/`# Safety` where they apply; `//!` module summary; private items get a short `///`.
-- **Idioms**: enums for states; derive sensible traits; `new()` (+ `Default` where parameterless); prefer borrows, avoid needless `clone`; `Option<T>` for absence; `match`/`if let` with early returns; iterators for simple map/filter; keep visibility minimal, re-export via `pub use`.
-- **Concurrency**: sync by default; `async` only for real I/O concurrency; prefer ownership/channels over shared locks.
-- **Tests**: unit in-file under `#[cfg(test)] mod tests`; integration in `tests/`; doctests must run.
-- **Security**: choose `checked_*`/`saturating_*` for external integer values; `Command` with `.arg()`, never a shell string; validate external paths; no secrets in code/logs; bound untrusted input sizes.
-
-## Git
-
-- **Do not create commits yourself.** At the end of a change, propose a commit-message **title only**, in English imperative, Conventional-Commits style.
 - **Maintain `CHANGELOG.md`** (Keep a Changelog format, SemVer). For any user-facing change, add a bullet under the `## [Unreleased]` section in the right group (Added / Changed / Deprecated / Removed / Fixed / Security). On a release, rename `Unreleased` to the new version with the date and update the compare links. Purely internal changes (tests, refactors, docs) need no entry.

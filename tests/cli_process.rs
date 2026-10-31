@@ -1,9 +1,9 @@
 //! Drives the built `hop` binary as a real process.
 //!
-//! These tests exist because a handler-level test proves none of what §1.6 of
-//! the style guide asks for: it exercises neither the argument parsing, nor the
-//! exit code, nor the separation of stdout from stderr. Every case below
-//! therefore asserts all three, on the actual executable.
+//! These tests exist because a handler-level test proves none of the CLI
+//! contract: it exercises neither the argument parsing, nor the exit code,
+//! nor the separation of stdout from stderr. Every case below therefore
+//! asserts all three, on the actual executable.
 //!
 //! `SPARCLI_NO_TTY` makes the run deterministic: without it the output would
 //! depend on whether the test harness happened to be attached to a terminal.
@@ -281,8 +281,8 @@ fn completions_and_man_are_machine_readable_and_unstyled() {
 /// Every command and top-level option the parser knows must be documented in
 /// the README, and the README must not promise one that does not exist.
 ///
-/// §1.6 asks for the help and the README to be kept in sync and for that
-/// agreement to be pinned by a test rather than merely requested. The drift
+/// The help and the README must stay in sync, and that agreement is pinned
+/// by a test rather than merely requested. The drift
 /// this catches is real: `hop <slug>` was documented for releases while the
 /// help never mentioned it.
 #[test]
