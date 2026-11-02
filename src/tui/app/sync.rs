@@ -69,9 +69,9 @@ pub(super) struct SyncJob {
 }
 
 impl SyncJob {
-    /// Whether `path` still waits for its pull or push.
-    pub(super) fn owes(&self, path: &Path) -> bool {
-        self.remaining.contains(path)
+    /// The paths still waiting for their pull or push.
+    pub(super) fn remaining(&self) -> &HashSet<PathBuf> {
+        &self.remaining
     }
 }
 
@@ -134,6 +134,7 @@ impl App {
                 }
                 Err(TryRecvError::Empty) => {
                     self.sync_job = Some(job);
+                    self.rebuild_in_flight();
                     return;
                 }
                 Err(TryRecvError::Disconnected) => break,
@@ -196,7 +197,6 @@ impl App {
             self.spinner = Spinner::new();
             self.spinner_at = Instant::now();
         }
-        self.refreshing.extend(paths.iter().cloned());
         if scope.has_bar() {
             self.loading = Some((0, paths.len()));
             self.loading_label = op.progressive();
@@ -217,6 +217,7 @@ impl App {
             results: Vec::new(),
             remaining,
         });
+        self.rebuild_in_flight();
     }
 
     /// "pulling hop…" for one repository, "pulling 3 entries…" for several.
@@ -233,7 +234,6 @@ impl App {
     /// bar, the result.
     fn apply_sync(&mut self, job: &mut SyncJob, report: SyncReport) {
         let name = self.name_for_path(&report.path);
-        self.refreshing.remove(&report.path);
         job.remaining.remove(&report.path);
         self.service.set_git_info(&report.path, report.info);
         if job.scope.has_bar()
@@ -247,9 +247,8 @@ impl App {
     /// Ends a run: stops its spinners and the bar, persists the fresh status,
     /// and reports.
     fn finish_sync(&mut self, job: SyncJob) {
-        for path in &job.remaining {
-            self.refreshing.remove(path);
-        }
+        // The job is already taken out of `sync_job`, so it no longer counts.
+        self.rebuild_in_flight();
         if job.scope.has_bar() {
             self.loading = None;
             self.loading_label = REFRESH_LABEL;

@@ -210,8 +210,9 @@ pub struct App {
     /// run at once, so starting one never cancels another.
     status_jobs: Vec<RefreshJob>,
     /// Paths across all active refreshes and the running pull/push that have
-    /// not been updated yet (drive the per-row spinner). Empty when nothing is
-    /// in flight.
+    /// not been updated yet (drive the per-row spinner). Derived from the
+    /// jobs' `remaining` sets by `rebuild_in_flight` after every change, never
+    /// edited per update. Empty when nothing is in flight.
     refreshing: HashSet<PathBuf>,
     /// The per-row refresh spinner, stepped by [`App::tick`].
     spinner: Spinner,
@@ -316,8 +317,8 @@ struct RefreshJob {
     fetched: bool,
     /// Whether this job feeds the full-width progress bar.
     bar: bool,
-    /// Paths of this job not yet reported, so its spinners can be cleared if the
-    /// job ends before every path is done.
+    /// Paths of this job not yet reported; the row spinners are derived from
+    /// these sets.
     remaining: HashSet<PathBuf>,
 }
 

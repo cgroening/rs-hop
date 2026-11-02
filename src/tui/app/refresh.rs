@@ -55,7 +55,6 @@ impl App {
             self.spinner = Spinner::new();
             self.spinner_at = Instant::now();
         }
-        self.refreshing.extend(paths.iter().cloned());
         if show_bar {
             self.loading_label = REFRESH_LABEL;
             self.loading_detail = None;
@@ -74,6 +73,7 @@ impl App {
             bar: show_bar,
             remaining,
         });
+        self.rebuild_in_flight();
     }
 
     /// Applies any pending background status updates without blocking. Drains
@@ -93,7 +93,6 @@ impl App {
                     }
                     Ok(StatusUpdate::Done { path, info }) => {
                         self.service.set_git_info(&path, info);
-                        self.refreshing.remove(&path);
                         job.remaining.remove(&path);
                         if job.bar
                             && let Some((done, _)) = &mut self.loading
@@ -103,10 +102,6 @@ impl App {
                     }
                     Err(TryRecvError::Empty) => return true,
                     Err(TryRecvError::Disconnected) => {
-                        // Clear any spinners the worker never reported on.
-                        for path in job.remaining.drain() {
-                            self.refreshing.remove(&path);
-                        }
                         any_finished = true;
                         fetched_finished |= job.fetched;
                         return false;
@@ -115,6 +110,7 @@ impl App {
             }
         });
         self.status_jobs = jobs;
+        self.rebuild_in_flight();
         if any_finished {
             self.finish_refresh(fetched_finished);
         }
@@ -125,15 +121,20 @@ impl App {
             self.loading_name_width = 0;
         }
         if self.status_jobs.is_empty() {
-            // Keep the rows a running pull or push still owes spinning.
-            match &self.sync_job {
-                Some(job) => self.refreshing.retain(|path| job.owes(path)),
-                None => self.refreshing.clear(),
-            }
             // A tab switched to mid-refresh deferred its first-visit refresh;
             // run it now that every refresh has drained.
             self.refresh_tab_on_first_visit();
         }
+    }
+
+    /// Rebuilds the spinner set from every job still in flight: a row spins
+    /// while any refresh or the running pull/push still owes it. Derived
+    /// rather than edited per update, so one job finishing a path never
+    /// stops the spinner another job still owes.
+    pub(super) fn rebuild_in_flight(&mut self) {
+        let refreshes = self.status_jobs.iter().map(|job| &job.remaining);
+        let sync = self.sync_job.iter().map(|job| job.remaining());
+        self.refreshing = refreshes.chain(sync).flatten().cloned().collect();
     }
 
     /// Persists the full status cache after a refresh job finishes.

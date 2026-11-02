@@ -835,6 +835,53 @@ fn settle(app: &mut App) {
     panic!("the background workers never finished");
 }
 
+/// A refresh job over `path` fed by the returned sender, as `refresh_paths`
+/// would start it.
+fn manual_refresh_job(path: &Path) -> (mpsc::Sender<StatusUpdate>, RefreshJob) {
+    let (sender, rx) = mpsc::channel();
+    let job = RefreshJob {
+        rx,
+        fetched: false,
+        bar: true,
+        remaining: HashSet::from([path.to_path_buf()]),
+    };
+    (sender, job)
+}
+
+#[test]
+fn a_row_keeps_spinning_while_an_overlapping_refresh_still_owes_it() {
+    let mut app = live_app();
+    let path = Path::new("/code/hop");
+    let (fast, fast_job) = manual_refresh_job(path);
+    let (slow, slow_job) = manual_refresh_job(path);
+    app.status_jobs.push(fast_job);
+    app.status_jobs.push(slow_job);
+    app.rebuild_in_flight();
+
+    let done = |sender: &mpsc::Sender<StatusUpdate>| {
+        sender
+            .send(StatusUpdate::Done {
+                path: path.to_path_buf(),
+                info: GitInfo::default(),
+            })
+            .expect("the receiver lives in the app");
+    };
+    done(&fast);
+    drop(fast);
+    app.drain_status();
+    assert!(app.is_refreshing(), "the slow job is still running");
+    assert!(
+        app.refreshing.contains(path),
+        "the slow job still owes the row, so it keeps spinning"
+    );
+
+    done(&slow);
+    drop(slow);
+    app.drain_status();
+    assert!(!app.is_refreshing());
+    assert!(app.refreshing.is_empty(), "nothing owes the row any more");
+}
+
 #[test]
 fn pulling_the_cursor_repo_spins_its_row_without_the_progress_bar() {
     let mut app = live_app();
