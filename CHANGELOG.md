@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-06
+
 ### Added
 
 - **Every colour comes from the theme.** hop's built-in theme lives in `src/config/app_colors.rs`, the only file with colour values (`tests/theme_only_colours.rs`). The palette colour `dim` draws dimmed text in a chosen colour, `[appearance] dim_amount` (env `HOP_DIM_AMOUNT`) sets how far coloured dimmed text darkens. Colours accept `ansi:<name>` and `default`. The CLI theme follows the whole palette (roles, diff, progress, code spans, dimmed text).
@@ -168,7 +170,8 @@ First public release. A fuzzy-finder TUI to jump between git repositories and fo
 - **Cross-platform paths** (XDG on Unix, `%APPDATA%`/`%LOCALAPPDATA%` on Windows) and openers/clipboard.
 - Unicode and ASCII icon tiers (`config.icons.variant`).
 
-[Unreleased]: https://github.com/cgroening/rs-hop/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/cgroening/rs-hop/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/cgroening/rs-hop/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/cgroening/rs-hop/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/cgroening/rs-hop/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/cgroening/rs-hop/compare/v0.3.0...v0.4.0
