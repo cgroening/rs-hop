@@ -6,6 +6,7 @@
 //! that stores the `[[repos]]` entries, but the two concerns are read by
 //! different layers ([`loader`] here, the repository in `storage`).
 
+pub mod app_colors;
 pub mod appearance;
 pub mod loader;
 
@@ -15,8 +16,7 @@ pub use appearance::Appearance;
 
 use crate::keymap::Keymap;
 use crate::theme::{
-    Color, ColorOverrides, DEFAULT_THEME, Palette, Skin, ThemeColors,
-    ThemeRegistry,
+    ColorOverrides, DEFAULT_THEME, Palette, Skin, ThemeColors, ThemeRegistry,
 };
 
 /// File extensions opened in the editor (everything else uses the default app).
@@ -64,28 +64,6 @@ pub const DEFAULT_ZIP_EXCLUDE_DIRS: &[&str] = &[
     "Pods",
     ".cache",
 ];
-
-/// hop's built-in default theme: the rose accent kept from the pre-migration
-/// look, on a dark scheme whose header/footer bands sit below a lighter content
-/// surface (the panel layout). Registered as the `default` theme, replacing the
-/// toolkit's teal built-in.
-const HOP_DEFAULT_THEME: ThemeColors = ThemeColors {
-    accent: Color::hex("#f7a3bd"),
-    foreground: Color::hex("#e5e5e5"),
-    background: Color::hex("#151515"),
-    header: Color::hex("#120F10"),
-    footer: Color::hex("#120F10"),
-    panel: Color::hex("#1c1a20"),
-    surface: Color::hex("#26222b"),
-    border: Color::hex("#4a4652"),
-    // The lifted border a focused box draws, keeping its contrast against the
-    // brighter fill; `border.lighten(0.15)`, the toolkit's own derivation.
-    border_focus: Color::hex("#74707d"),
-    success: Color::hex("#8fbf7f"),
-    warning: Color::hex("#dcbe5a"),
-    error: Color::hex("#d05050"),
-    info: Color::hex("#7fb3d4"),
-};
 
 /// A column's width budget: a lower bound and an optional upper bound it may
 /// grow to when content needs it and space is available.
@@ -207,7 +185,10 @@ impl Config {
     /// `default`, then any user `[themes.<name>]` layered on top.
     pub fn theme_registry(&self) -> ThemeRegistry {
         ThemeRegistry::builtin()
-            .with_custom([(DEFAULT_THEME.to_string(), HOP_DEFAULT_THEME)])
+            .with_custom([(
+                DEFAULT_THEME.to_string(),
+                app_colors::HOP_DEFAULT_THEME,
+            )])
             .with_custom(self.themes.iter().cloned())
     }
 

@@ -120,7 +120,10 @@ confirm_quit = false           # ask before quitting with `q` (Ctrl+Q never asks
 [appearance]
 theme = "default"              # default | monochrome | <your [themes.*] name>
 glyphs = "unicode"             # unicode | ascii
-# colors = { accent = "#f7a3bd" }   # override individual palette colours
+dim_amount = 40                # % coloured dimmed text darkens while `dim` is set
+# colors = { accent = "#f7a3bd", dim = "#6e6a78" }   # override palette colours
+#   (`dim` draws dimmed text in a colour instead of the terminal's dimming;
+#    values: "#rrggbb", "rgb(r, g, b)", a name, "ansi:<name>" or "default")
 
 # [themes.midnight]            # a custom theme, selected via [appearance].theme
 # accent = "#8899ff"
@@ -219,6 +222,7 @@ HOP_GIT_PROGRAM     the tool launched for git repos
 HOP_EDITOR          the editor for text files
 HOP_THEME           the active theme name
 HOP_GLYPHS          unicode | ascii
+HOP_DIM_AMOUNT      0-100: how far coloured dimmed text darkens
 HOP_CONFIRM_QUIT    true | false: ask before quitting with `q`
 HOP_GIT_TIMEOUT_SECS  seconds a pull or push may stall before it fails
 ```

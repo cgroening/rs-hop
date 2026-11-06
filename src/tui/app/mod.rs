@@ -419,6 +419,11 @@ impl App {
     ) -> Self {
         let icons = IconSet::new(config.appearance.glyphs);
         let skin = config.skin();
+        // The terminal `DIM` attribute takes the palette's `dim` color.
+        ratada::dim::apply_palette(
+            &skin.palette,
+            config.appearance.dim_fraction(),
+        );
         let colors = Colors::from_palette(&skin.palette);
         let keymap = config.keymap();
         let cached = status_service::load_cache(&cache_path);

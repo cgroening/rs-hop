@@ -83,7 +83,9 @@ src/
     zip_service.rs    spawn_zip: ZIP backups in the background (ZipUpdate)
   config/
     mod.rs    Config, ColumnWidth(s), palette/skin/keymap accessors
-    appearance.rs [appearance]: theme name, colour overrides, glyphs
+    app_colors.rs hop's built-in theme: the only file with colour values
+                  (tests/theme_only_colours.rs)
+    appearance.rs [appearance]: theme name, colour overrides, glyphs, dim_amount
     loader.rs defaults < config.toml < HOP_ env (settings only)
   cli/
     mod.rs      clap Cli/Command + dispatch; bare -> TUI; comp. root

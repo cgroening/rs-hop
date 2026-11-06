@@ -10,6 +10,7 @@ use std::{env, fs};
 
 use serde::Deserialize;
 
+use crate::config::appearance::MAX_DIM_AMOUNT;
 use crate::config::{Appearance, ColumnWidth, ColumnWidths, Config};
 use crate::domain::error::{Error, Result};
 use crate::theme::{GlyphVariant, Palette, ThemeColors, parse_color};
@@ -25,6 +26,8 @@ const THEME_ENV: &str = "HOP_THEME";
 
 /// Environment override for the glyph variant (`unicode`/`ascii`).
 const GLYPHS_ENV: &str = "HOP_GLYPHS";
+/// Overrides `[appearance] dim_amount`.
+const DIM_AMOUNT_ENV: &str = "HOP_DIM_AMOUNT";
 
 /// Environment override for the quit confirmation.
 const CONFIRM_QUIT_ENV: &str = "HOP_CONFIRM_QUIT";
@@ -59,6 +62,8 @@ struct RawAppearance {
     theme: Option<String>,
     colors: Option<BTreeMap<String, String>>,
     glyphs: Option<String>,
+    /// Percent dimmed colored text darkens while the color `dim` is set.
+    dim_amount: Option<u8>,
 }
 
 /// The legacy `[icons]` table.
@@ -198,6 +203,23 @@ fn resolve_appearance(
         theme: raw.theme.unwrap_or(defaults.theme),
         colors: raw.colors.unwrap_or(defaults.colors),
         glyphs,
+        dim_amount: dim_amount(raw.dim_amount, defaults.dim_amount),
+    }
+}
+
+/// The configured `dim_amount`, or `default` when it is absent or above 100
+/// (reported).
+fn dim_amount(raw: Option<u8>, default: u8) -> u8 {
+    match raw {
+        Some(amount) if amount <= MAX_DIM_AMOUNT => amount,
+        Some(amount) => {
+            log::warn!(
+                "appearance.dim_amount = {amount} is above {MAX_DIM_AMOUNT}, \
+                 using {default}"
+            );
+            default
+        }
+        None => default,
     }
 }
 
@@ -322,6 +344,12 @@ fn apply_env(config: &mut Config) {
         && !value.trim().is_empty()
     {
         config.appearance.glyphs = parse_glyph_variant(&value);
+    }
+    if let Ok(value) = env::var(DIM_AMOUNT_ENV)
+        && let Ok(amount) = value.trim().parse::<u8>()
+        && amount <= MAX_DIM_AMOUNT
+    {
+        config.appearance.dim_amount = amount;
     }
     if let Ok(value) = env::var(CONFIRM_QUIT_ENV)
         && let Some(flag) = parse_bool(&value)
@@ -448,6 +476,19 @@ mod tests {
         assert_eq!(build(raw).git_timeout_secs, 40);
         let raw: RawConfig = toml::from_str("git_timeout_secs = 0\n").unwrap();
         assert_eq!(build(raw).git_timeout_secs, DEFAULT_GIT_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn dim_amount_is_read_and_one_above_100_keeps_the_default() {
+        let raw: RawConfig =
+            toml::from_str("[appearance]\ndim_amount = 55\n").unwrap();
+        assert_eq!(build(raw).appearance.dim_amount, 55);
+        let raw: RawConfig =
+            toml::from_str("[appearance]\ndim_amount = 101\n").unwrap();
+        assert_eq!(
+            build(raw).appearance.dim_amount,
+            crate::config::appearance::DEFAULT_DIM_AMOUNT
+        );
     }
 
     #[test]

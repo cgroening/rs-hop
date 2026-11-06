@@ -14,7 +14,7 @@ use sparcli::{
 
 use crate::config::Config;
 use crate::domain::error::Error;
-use crate::theme::{Color, GlyphVariant};
+use crate::theme::{Color, GlyphVariant, Palette};
 use crate::util::app_info::APP_NAME;
 
 /// Exit code for a successful run.
@@ -142,25 +142,49 @@ pub fn report(error: &CliError, err: &mut dyn Write) -> ExitCode {
 ///
 /// `NO_COLOR` and non-terminal output are handled by sparcli itself.
 pub fn apply_sparcli_theme(config: &Config) {
-    let palette = config.palette();
-    let mut theme = Theme {
-        accent: map_color(palette.accent),
-        unicode: matches!(config.appearance.glyphs, GlyphVariant::Unicode),
-        ..Theme::default()
-    };
-    theme.success = SpStyle::new().fg(map_color(palette.success));
-    theme.error = SpStyle::new().fg(map_color(palette.error));
-    theme.warning = SpStyle::new().fg(map_color(palette.warning));
-    theme.info = SpStyle::new().fg(map_color(palette.info));
-    theme.secondary = SpStyle::new().fg(map_color(palette.foreground_dim));
-    set_theme(theme);
+    set_theme(sparcli_theme(&config.palette(), config.appearance.glyphs));
 }
 
-/// Maps a resolved palette [`Color`] to sparcli's color (truecolor, else reset).
+/// The sparcli theme for `palette`: the accent, the message roles, the
+/// widget styles and the dimmed text (`dim`, when set).
+fn sparcli_theme(palette: &Palette, glyphs: GlyphVariant) -> Theme {
+    let defaults = Theme::default();
+    let fg = |color: Color| SpStyle::new().fg(map_color(color));
+    // Dimmed text takes the palette's `dim` once it is set, like the TUI.
+    let dimmed = (palette.dim != Color::Default).then(|| fg(palette.dim));
+    Theme {
+        accent: map_color(palette.accent),
+        title: fg(palette.accent).bold(),
+        heading: fg(palette.accent).bold(),
+        secondary: fg(palette.foreground_dim),
+        success: fg(palette.success),
+        error: fg(palette.error),
+        warning: fg(palette.warning),
+        info: fg(palette.info),
+        hint: dimmed.unwrap_or(defaults.hint),
+        selection: fg(palette.accent).bold(),
+        cursor: fg(palette.foreground.readable_on(palette.cursor))
+            .bg(map_color(palette.cursor)),
+        diff_add: fg(palette.success),
+        diff_delete: fg(palette.error),
+        progress_empty: map_color(palette.foreground_muted),
+        code: fg(palette.info),
+        stripe: dimmed.unwrap_or(defaults.stripe),
+        unicode: matches!(glyphs, GlyphVariant::Unicode),
+        ..defaults
+    }
+}
+
+/// Maps a resolved palette [`Color`] to sparcli's color: truecolor to `Rgb`,
+/// an `ansi:` color to the same terminal color, the terminal default to
+/// `Reset`.
 fn map_color(color: Color) -> UiColor {
-    match color.rgb() {
-        Some((red, green, blue)) => UiColor::Rgb(red, green, blue),
-        None => UiColor::Reset,
+    match color {
+        Color::Rgb(red, green, blue) => UiColor::Rgb(red, green, blue),
+        Color::Ansi(_) => {
+            UiColor::from_name(&color.to_hex()).unwrap_or(UiColor::Reset)
+        }
+        Color::Default => UiColor::Reset,
     }
 }
 
@@ -182,6 +206,22 @@ pub fn warning(streams: &mut Streams, message: impl Into<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_cli_theme_follows_the_palette_and_dim() {
+        let mut config = Config::default();
+        config
+            .appearance
+            .colors
+            .insert("error".to_string(), "ansi:magenta".to_string());
+        config
+            .appearance
+            .colors
+            .insert("dim".to_string(), "#040506".to_string());
+        let theme = sparcli_theme(&config.palette(), config.appearance.glyphs);
+        assert_eq!(theme.error, SpStyle::new().fg(UiColor::Magenta));
+        assert_eq!(theme.hint, SpStyle::new().fg(UiColor::Rgb(4, 5, 6)));
+    }
 
     #[test]
     fn an_error_is_reported_as_a_greppable_prefixed_line() {

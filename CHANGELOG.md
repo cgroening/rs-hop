@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Every colour comes from the theme.** hop's built-in theme lives in `src/config/app_colors.rs`, the only file with colour values (`tests/theme_only_colours.rs`). The palette colour `dim` draws dimmed text in a chosen colour, `[appearance] dim_amount` (env `HOP_DIM_AMOUNT`) sets how far coloured dimmed text darkens. Colours accept `ansi:<name>` and `default`. The CLI theme follows the whole palette (roles, diff, progress, code spans, dimmed text).
+
 ### Fixed
 
 - **Row spinners no longer stop while a refresh is still running.** When two refreshes covered the same repos (e.g. `R` pressed right after the start-up refresh, or `x` during `r`), the first to finish stopped the spinners and showed the old cached status, while the other was still running with the progress bar. A row now spins until every refresh, pull or push that covers it is done.
