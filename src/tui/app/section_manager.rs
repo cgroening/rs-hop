@@ -21,7 +21,8 @@ impl App {
         let current =
             sections::current_section(&starts, self.cursor).unwrap_or(0);
         self.overlay = Overlay::SectionJump(
-            SelectModal::new("Jump to section", labels, current),
+            SelectModal::new("Jump to section", labels, current)
+                .with_current(current),
             starts,
         );
     }

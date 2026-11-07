@@ -131,6 +131,29 @@ pub fn load_config(path: &Path) -> Result<Config> {
     Ok(config)
 }
 
+/// Every problem the config file at `path` has: one it cannot be read or
+/// parsed for, and each value loading would only warn about and ignore (an
+/// unknown colour, a `dim_amount` above 100). Empty for a clean file and for
+/// a missing one. `F5` reloads only a clean configuration.
+pub fn problems(path: &Path) -> Vec<String> {
+    let raw = match read_raw(path) {
+        Ok(raw) => raw,
+        Err(error) => return vec![error.to_string()],
+    };
+    let mut problems: Vec<String> = unknown_color_names(&raw)
+        .into_iter()
+        .map(|(section, name)| format!("unknown color '{name}' in [{section}]"))
+        .collect();
+    if let Some(amount) = raw.appearance.as_ref().and_then(|a| a.dim_amount)
+        && amount > MAX_DIM_AMOUNT
+    {
+        problems.push(format!(
+            "appearance.dim_amount = {amount} is above {MAX_DIM_AMOUNT}"
+        ));
+    }
+    problems
+}
+
 /// Reads and parses the raw settings, or returns defaults when `path` is absent.
 fn read_raw(path: &Path) -> Result<RawConfig> {
     if !path.exists() {

@@ -323,7 +323,7 @@ fn dispatch(cli: &Cli, streams: &mut Streams) -> Result<Outcome, CliError> {
     match &cli.command {
         None => {
             let startup = startup_status(cli, &config);
-            run_tui(config, service, startup).map(Outcome::Code)
+            run_tui(config, service, startup, &config_path).map(Outcome::Code)
         }
         Some(Command::List { json }) => {
             list::run(&service, ctx, *json, streams)?;
@@ -434,23 +434,38 @@ fn build_service(config_path: &Path) -> Result<RepoService, CliError> {
     .map_err(CliError::from)
 }
 
-/// Opens the interactive TUI and performs the chosen post-exit action.
+/// Opens the interactive TUI and performs the chosen post-exit action. `F5`
+/// in the TUI comes back here as [`RunOutcome::ReloadConfig`]: the
+/// configuration and the entries are read again (the TUI checked the file
+/// is clean) and the TUI starts anew from the cache, without a git run.
 fn run_tui(
-    config: Config,
-    service: RepoService,
-    startup: StartupStatus,
+    mut config: Config,
+    mut service: RepoService,
+    mut startup: StartupStatus,
+    config_path: &Path,
 ) -> Result<u8, CliError> {
-    let git_client =
-        Arc::new(SubprocessGitClient::new(config.github_username.clone()));
-    let app = App::new(
-        config.clone(),
-        service,
-        git_client,
-        paths::cache_file(),
-        paths::ui_state_file(),
-        startup,
-    );
-    run_app(&config, app)
+    loop {
+        let git_client =
+            Arc::new(SubprocessGitClient::new(config.github_username.clone()));
+        let app = App::new(
+            config.clone(),
+            service,
+            git_client,
+            paths::cache_file(),
+            paths::ui_state_file(),
+            startup,
+        )
+        .with_config_path(config_path.to_path_buf());
+        match run_app_once(app)? {
+            RunOutcome::ReloadConfig => {
+                config = load_config(config_path)?;
+                service = build_service(config_path)?;
+                startup = StartupStatus::Cached;
+                log::info!("configuration reloaded");
+            }
+            outcome => return perform_outcome(&config, outcome),
+        }
+    }
 }
 
 /// Launches the TUI from the built-in demo dataset for screenshots: example
@@ -482,13 +497,17 @@ fn run_demo(mut config: Config) -> Result<u8, CliError> {
 
 /// Runs the prepared app in a terminal and performs the post-exit action.
 fn run_app(config: &Config, app: App) -> Result<u8, CliError> {
+    let outcome = run_app_once(app)?;
+    perform_outcome(config, outcome)
+}
+
+/// Runs the prepared app in a terminal and returns how it ended.
+fn run_app_once(app: App) -> Result<RunOutcome, CliError> {
     let mut tui = Tui::new()
         .map_err(|error| CliError::runtime(format!("terminal: {error}")))?;
     let outcome = tui::run(app, &mut tui);
     drop(tui);
-    let outcome = outcome
-        .map_err(|error| CliError::runtime(format!("terminal: {error}")))?;
-    perform_outcome(config, outcome)
+    outcome.map_err(|error| CliError::runtime(format!("terminal: {error}")))
 }
 
 /// Acts on the TUI outcome after the terminal is restored.
@@ -497,7 +516,10 @@ fn perform_outcome(
     outcome: RunOutcome,
 ) -> Result<u8, CliError> {
     match outcome {
-        RunOutcome::Quit | RunOutcome::Jumped => Ok(EXIT_OK),
+        // The demo has no config file to read again, so its reload ends it.
+        RunOutcome::Quit | RunOutcome::Jumped | RunOutcome::ReloadConfig => {
+            Ok(EXIT_OK)
+        }
         RunOutcome::LaunchGitTool(path) => {
             launch_tool(config, &path)?;
             Ok(EXIT_OK)

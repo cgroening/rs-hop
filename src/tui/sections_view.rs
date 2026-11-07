@@ -387,7 +387,7 @@ fn entry_item<'a>(
     // A 2-cell lead: the selection marker when a selection is active.
     let lead = if view.has_selection && selected {
         Span::styled(
-            "\u{25b8} ",
+            format!("{} ", view.icons.marked),
             Style::default()
                 .fg(view.colors.accent)
                 .add_modifier(Modifier::BOLD),

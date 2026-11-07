@@ -8,7 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **The add/edit form opens in normal mode**, where letters are commands: `Enter`/`e` edit Name or Slug, `Enter` on Path opens the path picker (`e` types the path; `Ctrl+O` no longer opens the picker), `Enter` on Section the section picker. `s`/`Ctrl+S` save and keep the form open, a second press within a second closes it; `Enter` no longer saves. `Esc` closes an unchanged form and asks "Save changes?" (`y`/`n`/`b`) for a changed one. `Ctrl+O` puts the focused field back to its value when the form opened or was last saved. A changed field carries `*`, the labels stand in a column, the focused row is tinted from border to border, Path and Section carry the pointer glyph, the kind sits between `←` and `→`, and an empty path shows in red under the field instead of in the status band after the form closed.
+- The dialogs (confirm, slug prompt, select lists, the sections manager, the section picker, the path picker) use the toolkit's frame with its padding, are as big as their content (the path picker keeps a share of the screen), show their keys in the toolkit's hint block (`esc` included, lower case) and mark the cursor with the pointer glyph and their position in the bottom border. The sort and section-jump lists and the section picker keep a `✓` after the entry that applies.
+- The multi-selection marks rows with `●` (ASCII `*`) instead of `▸`, which means "folded"; folded/open sections read `+`/`-` with ASCII glyphs. The column-set bar separates the sets with a dim `│`, the detail panel's title with ` · `.
+- The list shows the cursor's position (`3/12`) in the bottom-right corner.
+- `Esc` in the live filter clears the query first and leaves the filter on the next press.
+- The footer uses the toolkit's footer style (descriptions dimmed).
+
 - `ratada` 0.7 → 0.8: every toolkit dialog (confirm, message, the list pickers, the calendars, the help overlay, …) keeps a blank row below its title and two columns of space at each side, and the help overlay's key hints follow the other dialogs.
+
+### Added
+
+- **`F5` reloads `config.toml`**: with any problem (a parse error, an unknown color, a `dim_amount` above 100) it lists them and changes nothing; a clean file restarts the TUI on the cached status.
 
 ## [0.6.0] - 2026-11-06
 

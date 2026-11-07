@@ -51,8 +51,9 @@ impl App {
                 }
             })
             .collect();
-        self.overlay =
-            Overlay::Sort(SelectModal::new(" Sort by ", items, cursor), modes);
+        let picker =
+            SelectModal::new(" Sort by ", items, cursor).with_current(cursor);
+        self.overlay = Overlay::Sort(picker, modes);
     }
 
     /// Applies a picked sort mode. Re-picking the active column flips the

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use crate::domain::path_repair::nearest_existing_on_disk;
 use crate::domain::repo::{Repo, RepoKind};
-use crate::tui::form::{BulkDraft, RepoDraft, RepoForm};
+use crate::tui::form::{BulkDraft, Field as FormField, RepoDraft, RepoForm};
 use crate::tui::path_picker::PathPicker;
 use crate::tui::section_picker::SectionPicker;
 use crate::tui::widgets::{ConfirmModal, SelectModal, TextPrompt};
@@ -326,16 +326,57 @@ impl App {
 
     /// Saves the add or edit form into a new or existing entry, registering a
     /// newly typed section name.
+    /// Saves the single-entry form and keeps it open on the saved entry
+    /// (a field problem stays in the form under its field); closes it when
+    /// the save came from its "Save changes?" question.
+    pub(super) fn save_form(
+        &mut self,
+        mut form: Box<RepoForm>,
+        target: EditTarget,
+        draft: RepoDraft,
+    ) {
+        if draft.path.trim().is_empty() {
+            form.set_error(FormField::Path, "path must not be empty");
+            self.overlay = Overlay::Form(form, target);
+            return;
+        }
+        match self.do_save_form(save_index(&target), draft) {
+            Some(_) if form.closes_after_save() => {}
+            Some(index) => {
+                form.mark_saved();
+                self.overlay = Overlay::Form(form, EditTarget::One(index));
+            }
+            None => self.overlay = Overlay::Form(form, target),
+        }
+    }
+
+    /// Saves the bulk form and keeps it open (closes it when the save came
+    /// from its "Save changes?" question).
+    pub(super) fn save_bulk_form(
+        &mut self,
+        mut form: Box<RepoForm>,
+        target: EditTarget,
+        draft: BulkDraft,
+    ) {
+        let saved = self.do_save_bulk(target.clone(), draft);
+        if saved && form.closes_after_save() {
+            return;
+        }
+        if saved {
+            form.mark_saved();
+        }
+        self.overlay = Overlay::Form(form, target);
+    }
+
+    /// Writes the draft as an update of `index` or a new entry; returns the
+    /// saved entry's index, or `None` when the save failed (the status says
+    /// why).
     pub(super) fn do_save_form(
         &mut self,
         index: Option<usize>,
         draft: RepoDraft,
-    ) {
+    ) -> Option<usize> {
         let path = crate::util::paths::expand_tilde(draft.path.trim());
-        if draft.path.trim().is_empty() {
-            self.set_status("path must not be empty");
-            return;
-        }
         let section = draft.section.clone();
         let kind = draft.kind;
         // A folder needs a trailing slash to be recognised before it exists.
@@ -353,9 +394,7 @@ impl App {
         let new_path = path.clone();
         let (result, ok_message) = match index {
             Some(index) => {
-                let Some(mut repo) = self.service.get(index).cloned() else {
-                    return;
-                };
+                let mut repo = self.service.get(index).cloned()?;
                 apply_draft(&mut repo, draft, path);
                 (self.service.update(index, repo), "entry updated")
             }
@@ -382,6 +421,8 @@ impl App {
         {
             self.refresh_paths(vec![new_path], false, false);
         }
+        let added = self.service.repos().len().checked_sub(1);
+        saved.then(|| index.or(added)).flatten()
     }
 
     /// Applies a bulk edit: writes each touched field onto every target entry
@@ -390,9 +431,9 @@ impl App {
         &mut self,
         target: EditTarget,
         draft: BulkDraft,
-    ) {
+    ) -> bool {
         let EditTarget::Bulk(indices) = target else {
-            return;
+            return false;
         };
         // The kind after the edit decides which namespace a new section joins.
         let kind_after = draft.kind.unwrap_or_else(|| self.tab.repo_kind());
@@ -416,10 +457,11 @@ impl App {
             let _ = self.service.ensure_section(kind_after, name);
         }
         let count = indices.len();
+        let saved = result.is_ok();
         self.report(result, &format!("updated {count} entries"));
-        self.clear_selection();
         self.clamp_cursor_to_rows();
         self.start_stats();
+        saved
     }
 
     /// Applies a picked path to its intent (repair an entry, or fill a form).

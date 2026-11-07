@@ -2,18 +2,38 @@
 //! rename, delete and reorder them. The implicit "Ungrouped" section is shown
 //! as a locked trailing row that cannot be edited or moved.
 
+use std::cell::Cell;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratada::chrome;
+use ratada::list::{self, CursorMark, ListView};
+use ratada::modal::{HINT_BLOCK_ROWS, hint_block, hints_width};
+use ratada::overlay;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, List, ListItem, ListState};
+use ratatui::widgets::{Clear, Paragraph};
+use unicode_width::UnicodeWidthStr;
 
 use crate::domain::sections::UNGROUPED;
 use crate::theme::Skin;
 use crate::tui::list_layout::moved_cursor;
 use crate::tui::skin::Colors;
-use crate::tui::widgets::centered_rect;
+use crate::tui::widgets::box_rect;
+
+/// The manager's keys, in the modal hint block.
+const HINTS: [(&str, &str); 5] = [
+    ("n", "new"),
+    ("r", "rename"),
+    ("d", "delete"),
+    ("alt+\u{2191}\u{2193}", "move"),
+    ("esc", "close"),
+];
+/// The most section rows shown before the list scrolls.
+const MAX_ROWS: u16 = 14;
+/// The pointer column and the scrollbar beside a row.
+const ROW_CHROME: usize = 3;
 
 /// What a key press on the sections manager asks the app to do.
 pub enum SectionsAction {
@@ -40,13 +60,18 @@ pub enum SectionsAction {
 pub struct SectionsModal {
     names: Vec<String>,
     cursor: usize,
+    offset: Cell<usize>,
 }
 
 impl SectionsModal {
     /// Builds the manager over `names`, with the cursor clamped into range.
     pub fn new(names: Vec<String>, cursor: usize) -> Self {
         let cursor = cursor.min(names.len().saturating_sub(1));
-        SectionsModal { names, cursor }
+        SectionsModal {
+            names,
+            cursor,
+            offset: Cell::new(0),
+        }
     }
 
     /// The cursor position (used to re-open the manager after a change).
@@ -109,60 +134,58 @@ impl SectionsModal {
         }
     }
 
-    /// Renders the manager centred in `area`.
+    /// Renders the manager centred in `area`: the sections with the pointer
+    /// cursor (the locked "Ungrouped" row dimmed below them), the badge in
+    /// the bottom border and the keys in the hint block.
     pub fn render(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
         let colors = Colors::from_palette(&skin.palette);
-        let height = (self.names.len() as u16 + 5).clamp(6, 18);
-        let rect = centered_rect(50, height, area);
-        frame.render_widget(Clear, rect);
-        let block = ratada::chrome::modal_block(skin, "Manage sections");
-        let inner = block.inner(rect);
-        frame.render_widget(block, rect);
-
-        let mut items: Vec<ListItem> = self
+        let ungrouped = format!("{UNGROUPED} (auto)");
+        let widest = self
             .names
             .iter()
-            .map(|name| ListItem::new(Line::raw(name.clone())))
-            .collect();
-        items.push(ListItem::new(Line::from(Span::styled(
-            format!("{UNGROUPED} (auto)"),
-            Style::default().fg(colors.dim),
-        ))));
-        items.push(ListItem::new(Line::raw("")));
-        items.push(ListItem::new(Line::from(Span::styled(
-            "n new · r rename · d delete · Alt+\u{2191}\u{2193} move · Esc close",
-            Style::default().fg(colors.dim),
-        ))));
+            .map(|name| name.width())
+            .chain(std::iter::once(ungrouped.width()))
+            .max()
+            .unwrap_or(0);
+        let width = (widest + ROW_CHROME).max(hints_width(&HINTS));
+        let list_rows = (self.names.len() as u16 + 1).min(MAX_ROWS);
+        let rect = box_rect(area, (width, list_rows + HINT_BLOCK_ROWS));
+        frame.render_widget(Clear, rect);
+        let inner = overlay::framed(frame, rect, skin, "Manage sections");
+        let list_area = Rect {
+            height: inner.height.saturating_sub(HINT_BLOCK_ROWS),
+            ..inner
+        };
 
-        // The box is capped, so a long section list overflows. Keep the cursor
-        // inside the visible window and show the shared scrollbar, rather than
-        // silently cutting the rest off.
-        let total = items.len();
-        let viewport = inner.height as usize;
-        let offset = ratada::nav::keep_visible(
-            ratada::nav::ScrollView {
-                total,
-                offset: 0,
-                viewport,
-            },
-            self.cursor,
-        );
-        let list = List::new(items).highlight_style(colors.selection_style());
-        let mut state = ListState::default().with_offset(offset);
-        if !self.names.is_empty() {
-            state.select(Some(self.cursor));
-        }
-        frame.render_stateful_widget(list, inner, &mut state);
-        ratada::scroll::render_scrollbar(
+        let mut rows: Vec<Line> = self
+            .names
+            .iter()
+            .map(|name| Line::raw(name.clone()))
+            .collect();
+        rows.push(Line::from(Span::styled(
+            ungrouped,
+            Style::default().fg(colors.dim),
+        )));
+        list::render_marked(
             frame,
-            inner,
+            list_area,
             skin,
-            ratada::nav::ScrollView {
-                total,
-                offset,
-                viewport,
+            ListView {
+                rows,
+                selected: self.cursor,
+                offset: &self.offset,
             },
+            CursorMark::Pointer,
         );
+        let hint_area = Rect {
+            y: list_area.bottom(),
+            height: HINT_BLOCK_ROWS,
+            ..inner
+        };
+        let hints = hint_block(&HINTS, &skin.palette, usize::from(inner.width));
+        frame.render_widget(Paragraph::new(hints), hint_area);
+        let badge = chrome::position_badge(self.cursor, self.names.len());
+        chrome::render_badge(frame, rect, skin, &badge);
     }
 }
 

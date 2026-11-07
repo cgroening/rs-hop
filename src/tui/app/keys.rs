@@ -5,7 +5,6 @@
 //! keymap deliberately does not own (`Tab`/`BackTab` and `Esc`) are consumed
 //! here too.
 
-use super::edit::save_index;
 use super::*;
 
 use crossterm::event::{KeyCode, KeyEvent};
@@ -33,6 +32,10 @@ impl App {
         if shortcut_hints::consume_toggle(key) {
             self.save_ui_state();
             return None;
+        }
+        // `F5` reloads the configuration from the list and from any overlay.
+        if ratada::reload::is_reload_key(key) {
+            return self.request_reload();
         }
         match &mut self.overlay {
             Overlay::None => self.handle_list_key(key),
@@ -90,16 +93,18 @@ impl App {
             }
             Overlay::Form(mut form, target) => match form.handle_key(key) {
                 FormResult::Save(draft) => {
-                    self.do_save_form(save_index(&target), draft);
+                    self.save_form(form, target, draft);
                 }
-                FormResult::SaveBulk(bulk) => self.do_save_bulk(target, bulk),
+                FormResult::SaveBulk(bulk) => {
+                    self.save_bulk_form(form, target, bulk);
+                }
                 FormResult::PickPath => {
                     self.open_form_path_picker(form, target);
                 }
                 FormResult::PickSection => {
                     self.open_section_picker(form, target);
                 }
-                FormResult::Cancel => {}
+                FormResult::Cancel | FormResult::Close => {}
                 FormResult::Pending => {
                     self.overlay = Overlay::Form(form, target);
                 }
@@ -206,6 +211,10 @@ impl App {
                 SelectResult::Pending => {
                     self.overlay = Overlay::SyncResults(modal);
                 }
+            },
+            Overlay::Notice(mut modal) => match modal.handle_key(key) {
+                SelectResult::Selected(_) | SelectResult::Cancel => {}
+                SelectResult::Pending => self.overlay = Overlay::Notice(modal),
             },
             Overlay::SectionDelete(confirm, name) => {
                 match confirm.handle_key(key) {
@@ -392,9 +401,14 @@ impl App {
         key: KeyEvent,
     ) -> Option<RunOutcome> {
         match key.code {
+            // `Esc` steps back: it clears a typed query first and leaves the
+            // filter on the next press.
+            KeyCode::Esc if !self.filter.value().is_empty() => {
+                self.filter = InputField::new("");
+                self.cursor = 0;
+            }
             KeyCode::Esc => {
                 self.filtering = false;
-                self.filter = InputField::new("");
                 self.cursor = 0;
             }
             KeyCode::Up => self.move_cursor(-1),

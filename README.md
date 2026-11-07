@@ -252,7 +252,7 @@ HOP_GIT_TIMEOUT_SECS  seconds a pull or push may stall before it fails
 | `t` | pick the column to sort by (picking the active one flips the direction) |
 | `,` | toggle floating favourites to the top |
 | `.` | toggle grouping into sections (off = flat, globally sorted, with a Section column) |
-| `f` | live fuzzy filter (`Esc` clears; matched characters are highlighted) |
+| `f` | live fuzzy filter (`Esc` clears the query, a second `Esc` leaves the filter; matched characters are highlighted) |
 | `F` | toggle showing only git repos with a status change |
 | `s` | jump to a section (in the grouped view) |
 | `←` / `→` | go to the start of the section, then the previous one / go to the next section (wraps; grouped view) |
@@ -260,7 +260,7 @@ HOP_GIT_TIMEOUT_SECS  seconds a pull or push may stall before it fails
 | `_` | fold every section, or unfold all when none is open |
 | `M` | manage sections (add / rename / delete / reorder) |
 | `Alt+↑/↓` | reorder the entry within its group (custom sort; favourites stay on top) |
-| `n` | add an entry (fill the form; `^O` opens the path picker) |
+| `n` | add an entry (fill the form; `Enter` on Path opens the path picker) |
 | `e` | edit the entry (bulk-edit Section/Favourite/Backup/Kind when several are selected) |
 | `d` / `Del` / `Backspace` | delete (acts on the selection, else the cursor; confirm) |
 | `u` | undo the last change |
@@ -280,9 +280,26 @@ HOP_GIT_TIMEOUT_SECS  seconds a pull or push may stall before it fails
 | `r` | git tabs: reload status (`R`: + `git fetch`) · Files tab: check that paths still exist |
 | `x` | refresh selection/cursor   ·   `X`: with `git fetch` |
 | `?` | toggle the help overlay |
+| `F5` | reload `config.toml` (only when it has no problem; otherwise the problems are listed) |
 | `F1` | show / hide the shortcut-hint footer (remembered across runs) |
 | `q` | quit (asks first when `confirm_quit = true`) |
 | `Ctrl+Q` | force quit, no questions (from any state) |
+
+The add/edit form opens in normal mode, where letters are commands:
+
+| Key | Action |
+| --- | --- |
+| `Tab` / `Shift+Tab`, `↑` / `↓`, `j` / `k` | next / previous field (wraps) |
+| `Enter` / `e` | edit Name or Slug (`Enter` or `Esc` end the editing) |
+| `Enter` on Path | open the path picker (`e` types the path instead) |
+| `Enter` on Section | open the fuzzy section picker (type a new name to create it) |
+| `←` / `→` | change the kind |
+| `Space` | toggle Fav / Backup |
+| `s` / `Ctrl+S` | save; the form stays open, a second press within a second closes it |
+| `Ctrl+O` | put the focused field back to its value when the form opened or was last saved |
+| `Esc` | close; with changes it asks "Save changes?" (`y` save, `n` discard, `b`/`Esc` back) |
+
+A changed field carries `*` before its label; a problem (an empty path, say) shows in red under its field.
 
 ## Development
 

@@ -428,7 +428,7 @@ fn header_row(view: &TableView) -> Row<'static> {
 fn row_for<'a>(repo: &Repo, view: &TableView, selected: bool) -> Row<'a> {
     let mut cells: Vec<Cell> = Vec::new();
     if view.has_selection {
-        cells.push(selection_cell(selected, view.colors));
+        cells.push(selection_cell(selected, view.colors, view.icons));
     }
     cells.push(marker_cell(repo, view));
     cells.push(fav_cell(repo, view));
@@ -488,9 +488,18 @@ fn row_for<'a>(repo: &Repo, view: &TableView, selected: bool) -> Row<'a> {
     Row::new(cells)
 }
 
-/// The selection-marker cell: a bold accent `▸` when selected, else blank.
-fn selection_cell<'a>(selected: bool, colors: &Colors) -> Cell<'a> {
-    let symbol = if selected { "\u{25b8} " } else { "  " };
+/// The selection-marker cell: the bold accent mark glyph when selected,
+/// else blank.
+fn selection_cell<'a>(
+    selected: bool,
+    colors: &Colors,
+    icons: &IconSet,
+) -> Cell<'a> {
+    let symbol = if selected {
+        format!("{} ", icons.marked)
+    } else {
+        "  ".to_string()
+    };
     Cell::from(Span::styled(
         symbol,
         Style::default()

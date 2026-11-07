@@ -97,6 +97,9 @@ pub enum RunOutcome {
     OpenFile(PathBuf),
     /// Open this file with the platform's default application, then exit.
     OpenWith(PathBuf),
+    /// `F5` on a clean `config.toml`: the composition root reads it again and
+    /// starts the TUI anew.
+    ReloadConfig,
 }
 
 /// An active modal layered over the list.
@@ -131,6 +134,9 @@ enum Overlay {
     SyncConfirm(ConfirmModal, SyncOp, Vec<PathBuf>),
     /// The outcome of each repository of the last pull or push run.
     SyncResults(SelectModal),
+    /// A list of lines to read and close (the problems that kept `F5` from
+    /// reloading the configuration).
+    Notice(SelectModal),
 }
 
 /// Why the section prompt is open.
@@ -163,6 +169,9 @@ enum EditTarget {
 /// The interactive application state.
 pub struct App {
     config: Config,
+    /// The config file `F5` checks before it asks for a reload; `None` (the
+    /// demo) has nothing to reload.
+    config_path: Option<PathBuf>,
     service: RepoService,
     icons: IconSet,
     /// The resolved skin (config-driven palette + glyphs) for the panel frame.
@@ -407,6 +416,29 @@ fn install_quit_confirmation(confirm_quit: bool, skin: Skin) {
 }
 
 impl App {
+    /// Sets the config file `F5` checks before it asks for a reload.
+    #[must_use]
+    pub fn with_config_path(mut self, path: PathBuf) -> Self {
+        self.config_path = Some(path);
+        self
+    }
+
+    /// `F5`: a clean `config.toml` ends the TUI with [`RunOutcome::
+    /// ReloadConfig`]; one with problems lists them and nothing is reloaded.
+    fn request_reload(&mut self) -> Option<RunOutcome> {
+        let Some(path) = self.config_path.as_deref() else {
+            self.set_status("no config file to reload");
+            return None;
+        };
+        let problems = crate::config::loader::problems(path);
+        if problems.is_empty() {
+            return Some(RunOutcome::ReloadConfig);
+        }
+        let title = " config.toml has problems \u{b7} nothing reloaded ";
+        self.overlay = Overlay::Notice(SelectModal::new(title, problems, 0));
+        None
+    }
+
     /// Builds the app, hydrates status from the cache and, unless `--cached` or
     /// example mode, starts a background refresh (fetching first when asked).
     pub fn new(
@@ -444,6 +476,7 @@ impl App {
         ];
         let mut app = App {
             config,
+            config_path: None,
             service,
             icons,
             skin,

@@ -13,7 +13,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent};
+use ratada::chrome::{MODAL_CHROME_HEIGHT, MODAL_CHROME_WIDTH};
 use ratada::input::InputField;
+use ratada::modal::{HINT_BLOCK_ROWS, hint_block, hints_width};
 use ratada::text::truncate;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -25,10 +27,25 @@ use crate::theme::Skin;
 use crate::tui::list_layout::moved_cursor;
 use crate::tui::presentation::{FieldView, field_spans};
 use crate::tui::skin::Colors;
-use crate::tui::widgets::centered_rect;
 
 /// The label in front of the picker's filter line.
 const FILTER_LABEL: &str = "filter: ";
+
+/// The picker's keys, in the modal hint block.
+const HINTS: [(&str, &str); 4] = [
+    ("\u{2190}\u{2192}", "browse"),
+    ("enter", "pick"),
+    ("ctrl+h", "hidden"),
+    ("esc", "cancel"),
+];
+/// The share of the screen the picker takes: seven tenths.
+const SHARE_NUMERATOR: u16 = 7;
+/// The denominator of [`SHARE_NUMERATOR`].
+const SHARE_DENOMINATOR: u16 = 10;
+/// The fewest entry rows the picker shows.
+const MIN_LIST_ROWS: u16 = 4;
+/// The pointer column and the scrollbar beside an entry row.
+const ROW_CHROME: usize = 3;
 
 /// Outcome of feeding a key to the picker.
 pub enum PickerResult {
@@ -116,35 +133,34 @@ impl PathPicker {
     /// position badge sits in the bottom-right border.
     pub fn render(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
         let colors = Colors::from_palette(&skin.palette);
-        let rect =
-            centered_rect(70, area.height.saturating_sub(4).max(8), area);
+        // A large overlay: a share of the screen, but never smaller than its
+        // keys and a few rows plus the frame and padding.
+        let min_width = u16::try_from(hints_width(&HINTS))
+            .unwrap_or(u16::MAX)
+            .saturating_add(MODAL_CHROME_WIDTH);
+        let rect = ratada::layout::centered_fraction(
+            area,
+            SHARE_NUMERATOR,
+            SHARE_DENOMINATOR,
+            min_width,
+            MIN_LIST_ROWS + MODAL_CHROME_HEIGHT + HINT_BLOCK_ROWS + 2,
+        );
         frame.render_widget(Clear, rect);
-        let block = ratada::chrome::modal_block(skin, "Pick path");
-        let inner = block.inner(rect);
-        frame.render_widget(block, rect);
+        let inner = ratada::overlay::framed(frame, rect, skin, "Pick path");
         // The position badge reads as part of the bottom-right border.
         let badge =
             ratada::chrome::position_badge(self.cursor, self.visible.len());
         ratada::chrome::render_badge(frame, rect, skin, &badge);
 
         let width = inner.width as usize;
-        let footer = ratada::shortcut_hints::lines(
-            &[
-                ("\u{2190}\u{2192}", "browse"),
-                ("enter", "pick"),
-                ("^H", "hidden"),
-            ],
-            skin.palette.accent_dim,
-            width,
-        );
-        let footer_h = (footer.len() as u16).max(1);
+        let footer = hint_block(&HINTS, &skin.palette, width);
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1),
                 Constraint::Length(1),
                 Constraint::Min(1),
-                Constraint::Length(footer_h),
+                Constraint::Length(HINT_BLOCK_ROWS),
             ])
             .split(inner);
 
@@ -179,7 +195,8 @@ impl PathPicker {
     /// directories keep the accent colour.
     fn render_list(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
         let accent = Colors::from_palette(&skin.palette).accent;
-        let width = area.width as usize;
+        // The pointer column and the scrollbar take their room.
+        let width = (area.width as usize).saturating_sub(ROW_CHROME);
         let rows: Vec<Line<'static>> = self
             .visible
             .iter()
@@ -197,7 +214,7 @@ impl PathPicker {
                 }
             })
             .collect();
-        ratada::list::render(
+        ratada::list::render_marked(
             frame,
             area,
             skin,
@@ -206,6 +223,7 @@ impl PathPicker {
                 selected: self.cursor,
                 offset: &self.offset,
             },
+            ratada::list::CursorMark::Pointer,
         );
     }
 

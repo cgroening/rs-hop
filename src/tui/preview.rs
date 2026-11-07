@@ -194,7 +194,7 @@ pub struct PreviewContext<'a> {
 /// Renders the detail panel into `area`.
 pub fn render(frame: &mut Frame, area: Rect, skin: &Skin, ctx: PreviewContext) {
     let title = match ctx.repo {
-        Some(repo) => format!("Details - {}", repo.display_name()),
+        Some(repo) => format!("Details \u{b7} {}", repo.display_name()),
         None => "Details".to_string(),
     };
     let block = Block::default()

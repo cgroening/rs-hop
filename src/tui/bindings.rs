@@ -354,6 +354,83 @@ pub const NAVIGATION_ACTIONS: &[Action] = &[
 mod tests {
     use super::*;
 
+    /// How the README writes a key of the catalog: arrows as symbols,
+    /// named keys and modifiers capitalised (`shift+up` -> `Shift`, `↑`).
+    fn readme_spelling(key: &str) -> (Option<String>, String) {
+        let (modifier, base) = match key.rsplit_once('+') {
+            Some((modifier, base)) if !base.is_empty() => {
+                (Some(capitalised(modifier)), base)
+            }
+            _ => (None, key),
+        };
+        let base = match base {
+            "up" => "\u{2191}".to_string(),
+            "down" => "\u{2193}".to_string(),
+            "left" => "\u{2190}".to_string(),
+            "right" => "\u{2192}".to_string(),
+            "pgup" => "PgUp".to_string(),
+            "pgdn" => "PgDn".to_string(),
+            "del" => "Del".to_string(),
+            named if named.chars().count() > 1 => capitalised(named),
+            single => single.to_string(),
+        };
+        (modifier, base)
+    }
+
+    /// Whether a code span such as `Shift+PgUp/PgDn` or `Del` names the key
+    /// `modifier`+`base`: the modifier prefix, then `base` as one of the
+    /// `/`-separated alternatives.
+    fn span_names(span: &str, modifier: Option<&str>, base: &str) -> bool {
+        let rest = match modifier {
+            Some(modifier) => {
+                match span.strip_prefix(&format!("{modifier}+")) {
+                    Some(rest) => rest,
+                    None => return false,
+                }
+            }
+            None if span.contains('+') && span != base => return false,
+            None => span,
+        };
+        // A chord with a modifier ignores the letter's case (`Ctrl+P`).
+        rest.split('/').any(|part| match modifier {
+            Some(_) => part.trim().eq_ignore_ascii_case(base),
+            None => part.trim() == base,
+        })
+    }
+
+    fn capitalised(word: &str) -> String {
+        let mut chars = word.chars();
+        chars.next().map_or_else(String::new, |first| {
+            first.to_uppercase().chain(chars).collect()
+        })
+    }
+
+    /// The README's TUI key table names every default key: some table row
+    /// carries the key (and its modifier) in a code span, so a new or
+    /// rebound action cannot leave the documentation behind.
+    #[test]
+    fn the_readme_lists_every_default_key() {
+        let readme = include_str!("../../README.md");
+        let rows: Vec<&str> = readme
+            .lines()
+            .filter(|line| line.starts_with("| `"))
+            .collect();
+        for action in Action::all() {
+            for key in action.default_keys() {
+                let (modifier, base) = readme_spelling(key);
+                let found = rows.iter().any(|row| {
+                    row.split('`').skip(1).step_by(2).any(|span| {
+                        span_names(span, modifier.as_deref(), &base)
+                    })
+                });
+                assert!(
+                    found,
+                    "the README key table does not show `{key}` ({action:?})"
+                );
+            }
+        }
+    }
+
     /// Every action must appear in exactly one help section (counting the
     /// leading Navigation and trailing Global groups), so the overlay - and the
     /// README table it mirrors - can never silently omit a new action.

@@ -245,7 +245,7 @@ fn v_toggles_the_panel_and_capital_v_moves_it() {
     assert!(!screen(&app, 120, 30).contains("Details"));
     press(&mut app, KeyCode::Char('v'));
     // The border title names the cursor entry.
-    assert!(screen(&app, 120, 30).contains("Details - hop"));
+    assert!(screen(&app, 120, 30).contains("Details \u{b7} hop"));
     assert_eq!(
         app.preview.position,
         crate::tui::preview::PreviewPosition::Right
@@ -255,7 +255,7 @@ fn v_toggles_the_panel_and_capital_v_moves_it() {
         app.preview.position,
         crate::tui::preview::PreviewPosition::Bottom
     );
-    assert!(screen(&app, 120, 30).contains("Details - hop"));
+    assert!(screen(&app, 120, 30).contains("Details \u{b7} hop"));
     press(&mut app, KeyCode::Char('v'));
     assert!(!screen(&app, 120, 30).contains("Details"));
 }

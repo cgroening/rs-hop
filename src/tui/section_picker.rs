@@ -10,32 +10,41 @@ use std::cell::Cell;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratada::input::InputField;
+use ratada::modal::{HINT_BLOCK_ROWS, hint_block, hints_width};
 use ratada::text::truncate;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
+use unicode_width::UnicodeWidthStr;
 
 use crate::domain::sections::UNGROUPED;
 use crate::theme::Skin;
 use crate::tui::list_layout::moved_cursor;
 use crate::tui::presentation::{FieldView, field_spans};
 use crate::tui::skin::Colors;
-use crate::tui::widgets::centered_rect;
+use crate::tui::widgets::box_rect;
 
 /// The label in front of the picker's filter line.
 const FILTER_LABEL: &str = "filter: ";
+/// The fewest columns the filter text gets.
+const MIN_FILTER_WIDTH: usize = 20;
 
-/// The picker's footer hints.
-const FOOTER_HINTS: &[(&str, &str)] = &[
+/// The picker's keys, in the modal hint block.
+const HINTS: [(&str, &str); 4] = [
     ("\u{2191}\u{2193}", "move"),
     ("type", "filter / new"),
     ("enter", "choose"),
+    ("esc", "cancel"),
 ];
 
-/// The box width as a percentage of the area.
-const WIDTH_PCT: u16 = 60;
+/// The most list rows shown before the list scrolls.
+const MAX_ROWS: u16 = 14;
+/// The pointer column and the scrollbar beside a row.
+const ROW_CHROME: usize = 3;
+/// The check after the section that applies (gap and glyph).
+const CURRENT_MARK_WIDTH: usize = 2;
 
 /// Outcome of feeding a key to the section picker.
 pub enum SectionPickResult {
@@ -60,6 +69,9 @@ pub struct SectionPicker {
     cursor: usize,
     /// The list scroll offset, carried across frames by `ratada::list`.
     offset: Cell<usize>,
+    /// The item that applies right now (the form's section); it keeps the
+    /// check glyph while the cursor moves.
+    current: usize,
 }
 
 impl SectionPicker {
@@ -79,6 +91,7 @@ impl SectionPicker {
             visible: Vec::new(),
             cursor,
             offset: Cell::new(0),
+            current: cursor,
         };
         picker.apply_filter();
         picker.cursor = cursor.min(picker.row_count().saturating_sub(1));
@@ -161,31 +174,21 @@ impl SectionPicker {
         self.offset.set(0);
     }
 
-    /// Renders the picker centred in `area`, sized to its content (never taller
-    /// than needed): a titled box with the caret filter, the list (create row
-    /// last) and a compact footer.
+    /// Renders the picker centred in `area`, sized to its content: the caret
+    /// filter, the list (pointer cursor, the current section checked, the
+    /// create row last), the badge in the bottom border and the keys.
     pub fn render(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
-        // Footer height depends on the box width, which the box height does not,
-        // so it can be computed up front from the intended inner width.
-        let inner_width = ((u32::from(area.width) * u32::from(WIDTH_PCT) / 100)
-            as usize)
-            .saturating_sub(2);
-        let footer = ratada::shortcut_hints::lines(
-            FOOTER_HINTS,
-            skin.palette.accent_dim,
-            inner_width,
-        );
-        let footer_h = (footer.len() as u16).max(1);
+        let widest = self.items.iter().map(|item| item.width()).max();
+        let width = (widest.unwrap_or(0) + CURRENT_MARK_WIDTH + ROW_CHROME)
+            .max(hints_width(&HINTS))
+            .max(FILTER_LABEL.width() + MIN_FILTER_WIDTH);
         // At most one create row can join the full item list.
-        let list_h = (self.items.len() as u16 + 1).max(1);
-        // Borders (2) + filter (1) + list + footer; capped to the screen.
-        let height = 2 + 1 + list_h + footer_h;
-        let rect = centered_rect(WIDTH_PCT, height, area);
+        let list_h = (self.items.len() as u16 + 1).clamp(1, MAX_ROWS);
+        let rect = box_rect(area, (width, 1 + list_h + HINT_BLOCK_ROWS));
 
         frame.render_widget(Clear, rect);
-        let block = ratada::chrome::modal_block(skin, "Choose section");
-        let inner = block.inner(rect);
-        frame.render_widget(block, rect);
+        let inner =
+            ratada::overlay::framed(frame, rect, skin, "Choose section");
         let badge =
             ratada::chrome::position_badge(self.cursor, self.row_count());
         ratada::chrome::render_badge(frame, rect, skin, &badge);
@@ -195,13 +198,14 @@ impl SectionPicker {
             .constraints([
                 Constraint::Length(1),
                 Constraint::Min(1),
-                Constraint::Length(footer_h),
+                Constraint::Length(HINT_BLOCK_ROWS),
             ])
             .split(inner);
 
         self.render_filter(frame, rows[0], skin);
         self.render_list(frame, rows[1], skin);
-        frame.render_widget(Paragraph::new(footer), rows[2]);
+        let hints = hint_block(&HINTS, &skin.palette, usize::from(inner.width));
+        frame.render_widget(Paragraph::new(hints), rows[2]);
     }
 
     /// Renders the filter line (block caret, scrolling with `…`).
@@ -223,11 +227,27 @@ impl SectionPicker {
     /// row (accented) when a new name would be added.
     fn render_list(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
         let accent = Colors::from_palette(&skin.palette).accent;
-        let width = area.width as usize;
+        // The pointer column, the scrollbar and the check take their room.
+        let width = (area.width as usize)
+            .saturating_sub(ROW_CHROME + CURRENT_MARK_WIDTH);
+        let check = skin.glyphs.check;
         let mut lines: Vec<Line<'static>> = self
             .visible
             .iter()
-            .map(|&index| Line::from(truncate(&self.items[index], width)))
+            .map(|&index| {
+                let label = truncate(&self.items[index], width);
+                if index == self.current {
+                    Line::from(vec![
+                        Span::raw(label),
+                        Span::styled(
+                            format!(" {check}"),
+                            Style::default().fg(accent),
+                        ),
+                    ])
+                } else {
+                    Line::from(label)
+                }
+            })
             .collect();
         if let Some(name) = self.create_label() {
             lines.push(
@@ -235,7 +255,7 @@ impl SectionPicker {
                     .style(Style::default().fg(accent)),
             );
         }
-        ratada::list::render(
+        ratada::list::render_marked(
             frame,
             area,
             skin,
@@ -244,6 +264,7 @@ impl SectionPicker {
                 selected: self.cursor,
                 offset: &self.offset,
             },
+            ratada::list::CursorMark::Pointer,
         );
     }
 }

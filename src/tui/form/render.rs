@@ -1,75 +1,126 @@
-//! How the add/edit form draws itself: the field lines, their labels and
-//! the checkbox glyphs.
-use ratada::input::InputField;
+//! How the add/edit form draws itself, from the toolkit's form building
+//! blocks: the modal frame and padding, the label column as wide as the
+//! longest label, the `*` of a changed field in its own column, the focused
+//! row tinted from border to border, the pointer glyph on the two picker
+//! fields (Path, Section), the stepper on the kind, a problem in red under its
+//! field, and two fixed hint rows - the focused field's keys above the form's
+//! - so the box keeps its height while the focus moves.
 
-use super::{Field, LABEL_WIDTH, MIXED, kind_label};
+use ratada::form::field::{self, FieldStyles, LabelMarks};
+use ratada::modal::{hint_block, hints_width};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::{Block, Clear, Paragraph};
+use unicode_width::UnicodeWidthStr;
 
+use super::{Field, MIXED, Mode, RepoForm, kind_label};
 use crate::domain::sections::UNGROUPED;
 use crate::theme::Skin;
 use crate::tui::presentation::{FieldView, field_spans};
-use crate::tui::skin::Colors;
-use crate::tui::widgets::centered_rect;
-/// What a field line needs to draw itself, bundled to keep the parameter count
-/// low.
-struct LineCtx<'a> {
-    /// The colour roles resolved from the active theme.
-    colors: &'a Colors,
-    /// The active theme, whose palette colours the caret of a text field.
+use crate::tui::widgets::box_rect;
+
+/// The fewest columns a value gets, however short the opening values are.
+const MIN_VALUE_WIDTH: usize = 36;
+/// Rows of the hint block: a spacer, the field's keys, the form's keys.
+const HINT_ROWS: u16 = 3;
+
+/// The form's own keys in normal mode.
+const NORMAL_HINTS: [(&str, &str); 4] = [
+    ("tab", "next"),
+    ("s", "save"),
+    ("ctrl+o", "reset"),
+    ("esc", "leave (asks to save)"),
+];
+/// The form's own keys while a field is typed into.
+const EDITING_HINTS: [(&str, &str); 3] =
+    [("tab", "next"), ("ctrl+s", "save"), ("ctrl+o", "reset")];
+/// The keys of the "Save changes?" question.
+const QUESTION_HINTS: [(&str, &str); 3] =
+    [("y", "save"), ("n", "discard"), ("b", "back")];
+/// The keys of the focused field, by kind and mode.
+const TEXT_HINTS: [(&str, &str); 1] = [("enter", "edit")];
+const TEXT_EDITING_HINTS: [(&str, &str); 1] = [("enter/esc", "done")];
+const PATH_HINTS: [(&str, &str); 2] = [("enter", "pick"), ("e", "type")];
+const SECTION_HINTS: [(&str, &str); 1] = [("enter", "pick")];
+const KIND_HINTS: [(&str, &str); 1] = [("\u{2190}\u{2192}", "change")];
+const TOGGLE_HINTS: [(&str, &str); 1] = [("space", "toggle")];
+
+/// Every hint row the form can show, for its minimum width.
+const ALL_HINTS: [&[(&str, &str)]; 9] = [
+    &NORMAL_HINTS,
+    &EDITING_HINTS,
+    &QUESTION_HINTS,
+    &TEXT_HINTS,
+    &TEXT_EDITING_HINTS,
+    &PATH_HINTS,
+    &SECTION_HINTS,
+    &KIND_HINTS,
+    &TOGGLE_HINTS,
+];
+
+/// What every row of one form shares.
+struct RowCtx<'a> {
     skin: &'a Skin,
-    /// The display columns a field's value may occupy, after its label.
-    value_width: usize,
+    styles: FieldStyles,
+    label_width: usize,
+    width: usize,
 }
 
-/// One editable field of the form.
 impl super::RepoForm {
-    /// Renders the form centred in `area`.
+    /// Renders the form centred in `area`, as big as its fields and keys.
     pub fn render(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
-        let colors = Colors::from_palette(&skin.palette);
         let fields = self.fields();
-        let height = fields.len() as u16 + 4;
-        let rect = centered_rect(70, height, area);
+        let rows =
+            fields.len() as u16 + u16::from(self.error.is_some()) + HINT_ROWS;
+        let rect = box_rect(area, (self.content_width(), rows));
         frame.render_widget(Clear, rect);
-        let block = ratada::chrome::modal_block(skin, &self.title);
-        let inner_width = block.inner(rect).width as usize;
-        let ctx = LineCtx {
-            colors: &colors,
+        let inner = ratada::overlay::framed(frame, rect, skin, &self.title);
+        let ctx = RowCtx {
             skin,
-            value_width: inner_width.saturating_sub(LABEL_WIDTH),
+            styles: FieldStyles::from_palette(&skin.palette),
+            label_width: label_width(&fields),
+            width: usize::from(inner.width),
         };
-        let mut lines: Vec<Line> = fields
-            .iter()
-            .enumerate()
-            .map(|(index, field)| self.field_line(*field, index, &ctx))
-            .collect();
-        lines.push(Line::raw(""));
-        lines.push(Line::from(Span::styled(
-            self.hint(),
-            Style::default().fg(colors.dim),
-        )));
-        // `centered_rect` caps the box against the terminal, so on a short one
-        // the lower fields fall off. Scroll to keep the focused field visible
-        // and show the shared scrollbar instead of clipping silently.
-        let inner = block.inner(rect);
+        let mut lines: Vec<Line> = Vec::new();
+        let mut focus_row = 0;
+        for (index, field) in fields.iter().enumerate() {
+            if index == self.focus {
+                focus_row = lines.len();
+            }
+            lines.push(self.field_line(*field, index, &ctx));
+            if let Some((faulty, message)) = &self.error
+                && faulty == field
+            {
+                lines.push(field::problem_line(
+                    message,
+                    field::value_column(ctx.label_width),
+                    ctx.width,
+                    &ctx.styles,
+                ));
+            }
+        }
+        lines.extend(self.hint_lines(skin, ctx.width));
+
+        // On a short terminal the box is capped and the lower rows fall off:
+        // scroll to keep the focused field visible, with the shared scrollbar.
         let total = lines.len();
-        let viewport = inner.height as usize;
+        let viewport = usize::from(inner.height);
         let offset = ratada::nav::keep_visible(
             ratada::nav::ScrollView {
                 total,
                 offset: 0,
                 viewport,
             },
-            self.focus,
+            focus_row,
         );
+        if let Some(row) = focus_row.checked_sub(offset) {
+            tint_row(frame, inner, row, &ctx);
+        }
         frame.render_widget(
             Paragraph::new(lines)
-                .block(block)
                 .scroll((u16::try_from(offset).unwrap_or(0), 0)),
-            rect,
+            inner,
         );
         ratada::scroll::render_scrollbar(
             frame,
@@ -83,119 +134,145 @@ impl super::RepoForm {
         );
     }
 
-    /// The footer hint line for this form's mode.
-    fn hint(&self) -> &'static str {
-        if self.bulk {
-            "Tab field · \u{2190}\u{2192} kind · Space toggle · Enter on \
-             Section: pick · ^S save · Esc cancel"
-        } else {
-            "Tab field · \u{2190}\u{2192} kind · Space toggle · Enter on \
-             Section: pick · ^O path · ^S save · Esc cancel"
+    /// The content width: the label column and the widest opening value (at
+    /// least [`MIN_VALUE_WIDTH`]), never narrower than a hint row.
+    fn content_width(&self) -> usize {
+        let fields = self.fields();
+        let values = self
+            .baseline
+            .path
+            .width()
+            .max(self.baseline.name.width())
+            .max(MIN_VALUE_WIDTH);
+        let content = field::value_column(label_width(&fields)) + values;
+        let hints = ALL_HINTS.iter().map(|row| hints_width(row)).max();
+        content.max(hints.unwrap_or(0))
+    }
+
+    /// The hint block: a spacer, the focused field's keys (or a notice, or
+    /// the "Save changes?" question), the form's keys.
+    fn hint_lines(&self, skin: &Skin, width: usize) -> Vec<Line<'static>> {
+        let palette = &skin.palette;
+        let accent = ratada::style::accent(palette);
+        let (field_row, form_hints): (Line, &[(&str, &str)]) =
+            if self.asking_save {
+                (Line::styled("Save changes?", accent), &QUESTION_HINTS)
+            } else {
+                let row = match &self.notice {
+                    Some(notice) => Line::styled(notice.clone(), accent),
+                    None => hint_row(self.field_hints(), skin, width),
+                };
+                let form: &[(&str, &str)] = match self.mode {
+                    Mode::Normal => &NORMAL_HINTS,
+                    Mode::Editing => &EDITING_HINTS,
+                };
+                (row, form)
+            };
+        vec![Line::raw(""), field_row, hint_row(form_hints, skin, width)]
+    }
+
+    /// The keys of the focused field in the current mode.
+    fn field_hints(&self) -> &'static [(&'static str, &'static str)] {
+        let editing = self.mode == Mode::Editing;
+        match self.focused_field() {
+            Field::Name | Field::Slug | Field::Path if editing => {
+                &TEXT_EDITING_HINTS
+            }
+            Field::Name | Field::Slug => &TEXT_HINTS,
+            Field::Path => &PATH_HINTS,
+            Field::Section => &SECTION_HINTS,
+            Field::Kind => &KIND_HINTS,
+            Field::Fav | Field::Backup => &TOGGLE_HINTS,
         }
     }
 
-    /// Builds the rendered line for `field` at focus position `index`.
+    /// One field row: the change marker, the label (red with a problem) and
+    /// the value.
     fn field_line(
         &self,
         field: Field,
         index: usize,
-        ctx: &LineCtx,
+        ctx: &RowCtx,
     ) -> Line<'static> {
-        let colors = ctx.colors;
+        let focused = index == self.focus;
+        let marks = LabelMarks {
+            changed: self.is_changed(field),
+            focused,
+            problem: self.error.as_ref().is_some_and(|(f, _)| *f == field),
+        };
+        let mut spans = field::label_cell(
+            field_name(field),
+            ctx.label_width,
+            marks,
+            &ctx.styles,
+        );
+        let value_width = ctx
+            .width
+            .saturating_sub(field::value_column(ctx.label_width));
+        spans.extend(self.value_spans(field, focused, value_width, ctx));
+        Line::from(spans)
+    }
+
+    /// The value part of a field row, `width` columns wide.
+    fn value_spans(
+        &self,
+        field: Field,
+        focused: bool,
+        width: usize,
+        ctx: &RowCtx,
+    ) -> Vec<Span<'static>> {
+        let skin = ctx.skin;
+        let typing = focused && self.mode == Mode::Editing;
         match field {
-            Field::Path => self.text_line("Path", &self.path, index, ctx),
-            Field::Name => self.text_line("Name", &self.name, index, ctx),
-            Field::Slug => self.text_line("Slug", &self.slug, index, ctx),
-            Field::Section => {
-                // No `< >` chrome: the section is chosen via the picker
-                // (Enter), not cycled like the kind.
-                let label = self.section_label();
-                self.value_line("Section", &label, index, colors)
-            }
+            Field::Path if typing => self.typed(&self.path, width, skin),
+            Field::Path => field::picker_value_spans(
+                self.path.value(),
+                width,
+                skin.glyphs.pointer,
+                &ctx.styles,
+            ),
+            Field::Name if typing => self.typed(&self.name, width, skin),
+            Field::Slug if typing => self.typed(&self.slug, width, skin),
+            Field::Name => text_value(self.name.value(), width, &ctx.styles),
+            Field::Slug => text_value(self.slug.value(), width, &ctx.styles),
+            Field::Section => field::picker_value_spans(
+                &self.section_label(),
+                width,
+                skin.glyphs.pointer,
+                &ctx.styles,
+            ),
             Field::Kind => {
-                self.choice_line("Kind", kind_label(self.kind), index, colors)
+                vec![Span::raw(skin.glyphs.stepper(kind_label(self.kind)))]
             }
-            Field::Fav => self.fav_line(index, colors),
-            Field::Backup => self.backup_line(index, colors),
+            Field::Fav => {
+                let mark = checkbox(self.fav, self.fav_mixed, self.fav_touched);
+                vec![Span::raw(mark.to_string())]
+            }
+            Field::Backup => {
+                let mark = checkbox(
+                    self.include_in_backup,
+                    self.backup_mixed,
+                    self.backup_touched,
+                );
+                vec![Span::raw(mark.to_string())]
+            }
         }
     }
 
-    /// A labelled text field line, highlighting it when focused. The value is
-    /// drawn by the toolkit, so a long path scrolls under the caret instead of
-    /// spilling out of the box.
-    fn text_line(
+    /// A text field being typed into: the toolkit's caret over a value that
+    /// scrolls to fit `width`.
+    fn typed(
         &self,
-        label: &str,
-        input: &InputField,
-        index: usize,
-        ctx: &LineCtx,
-    ) -> Line<'static> {
-        let mut spans = vec![self.label_span(label, index, ctx.colors)];
-        spans.extend(field_spans(FieldView {
+        input: &ratada::input::InputField,
+        width: usize,
+        skin: &Skin,
+    ) -> Vec<Span<'static>> {
+        field_spans(FieldView {
             field: input,
-            palette: &ctx.skin.palette,
-            width: ctx.value_width,
-            focused: index == self.focus,
-        }));
-        self.styled(spans, index, ctx.colors)
-    }
-
-    /// A `< value >` selector line (the kind, cycled with Left/Right).
-    fn choice_line(
-        &self,
-        label: &str,
-        value: &str,
-        index: usize,
-        colors: &Colors,
-    ) -> Line<'static> {
-        let spans = vec![
-            self.label_span(label, index, colors),
-            Span::styled(
-                format!("< {value} >"),
-                Style::default().fg(colors.accent),
-            ),
-        ];
-        self.styled(spans, index, colors)
-    }
-
-    /// A labelled value line without the `< >` selector chrome (the section,
-    /// which is chosen via the fuzzy picker on Enter, not cycled).
-    fn value_line(
-        &self,
-        label: &str,
-        value: &str,
-        index: usize,
-        colors: &Colors,
-    ) -> Line<'static> {
-        let spans = vec![
-            self.label_span(label, index, colors),
-            Span::styled(value.to_string(), Style::default().fg(colors.accent)),
-        ];
-        self.styled(spans, index, colors)
-    }
-
-    /// The favourite toggle line.
-    fn fav_line(&self, index: usize, colors: &Colors) -> Line<'static> {
-        let mark = checkbox(self.fav, self.fav_mixed, self.fav_touched);
-        let spans = vec![
-            self.label_span("Fav", index, colors),
-            Span::raw(mark.to_string()),
-        ];
-        self.styled(spans, index, colors)
-    }
-
-    /// The "include in backup all (`Z`)" toggle line.
-    fn backup_line(&self, index: usize, colors: &Colors) -> Line<'static> {
-        let mark = checkbox(
-            self.include_in_backup,
-            self.backup_mixed,
-            self.backup_touched,
-        );
-        let spans = vec![
-            self.label_span("Backup", index, colors),
-            Span::raw(mark.to_string()),
-        ];
-        self.styled(spans, index, colors)
+            palette: &skin.palette,
+            width,
+            focused: true,
+        })
     }
 
     /// The label shown for the Section field: the chosen section, Ungrouped, or
@@ -208,38 +285,62 @@ impl super::RepoForm {
             .clone()
             .unwrap_or_else(|| UNGROUPED.to_string())
     }
+}
 
-    /// The fixed-width field label, accented when focused.
-    fn label_span(
-        &self,
-        label: &str,
-        index: usize,
-        colors: &Colors,
-    ) -> Span<'static> {
-        let style = if index == self.focus {
-            Style::default()
-                .fg(colors.accent)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(colors.dim)
-        };
-        Span::styled(format!("{label:<LABEL_WIDTH$}"), style)
+/// A plain text value, or the dimmed empty marker.
+fn text_value(
+    value: &str,
+    width: usize,
+    styles: &FieldStyles,
+) -> Vec<Span<'static>> {
+    if value.is_empty() {
+        return vec![Span::styled(field::EMPTY_VALUE, styles.muted)];
     }
+    vec![Span::raw(ratada::text::truncate(value, width))]
+}
 
-    /// Applies the focus background tint to a field line.
-    fn styled(
-        &self,
-        spans: Vec<Span<'static>>,
-        index: usize,
-        colors: &Colors,
-    ) -> Line<'static> {
-        let line = Line::from(spans);
-        if index == self.focus {
-            line.style(Style::default().bg(colors.selection_bg))
-        } else {
-            line
-        }
+/// One hint row drawn like the toolkit's modal keys.
+fn hint_row(
+    hints: &[(&str, &str)],
+    skin: &Skin,
+    width: usize,
+) -> Line<'static> {
+    hint_block(hints, &skin.palette, width)
+        .into_iter()
+        .nth(1)
+        .unwrap_or_default()
+}
+
+/// The label of `field`.
+fn field_name(field: Field) -> &'static str {
+    match field {
+        Field::Path => "Path",
+        Field::Name => "Name",
+        Field::Slug => "Slug",
+        Field::Section => "Section",
+        Field::Kind => "Kind",
+        Field::Fav => "Fav",
+        Field::Backup => "Backup",
     }
+}
+
+/// The width of the label column over `fields`.
+fn label_width(fields: &[Field]) -> usize {
+    field::label_column_width(fields.iter().map(|&f| field_name(f)))
+}
+
+/// Tints the focused row (`row` lines into `inner`) from border to border,
+/// through the modal's side padding.
+fn tint_row(frame: &mut Frame, inner: Rect, row: usize, ctx: &RowCtx) {
+    let y = inner.y + u16::try_from(row).unwrap_or(u16::MAX);
+    if y >= inner.bottom() {
+        return;
+    }
+    let pad = ratada::chrome::MODAL_PADDING_X;
+    let rect =
+        Rect::new(inner.x.saturating_sub(pad), y, inner.width + 2 * pad, 1)
+            .intersection(frame.area());
+    frame.render_widget(Block::default().style(ctx.styles.focus_tint), rect);
 }
 
 /// The checkbox glyph: mixed (`[-]`) while an untouched bulk field differs, else
@@ -251,5 +352,13 @@ pub(super) fn checkbox(on: bool, mixed: bool, touched: bool) -> &'static str {
         "[x]"
     } else {
         "[ ]"
+    }
+}
+
+impl RepoForm {
+    /// Whether the form currently asks "Save changes?" (for tests).
+    #[cfg(test)]
+    pub(super) fn is_asking(&self) -> bool {
+        self.asking_save
     }
 }

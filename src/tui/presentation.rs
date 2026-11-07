@@ -50,26 +50,32 @@ pub struct IconSet {
     pub section_open: &'static str,
     /// Prefix of a collapsed section's header bar.
     pub section_closed: &'static str,
+    /// Lead of a row ticked in the multi-selection.
+    pub marked: &'static str,
 }
 
 impl IconSet {
     /// Builds the glyph set for `variant`.
     pub fn new(variant: GlyphVariant) -> Self {
+        // The fold and mark glyphs are the toolkit's, so they mean the same
+        // in every app and never clash with the pointer.
+        let glyphs = ratada::theme::Glyphs::new(variant);
         match variant {
             GlyphVariant::Unicode => IconSet {
-                missing: "\u{2717}",        // ✗
-                favourite: "\u{2605}",      // ★
-                clean: "\u{2713}",          // ✓
-                changes: "\u{2260}",        // ≠
-                ahead: "\u{2191}",          // ↑
-                behind: "\u{2193}",         // ↓
-                count: "\u{2261}",          // ≡
-                sort: "\u{2195}",           // ↕
-                clock: "\u{21bb}",          // ↻
-                remote: "\u{21a7}",         // ↧
-                excluded: "\u{2298}",       // ⊘
-                section_open: "\u{25be}",   // ▾
-                section_closed: "\u{25b8}", // ▸
+                missing: "\u{2717}",   // ✗
+                favourite: "\u{2605}", // ★
+                clean: "\u{2713}",     // ✓
+                changes: "\u{2260}",   // ≠
+                ahead: "\u{2191}",     // ↑
+                behind: "\u{2193}",    // ↓
+                count: "\u{2261}",     // ≡
+                sort: "\u{2195}",      // ↕
+                clock: "\u{21bb}",     // ↻
+                remote: "\u{21a7}",    // ↧
+                excluded: "\u{2298}",  // ⊘
+                section_open: glyphs.fold_open,
+                section_closed: glyphs.fold_closed,
+                marked: glyphs.mark,
             },
             GlyphVariant::Ascii => IconSet {
                 missing: "!",
@@ -83,8 +89,9 @@ impl IconSet {
                 clock: "@",
                 remote: "v",
                 excluded: "x",
-                section_open: "v",
-                section_closed: ">",
+                section_open: glyphs.fold_open,
+                section_closed: glyphs.fold_closed,
+                marked: glyphs.mark,
             },
         }
     }

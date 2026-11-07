@@ -21,8 +21,9 @@ use crate::tui::skin::Colors;
 
 /// The label in front of the set names in the bar.
 const BAR_LABEL: &str = "Columns";
-/// Separator between the set names.
-const BAR_SEPARATOR: &str = " \u{203a} ";
+/// Separator between the set names (dim, like the tab bar's; the pointer
+/// glyph marks only the cursor).
+const BAR_SEPARATOR: &str = " \u{2502} ";
 /// Rows the bar occupies: a blank line, the tinted line, a blank line.
 pub const BAR_ROWS: u16 = 3;
 /// Rows the totals block occupies: a rule and the totals line.

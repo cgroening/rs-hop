@@ -12,9 +12,8 @@ use std::cell::RefCell;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Modifier;
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Clear, Padding, Paragraph};
+use ratatui::widgets::{Block, Padding, Paragraph};
 
 use crate::theme::Skin;
 
@@ -70,10 +69,6 @@ fn borrow_pairs<'a>(
 /// identically.
 const SCRIM_FACTOR: f32 = 0.4;
 
-/// `OKLab` lightness lift for a popup fill above the content surface, so a modal
-/// reads as a raised, brighter panel over the dimmed backdrop.
-const POPUP_LIGHTEN: f32 = 0.08;
-
 thread_local! {
     /// The last fully-drawn view frame, snapshotted by [`snapshot_frame`] so a
     /// following modal can dim it as its backdrop instead of a black screen.
@@ -106,17 +101,6 @@ pub fn blit_backdrop(frame: &mut Frame<'_>) {
 pub fn dim_backdrop(frame: &mut Frame<'_>) {
     blit_backdrop(frame);
     ratada::overlay::dim(frame, SCRIM_FACTOR);
-}
-
-/// Prepares a modal region: dims the live view behind it (backdrop), clears the
-/// popup `area` and fills it a step lighter so the box stands out from the
-/// dimmed view. Boxes drawn via [`ratada::chrome::modal_block`] repaint their own
-/// (matching) fill on top.
-pub fn popup_backdrop(frame: &mut Frame<'_>, skin: &Skin, area: Rect) {
-    dim_backdrop(frame);
-    frame.render_widget(Clear, area);
-    let bg = skin.palette.surface.lighten(POPUP_LIGHTEN);
-    frame.render_widget(Block::default().style(ratada::style::bg(bg)), area);
 }
 
 /// Height of the progress panel above the status band (a refresh/backup bar).
@@ -229,19 +213,6 @@ fn fill(frame: &mut Frame<'_>, area: Rect, color: crate::theme::Color) {
     frame.render_widget(Block::default().style(ratada::style::bg(color)), area);
 }
 
-/// The key-hint band style: keys in the accent (bold), descriptions dim, a
-/// 1-row top margin (the blank separator line) and no background.
-fn hint_style(skin: &Skin) -> ratada::shortcut_hints::HintStyle {
-    ratada::shortcut_hints::HintStyle {
-        key: ratada::style::fg(skin.palette.accent)
-            .add_modifier(Modifier::BOLD),
-        label: ratada::style::dim(),
-        description: ratada::style::secondary(&skin.palette),
-        top_margin: 1,
-        background: None,
-    }
-}
-
 /// Borrows the owned `(label, pairs)` hint groups into toolkit
 /// [`HintGroup`](ratada::shortcut_hints::HintGroup)s (aligned label column).
 fn to_hint_groups(
@@ -273,7 +244,7 @@ fn render_hints(
     skin: &Skin,
     hints: &[(String, Vec<(String, String)>)],
 ) {
-    let opts = hint_style(skin);
+    let opts = ratada::shortcut_hints::HintStyle::footer(skin);
     let hint_area = Rect {
         x: area.x + 1,
         width: area.width.saturating_sub(2),

@@ -1,26 +1,47 @@
-//! Reusable modal widgets: confirm, text prompt, message and single-select.
+//! Reusable modal widgets: confirm, text prompt and single-select.
 //!
-//! Destructive actions always confirm; a text prompt drives the slug input; the
-//! select list backs the form's kind picker. Each is a small state struct with
-//! `handle_key` and `render`, so call sites never rebuild the dialog.
+//! hop keeps them as small non-blocking state structs (`handle_key` and
+//! `render`), because its event loop drains background workers between
+//! frames. The look is the toolkit's: the modal frame, fill and padding
+//! (`overlay::framed`), a box as big as its content plus
+//! `MODAL_CHROME_WIDTH`/`MODAL_CHROME_HEIGHT`, the modal hint block at the
+//! bottom and, for a list, the pointer cursor and the `n/m` badge.
+
+use std::cell::Cell;
 
 use crossterm::event::{KeyCode, KeyEvent};
+use ratada::chrome::{self, MODAL_CHROME_HEIGHT, MODAL_CHROME_WIDTH};
 use ratada::input::InputField;
+use ratada::layout::centered_rect;
+use ratada::list::{self, CursorMark, ListView};
+use ratada::modal::{HINT_BLOCK_ROWS, hint_block, hints_width};
+use ratada::overlay;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
+use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Skin;
 use crate::tui::list_layout::moved_cursor;
 use crate::tui::presentation::{FieldView, field_spans};
 use crate::tui::skin::Colors;
 
-/// The width of hop's small confirm/prompt dialogs, in percent of the screen.
-const DIALOG_WIDTH_PCT: u16 = 60;
-/// The height of hop's small confirm/prompt dialogs, in rows.
-const DIALOG_HEIGHT: u16 = 7;
+/// The keys of a confirmation.
+const CONFIRM_HINTS: [(&str, &str); 2] = [("y", "confirm"), ("n", "cancel")];
+/// The keys of a text prompt.
+const PROMPT_HINTS: [(&str, &str); 2] = [("enter", "save"), ("esc", "cancel")];
+/// The keys of a select list.
+const SELECT_HINTS: [(&str, &str); 2] = [("enter", "pick"), ("esc", "cancel")];
+/// The fewest columns a prompt's value gets, however short it is.
+const PROMPT_VALUE_WIDTH: usize = 32;
+/// The most rows a select list shows before it scrolls.
+const SELECT_MAX_ROWS: u16 = 14;
+/// The pointer column and the scrollbar beside a list row.
+const LIST_ROW_CHROME: usize = 3;
+/// The check after the entry that applies (gap and glyph).
+const CURRENT_MARK_WIDTH: usize = 2;
 
 /// Outcome of feeding a key to a confirm dialog.
 pub enum ConfirmResult {
@@ -32,7 +53,7 @@ pub enum ConfirmResult {
     No,
 }
 
-/// A yes/no confirmation, defaulting to no.
+/// A yes/no confirmation.
 pub struct ConfirmModal {
     title: String,
     message: String,
@@ -56,33 +77,29 @@ impl ConfirmModal {
         }
     }
 
-    /// Renders the dialog centred in `area`.
+    /// Renders the dialog centred in `area`, as big as its message and keys.
     pub fn render(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
         let colors = Colors::from_palette(&skin.palette);
-        let body = vec![
-            Line::from(Span::styled(
-                self.message.clone(),
-                Style::default().fg(colors.danger),
-            )),
-            Line::raw(""),
-            Line::from(vec![
-                Span::styled("y", Style::default().fg(colors.accent)),
-                Span::styled(" confirm   ", Style::default().fg(colors.dim)),
-                Span::styled("n", Style::default().fg(colors.accent)),
-                Span::styled(" cancel", Style::default().fg(colors.dim)),
-            ]),
-        ];
-        render_modal(frame, area, dialog_box(skin, &self.title), |_| body);
-    }
-}
-
-/// The shared geometry of hop's small confirm/prompt dialogs.
-fn dialog_box<'a>(skin: &'a Skin, title: &'a str) -> ModalBox<'a> {
-    ModalBox {
-        skin,
-        title,
-        width_percent: DIALOG_WIDTH_PCT,
-        height: DIALOG_HEIGHT,
+        let message: Vec<&str> = self.message.lines().collect();
+        let width = message
+            .iter()
+            .map(|line| line.width())
+            .max()
+            .unwrap_or(0)
+            .max(hints_width(&CONFIRM_HINTS));
+        let rows = message.len() as u16 + HINT_BLOCK_ROWS;
+        let inner = open_box(frame, area, skin, &self.title, (width, rows));
+        let mut lines: Vec<Line> = message
+            .iter()
+            .map(|line| {
+                Line::from(Span::styled(
+                    (*line).to_string(),
+                    Style::default().fg(colors.danger),
+                ))
+            })
+            .collect();
+        lines.extend(hint_block(&CONFIRM_HINTS, &skin.palette, width));
+        frame.render_widget(Paragraph::new(lines), inner);
     }
 }
 
@@ -134,31 +151,26 @@ impl TextPrompt {
         self.input.paste(text);
     }
 
-    /// Renders the prompt centred in `area`.
+    /// Renders the prompt centred in `area`: the labelled field over the keys.
     pub fn render(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
         let colors = Colors::from_palette(&skin.palette);
-        let label = format!("{}: ", self.label);
-        let body = |inner_width: usize| {
-            let mut field = vec![Span::styled(
-                label.clone(),
-                Style::default().fg(colors.dim),
-            )];
-            field.extend(field_spans(FieldView {
-                field: &self.input,
-                palette: &skin.palette,
-                width: inner_width.saturating_sub(label.chars().count()),
-                focused: true,
-            }));
-            vec![
-                Line::from(field),
-                Line::raw(""),
-                Line::from(Span::styled(
-                    "Enter save · Esc cancel",
-                    Style::default().fg(colors.dim),
-                )),
-            ]
-        };
-        render_modal(frame, area, dialog_box(skin, &self.title), body);
+        let label = format!("{}  ", self.label);
+        let value = self.input.value().width().max(PROMPT_VALUE_WIDTH);
+        let width = (label.width() + value + 1).max(hints_width(&PROMPT_HINTS));
+        let rows = 1 + HINT_BLOCK_ROWS;
+        let inner = open_box(frame, area, skin, &self.title, (width, rows));
+        let inner_width = usize::from(inner.width);
+        let mut field =
+            vec![Span::styled(label.clone(), Style::default().fg(colors.dim))];
+        field.extend(field_spans(FieldView {
+            field: &self.input,
+            palette: &skin.palette,
+            width: inner_width.saturating_sub(label.width()),
+            focused: true,
+        }));
+        let mut lines = vec![Line::from(field)];
+        lines.extend(hint_block(&PROMPT_HINTS, &skin.palette, inner_width));
+        frame.render_widget(Paragraph::new(lines), inner);
     }
 }
 
@@ -177,6 +189,9 @@ pub struct SelectModal {
     title: String,
     items: Vec<String>,
     cursor: usize,
+    /// The entry that applies right now; it keeps the check glyph.
+    current: Option<usize>,
+    offset: Cell<usize>,
 }
 
 impl SelectModal {
@@ -192,7 +207,20 @@ impl SelectModal {
             title: title.into(),
             items,
             cursor,
+            current: None,
+            offset: Cell::new(0),
         }
+    }
+
+    /// Marks `index` as the entry that applies: the list opens on it and it
+    /// keeps the check glyph while the cursor moves.
+    #[must_use]
+    pub fn with_current(mut self, index: usize) -> Self {
+        if index < self.items.len() {
+            self.cursor = index;
+            self.current = Some(index);
+        }
+        self
     }
 
     /// Handles navigation and selection keys.
@@ -200,109 +228,103 @@ impl SelectModal {
         match key.code {
             KeyCode::Enter => SelectResult::Selected(self.cursor),
             KeyCode::Esc => SelectResult::Cancel,
-            _ if self.navigate(key) => SelectResult::Pending,
-            _ => SelectResult::Pending,
-        }
-    }
-
-    /// Applies a navigation key through the shared helper, reporting whether it
-    /// was one.
-    fn navigate(&mut self, key: KeyEvent) -> bool {
-        match moved_cursor(key, self.cursor, self.items.len()) {
-            Some(cursor) => {
-                self.cursor = cursor;
-                true
+            _ => {
+                if let Some(cursor) =
+                    moved_cursor(key, self.cursor, self.items.len())
+                {
+                    self.cursor = cursor;
+                }
+                SelectResult::Pending
             }
-            None => false,
         }
     }
 
-    /// Renders the list centred in `area`.
+    /// Renders the list centred in `area`: as wide as its widest entry, as
+    /// tall as its entries (scrolling beyond `SELECT_MAX_ROWS`), the pointer
+    /// on the cursor row, the badge in the bottom border and the keys below.
     pub fn render(&self, frame: &mut Frame, area: Rect, skin: &Skin) {
-        let colors = Colors::from_palette(&skin.palette);
-        let height = (self.items.len() as u16 + 2).clamp(3, 16);
-        let rect = centered_rect(50, height, area);
+        let mark = if self.current.is_some() {
+            CURRENT_MARK_WIDTH
+        } else {
+            0
+        };
+        let labels = self.items.iter().map(|item| item.width()).max();
+        let width = (labels.unwrap_or(0) + mark + LIST_ROW_CHROME)
+            .max(hints_width(&SELECT_HINTS));
+        let list_rows = (self.items.len() as u16).clamp(1, SELECT_MAX_ROWS);
+        let rows = list_rows + HINT_BLOCK_ROWS;
+        let rect = box_rect(area, (width, rows));
         frame.render_widget(Clear, rect);
-        let block = ratada::chrome::modal_block(skin, &self.title);
-        let items: Vec<ListItem> = self
+        let inner = overlay::framed(frame, rect, skin, &self.title);
+        let list_area = Rect {
+            height: inner.height.saturating_sub(HINT_BLOCK_ROWS),
+            ..inner
+        };
+        let check = skin.glyphs.check;
+        let rows: Vec<Line<'static>> = self
             .items
             .iter()
-            .map(|item| ListItem::new(item.clone()))
+            .enumerate()
+            .map(|(index, item)| {
+                if self.current == Some(index) {
+                    Line::from(vec![
+                        Span::raw(item.clone()),
+                        Span::styled(
+                            format!(" {check}"),
+                            ratada::style::accent(&skin.palette),
+                        ),
+                    ])
+                } else {
+                    Line::from(item.clone())
+                }
+            })
             .collect();
-        let list = List::new(items)
-            .block(block)
-            .highlight_style(colors.selection_style());
-        let mut state = ListState::default();
-        state.select(Some(self.cursor));
-        frame.render_stateful_widget(list, rect, &mut state);
-        // The area inside the border, where the rows are drawn.
-        let inner = Rect {
-            x: rect.x + 1,
-            y: rect.y + 1,
-            width: rect.width.saturating_sub(2),
-            height: rect.height.saturating_sub(2),
-        };
-        // Rendering settled the scroll offset; show a scrollbar if it overflows.
-        ratada::scroll::render_scrollbar(
+        list::render_marked(
             frame,
-            inner,
+            list_area,
             skin,
-            ratada::nav::ScrollView {
-                total: self.items.len(),
-                offset: state.offset(),
-                viewport: inner.height as usize,
+            ListView {
+                rows,
+                selected: self.cursor,
+                offset: &self.offset,
             },
+            CursorMark::Pointer,
         );
+        let hint_area = Rect {
+            y: list_area.bottom(),
+            height: HINT_BLOCK_ROWS,
+            ..inner
+        };
+        let hints =
+            hint_block(&SELECT_HINTS, &skin.palette, usize::from(inner.width));
+        frame.render_widget(Paragraph::new(hints), hint_area);
+        let badge = chrome::position_badge(self.cursor, self.items.len());
+        chrome::render_badge(frame, rect, skin, &badge);
     }
 }
 
-/// Centres a `width` by `height` box, in cells, within `area`. Both are capped
-/// at what `area` can give, so an oversized box shrinks instead of overflowing.
-pub fn centered_box(width: u16, height: u16, area: Rect) -> Rect {
-    let width = width.min(area.width);
-    let height = height.min(area.height);
-    Rect {
-        x: area.x + (area.width - width) / 2,
-        y: area.y + (area.height - height) / 2,
-        width,
-        height,
-    }
+/// The rect of a modal box whose content is `width` columns by `rows` rows,
+/// centred in `area`: the content plus the frame and the padding, never
+/// larger than `area`.
+pub fn box_rect(area: Rect, (width, rows): (usize, u16)) -> Rect {
+    let width = u16::try_from(width)
+        .unwrap_or(u16::MAX)
+        .saturating_add(MODAL_CHROME_WIDTH);
+    centered_rect(width, rows.saturating_add(MODAL_CHROME_HEIGHT), area)
 }
 
-/// Computes a centred rect of `width_percent` percent and `height` rows within
-/// `area`. Percentages above 100 are treated as the full width.
-pub fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect {
-    // u32 so a wide terminal times a large percentage cannot overflow u16.
-    let width = u32::from(area.width) * u32::from(width_percent.min(100)) / 100;
-    centered_box(width as u16, height, area)
-}
-
-/// The chrome of a centred modal: what it is titled and how big it is.
-struct ModalBox<'a> {
-    /// The active theme.
-    skin: &'a Skin,
-    /// The title drawn into the top border.
-    title: &'a str,
-    /// The box width, as a percentage of the area.
-    width_percent: u16,
-    /// The box height, in rows.
-    height: u16,
-}
-
-/// Renders a rounded, accent-titled modal (clibase `modal_block`) over a lifted
-/// fill, centred in `area`. `body` is built from the box's inner width, so a
-/// text field inside can scroll its value to fit.
-fn render_modal(
+/// Clears and frames a box for `content` (columns, rows) centred in `area`,
+/// titled `title`, and returns the padded content rect.
+fn open_box(
     frame: &mut Frame,
     area: Rect,
-    modal: ModalBox<'_>,
-    body: impl FnOnce(usize) -> Vec<Line<'static>>,
-) {
-    let rect = centered_rect(modal.width_percent, modal.height, area);
+    skin: &Skin,
+    title: &str,
+    content: (usize, u16),
+) -> Rect {
+    let rect = box_rect(area, content);
     frame.render_widget(Clear, rect);
-    let block = ratada::chrome::modal_block(modal.skin, modal.title);
-    let inner_width = block.inner(rect).width as usize;
-    frame.render_widget(Paragraph::new(body(inner_width)).block(block), rect);
+    overlay::framed(frame, rect, skin, title)
 }
 
 #[cfg(test)]
@@ -313,23 +335,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn centered_box_caps_an_oversized_box_at_the_area() {
+    fn a_box_is_its_content_plus_the_modal_chrome() {
+        let rect = box_rect(Rect::new(0, 0, 80, 24), (20, 4));
+        assert_eq!(rect.width, 20 + MODAL_CHROME_WIDTH);
+        assert_eq!(rect.height, 4 + MODAL_CHROME_HEIGHT);
+    }
+
+    #[test]
+    fn an_oversized_box_shrinks_to_the_area() {
         let area = Rect::new(0, 0, 40, 10);
-        let rect = centered_box(200, 99, area);
-        assert_eq!(rect, area, "an oversized box must shrink, not overflow");
+        assert_eq!(box_rect(area, (200, 99)), area);
     }
 
     #[test]
-    fn centered_box_centres_a_fitting_box() {
-        let rect = centered_box(20, 4, Rect::new(0, 0, 40, 10));
-        assert_eq!(rect, Rect::new(10, 3, 20, 4));
+    fn the_current_entry_opens_under_the_cursor_with_its_check() {
+        let modal = SelectModal::new("Sort", vec!["a".into(), "b".into()], 0)
+            .with_current(1);
+        let text = rendered(&modal, 60, 20);
+        assert!(text.contains("\u{203a} b \u{2713}"), "{text}");
+        assert!(text.contains("enter pick"), "{text}");
+        assert!(text.contains("2/2"), "{text}");
     }
 
     #[test]
-    fn centered_rect_survives_a_very_wide_area() {
-        // `area.width * width_percent` must not overflow u16.
-        let rect = centered_rect(100, 4, Rect::new(0, 0, 2000, 10));
-        assert_eq!(rect.width, 2000);
+    fn a_confirm_keeps_its_keys_in_the_hint_block() {
+        let skin = crate::config::Config::default().skin();
+        let modal = ConfirmModal::new("Delete", "Delete 2 entries?");
+        let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
+        terminal
+            .draw(|frame| modal.render(frame, frame.area(), &skin))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("y confirm \u{b7} n cancel"), "{text}");
     }
 
     /// Collects the whole rendered buffer into one string.

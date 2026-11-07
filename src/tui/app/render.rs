@@ -52,6 +52,9 @@ pub(super) fn relative_age(age: chrono::Duration) -> String {
     format!("{}m", age.num_minutes().max(0))
 }
 
+/// The body height above which the list gives a row to its `n/m` badge.
+const BADGE_MIN_HEIGHT: u16 = 3;
+
 impl App {
     /// Renders the whole screen: the panel app-frame (tinted header/content/
     /// status bands plus backgroundless hints), the entry list (and preview) in
@@ -250,15 +253,40 @@ impl App {
         }
     }
 
-    /// Renders the entry table, or an empty hint.
+    /// Renders the entry table, or an empty hint. The list fills the
+    /// borderless body, so its cursor is the tinted row and the `n/m` badge
+    /// sits in the bottom-right corner, on a row of its own.
     pub(super) fn render_body(&self, frame: &mut Frame, area: Rect) {
+        let view = self.ordered_view();
+        if view.is_empty() {
+            self.list_height
+                .set(area.height.saturating_sub(1).max(1) as usize);
+            render_empty_hint(frame, area, empty_hint(self.tab), &self.colors);
+            return;
+        }
+        let badge_area = area;
+        let area = if area.height > BADGE_MIN_HEIGHT {
+            Rect {
+                height: area.height - 1,
+                ..area
+            }
+        } else {
+            area
+        };
         // Remember the page size for page-wise navigation.
         self.list_height
             .set(area.height.saturating_sub(1).max(1) as usize);
-        let view = self.ordered_view();
-        if view.is_empty() {
-            render_empty_hint(frame, area, empty_hint(self.tab), &self.colors);
-            return;
+        let total = if self.is_sectioned() {
+            self.row_count()
+        } else {
+            view.len()
+        };
+        if badge_area.height > BADGE_MIN_HEIGHT {
+            let cursor = self.cursor.min(total.saturating_sub(1));
+            let badge = ratada::chrome::position_badge(cursor, total);
+            ratada::chrome::render_corner_badge(
+                frame, badge_area, &self.skin, &badge,
+            );
         }
         if self.is_sectioned() {
             self.render_sections(frame, area);
@@ -375,7 +403,9 @@ impl App {
                 confirm.render(frame, area, skin)
             }
             Overlay::SyncConfirm(modal, ..) => modal.render(frame, area, skin),
-            Overlay::SyncResults(modal) => modal.render(frame, area, skin),
+            Overlay::SyncResults(modal) | Overlay::Notice(modal) => {
+                modal.render(frame, area, skin);
+            }
         }
     }
 }

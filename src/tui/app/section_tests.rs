@@ -260,8 +260,8 @@ fn a_collapsed_header_renders_with_its_count() {
         .map(|cell| cell.symbol())
         .collect();
     assert!(
-        screen.contains("> Work (2)"),
+        screen.contains("+ Work (2)"),
         "ASCII closed marker and count"
     );
-    assert!(screen.contains("v Personal"), "ASCII open marker");
+    assert!(screen.contains("- Personal"), "ASCII open marker");
 }
