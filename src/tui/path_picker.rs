@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use crossterm::event::{KeyCode, KeyEvent};
 use ratada::chrome::{MODAL_CHROME_HEIGHT, MODAL_CHROME_WIDTH};
 use ratada::input::InputField;
-use ratada::modal::{HINT_BLOCK_ROWS, hint_block, hints_width};
+use ratada::modal::{hint_block, hint_block_height, hints_width};
 use ratada::text::truncate;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -143,7 +143,13 @@ impl PathPicker {
             SHARE_NUMERATOR,
             SHARE_DENOMINATOR,
             min_width,
-            MIN_LIST_ROWS + MODAL_CHROME_HEIGHT + HINT_BLOCK_ROWS + 2,
+            MIN_LIST_ROWS
+                + MODAL_CHROME_HEIGHT
+                + hint_block_height(
+                    &HINTS,
+                    usize::from(area.width.saturating_sub(MODAL_CHROME_WIDTH)),
+                )
+                + 2,
         );
         frame.render_widget(Clear, rect);
         let inner = ratada::overlay::framed(frame, rect, skin, "Pick path");
@@ -160,7 +166,7 @@ impl PathPicker {
                 Constraint::Length(1),
                 Constraint::Length(1),
                 Constraint::Min(1),
-                Constraint::Length(HINT_BLOCK_ROWS),
+                Constraint::Length(hint_block_height(&HINTS, width)),
             ])
             .split(inner);
 

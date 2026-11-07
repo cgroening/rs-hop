@@ -169,17 +169,15 @@ hop keeps the list responsive by doing git and archive work off the main thread.
 
 **Consequences.** Background refresh/zip/preview stay responsive while a dialog is open – the main behavioural reason hop wants this model. In return hop keeps a small amount of its own modal/picker/form code that a pure clibase app would delegate to `ratada`; this is a deliberate trade-off, and the migration rule "use `ratada` widgets, don't reimplement" is knowingly relaxed here. The look is still unified (dimmed backdrop + `chrome::modal_block`), so the deviation is under the hood, not on screen. The relaxation is scoped to the *dialog shells*: what those shells contain is still the toolkit's – the fields are `ratada::input::InputField`, the lists `ratada::list`, the badges `ratada::chrome`.
 
-### Forms stay modal rather than rendering inline in the content panel
+### The entry form is a modal, not a form inside the app frame
 
-**Status:** accepted (during the `clibase` migration).
+**Status:** accepted (agreed with the user, 2026-11-07).
 
-**Context.** The clibase layout guide asks for a form to render **inside the content panel**, with the header and tab bar live above it, so the app tabs stay switchable from within a form: leaving tab A for tab B and returning to A reopens A's form. That design presumes a **blocking** form loop, which clibase unwinds with a tab-switch signal (an `io::Error`) that the caller catches, switches the tab, and later re-enters. hop's `RepoForm` is one of eleven variants of a non-blocking `Overlay` state machine (see the decision above), which has no loop to unwind and no signal to raise.
+**Context.** The style guide (§1.10, Forms: "Modal or inside the app frame") knows two shapes of a form: a modal over the dimmed view for a short form, and a form inside the content panel - tabs switchable in normal mode, locked while a field is edited, restored on return - for a long one with many fields or long multi-line text. Which one a form gets is agreed with the user.
 
-**Decision.** Keep `RepoForm` a centred modal, sized to its content (`FormState::render`), drawn over the dimmed app frame. The header and tab bar remain visible behind it – dimmed, not replaced – and tabs are not switchable while the form is open; `s`/`Ctrl+S` save and keep it open, `Esc` closes it (asking "Save changes?" in the form itself when something changed). So hop deviates from the layout guide on the **placement** of forms, not only on their blocking model.
+**Decision.** The add/edit form is short (seven one-line fields), so it is a modal: `RepoForm` over the toolkit's non-blocking form core `ratada::form::FormState`, centred and sized to its content (`FormState::render`) over the dimmed app frame. The header and tab bar stay visible behind it, dimmed; tabs are not switchable while the form is open. `s`/`Ctrl+S` save and keep it open, `Esc` closes it (asking "Save changes?" in the form itself when something changed).
 
-**Consequences.** The form cannot be left open across a tab switch, and there is no per-tab "reopen the form I had" state to carry. What hop keeps is one uniform overlay mechanism for all eleven dialogs and the background workers running behind every one of them. Adopting the inline form would mean either giving up the non-blocking overlays or reimplementing clibase's tab-switch signal without a loop to raise it from; both are larger changes than the layout gain justifies, and both belong in their own step.
-
-**How to adopt the blocking `ratada` widgets later, if wanted.** The precedent exists: the inline git tool (`l`) suspends the TUI with `tui.suspend(…)`, runs an external program, and resumes (`App::run_git_inline`). A blocking `ratada` widget fits the same shape: (1) the key handler returns an outcome instead of setting `self.overlay`; (2) the run loop (which holds `&mut Tui`) calls the blocking widget – e.g. `ratada::path_picker::path_picker(tui, …)` – and applies the result; (3) accept that the background workers pause while the widget is open. This could be done for the path picker alone (the `Ctrl+P` repair flow and the form's path pick on `Enter`) or for all dialogs at once; either is a conscious behaviour change and belongs in its own step.
+**Consequences.** The form cannot be left open across a tab switch, and there is no per-tab "reopen the form I had" state to carry. Because the form core does not block, the background workers keep running behind it like behind every other overlay.
 
 ### `App` is split across child modules, not into smaller types
 

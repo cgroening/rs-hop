@@ -7,7 +7,7 @@ use std::cell::Cell;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratada::chrome;
 use ratada::list::{self, CursorMark, ListView};
-use ratada::modal::{HINT_BLOCK_ROWS, hint_block, hints_width};
+use ratada::modal::{hint_block, hint_block_height, hints_width};
 use ratada::overlay;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -20,7 +20,7 @@ use crate::domain::sections::UNGROUPED;
 use crate::theme::Skin;
 use crate::tui::list_layout::moved_cursor;
 use crate::tui::skin::Colors;
-use crate::tui::widgets::box_rect;
+use crate::tui::widgets::{box_rect, fitted_hint_rows};
 
 /// The manager's keys, in the modal hint block.
 const HINTS: [(&str, &str); 5] = [
@@ -149,11 +149,13 @@ impl SectionsModal {
             .unwrap_or(0);
         let width = (widest + ROW_CHROME).max(hints_width(&HINTS));
         let list_rows = (self.names.len() as u16 + 1).min(MAX_ROWS);
-        let rect = box_rect(area, (width, list_rows + HINT_BLOCK_ROWS));
+        let hint_rows = fitted_hint_rows(&HINTS, width, area);
+        let rect = box_rect(area, (width, list_rows + hint_rows));
         frame.render_widget(Clear, rect);
         let inner = overlay::framed(frame, rect, skin, "Manage sections");
+        let hint_rows = hint_block_height(&HINTS, usize::from(inner.width));
         let list_area = Rect {
-            height: inner.height.saturating_sub(HINT_BLOCK_ROWS),
+            height: inner.height.saturating_sub(hint_rows),
             ..inner
         };
 
@@ -179,7 +181,7 @@ impl SectionsModal {
         );
         let hint_area = Rect {
             y: list_area.bottom(),
-            height: HINT_BLOCK_ROWS,
+            height: hint_rows,
             ..inner
         };
         let hints = hint_block(&HINTS, &skin.palette, usize::from(inner.width));

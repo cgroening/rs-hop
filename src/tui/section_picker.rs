@@ -10,7 +10,7 @@ use std::cell::Cell;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratada::input::InputField;
-use ratada::modal::{HINT_BLOCK_ROWS, hint_block, hints_width};
+use ratada::modal::{hint_block, hint_block_height, hints_width};
 use ratada::text::truncate;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -24,7 +24,7 @@ use crate::theme::Skin;
 use crate::tui::list_layout::moved_cursor;
 use crate::tui::presentation::{FieldView, field_spans};
 use crate::tui::skin::Colors;
-use crate::tui::widgets::box_rect;
+use crate::tui::widgets::{box_rect, fitted_hint_rows};
 
 /// The label in front of the picker's filter line.
 const FILTER_LABEL: &str = "filter: ";
@@ -184,7 +184,8 @@ impl SectionPicker {
             .max(FILTER_LABEL.width() + MIN_FILTER_WIDTH);
         // At most one create row can join the full item list.
         let list_h = (self.items.len() as u16 + 1).clamp(1, MAX_ROWS);
-        let rect = box_rect(area, (width, 1 + list_h + HINT_BLOCK_ROWS));
+        let hint_rows = fitted_hint_rows(&HINTS, width, area);
+        let rect = box_rect(area, (width, 1 + list_h + hint_rows));
 
         frame.render_widget(Clear, rect);
         let inner =
@@ -198,7 +199,10 @@ impl SectionPicker {
             .constraints([
                 Constraint::Length(1),
                 Constraint::Min(1),
-                Constraint::Length(HINT_BLOCK_ROWS),
+                Constraint::Length(hint_block_height(
+                    &HINTS,
+                    usize::from(inner.width),
+                )),
             ])
             .split(inner);
 

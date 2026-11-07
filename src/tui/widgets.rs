@@ -14,7 +14,7 @@ use ratada::chrome::{self, MODAL_CHROME_HEIGHT, MODAL_CHROME_WIDTH};
 use ratada::input::InputField;
 use ratada::layout::centered_rect;
 use ratada::list::{self, CursorMark, ListView};
-use ratada::modal::{HINT_BLOCK_ROWS, hint_block, hints_width};
+use ratada::modal::{hint_block, hint_block_height, hints_width};
 use ratada::overlay;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -87,7 +87,8 @@ impl ConfirmModal {
             .max()
             .unwrap_or(0)
             .max(hints_width(&CONFIRM_HINTS));
-        let rows = message.len() as u16 + HINT_BLOCK_ROWS;
+        let rows = message.len() as u16
+            + fitted_hint_rows(&CONFIRM_HINTS, width, area);
         let inner = open_box(frame, area, skin, &self.title, (width, rows));
         let mut lines: Vec<Line> = message
             .iter()
@@ -98,7 +99,8 @@ impl ConfirmModal {
                 ))
             })
             .collect();
-        lines.extend(hint_block(&CONFIRM_HINTS, &skin.palette, width));
+        let inner_width = usize::from(inner.width);
+        lines.extend(hint_block(&CONFIRM_HINTS, &skin.palette, inner_width));
         frame.render_widget(Paragraph::new(lines), inner);
     }
 }
@@ -157,7 +159,7 @@ impl TextPrompt {
         let label = format!("{}  ", self.label);
         let value = self.input.value().width().max(PROMPT_VALUE_WIDTH);
         let width = (label.width() + value + 1).max(hints_width(&PROMPT_HINTS));
-        let rows = 1 + HINT_BLOCK_ROWS;
+        let rows = 1 + fitted_hint_rows(&PROMPT_HINTS, width, area);
         let inner = open_box(frame, area, skin, &self.title, (width, rows));
         let inner_width = usize::from(inner.width);
         let mut field =
@@ -252,12 +254,14 @@ impl SelectModal {
         let width = (labels.unwrap_or(0) + mark + LIST_ROW_CHROME)
             .max(hints_width(&SELECT_HINTS));
         let list_rows = (self.items.len() as u16).clamp(1, SELECT_MAX_ROWS);
-        let rows = list_rows + HINT_BLOCK_ROWS;
+        let rows = list_rows + fitted_hint_rows(&SELECT_HINTS, width, area);
         let rect = box_rect(area, (width, rows));
         frame.render_widget(Clear, rect);
         let inner = overlay::framed(frame, rect, skin, &self.title);
+        let hint_rows =
+            hint_block_height(&SELECT_HINTS, usize::from(inner.width));
         let list_area = Rect {
-            height: inner.height.saturating_sub(HINT_BLOCK_ROWS),
+            height: inner.height.saturating_sub(hint_rows),
             ..inner
         };
         let check = skin.glyphs.check;
@@ -292,7 +296,7 @@ impl SelectModal {
         );
         let hint_area = Rect {
             y: list_area.bottom(),
-            height: HINT_BLOCK_ROWS,
+            height: hint_rows,
             ..inner
         };
         let hints =
@@ -301,6 +305,20 @@ impl SelectModal {
         let badge = chrome::position_badge(self.cursor, self.items.len());
         chrome::render_badge(frame, rect, skin, &badge);
     }
+}
+
+/// The rows the hint block of `hints` takes in a box of `width` content
+/// columns centred in `area`: more than one while a narrow screen narrows
+/// the box and the hints wrap.
+pub fn fitted_hint_rows(
+    hints: &[(&str, &str)],
+    width: usize,
+    area: Rect,
+) -> u16 {
+    let inner = width.min(
+        usize::from(area.width).saturating_sub(usize::from(MODAL_CHROME_WIDTH)),
+    );
+    hint_block_height(hints, inner)
 }
 
 /// The rect of a modal box whose content is `width` columns by `rows` rows,
