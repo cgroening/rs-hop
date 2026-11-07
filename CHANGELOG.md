@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- `ratada` 0.7 → 0.8: every toolkit dialog (confirm, message, the list pickers, the calendars, the help overlay, …) keeps a blank row below its title and two columns of space at each side, and the help overlay's key hints follow the other dialogs.
+
 ## [0.6.0] - 2026-11-06
 
 ### Added
