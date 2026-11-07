@@ -565,7 +565,7 @@ fn help_section_keys_follow_a_keys_override() {
             .find(|(_, text)| text == description)
             .map(|(keys, _)| keys)
     };
-    let add = "add an entry (fill the form; ^O picks the path)";
+    let add = "add an entry (fill the form; enter on Path picks it)";
 
     let app = sample_app();
     assert_eq!(row(&app, add), Some("n".to_string()));

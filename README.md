@@ -295,11 +295,12 @@ The add/edit form opens in normal mode, where letters are commands:
 | `Enter` on Section | open the fuzzy section picker (type a new name to create it) |
 | `←` / `→` | change the kind |
 | `Space` | toggle Fav / Backup |
+| `y` | copy the focused value |
 | `s` / `Ctrl+S` | save; the form stays open, a second press within a second closes it |
 | `Ctrl+O` | put the focused field back to its value when the form opened or was last saved |
 | `Esc` | close; with changes it asks "Save changes?" (`y` save, `n` discard, `b`/`Esc` back) |
 
-A changed field carries `*` before its label; a problem (an empty path, say) shows in red under its field.
+A changed field carries `*` before its label; a problem (an empty path, a slug that is taken or reserved) shows in red under its field. A paste into Path, Name or Slug starts editing it.
 
 ## Development
 

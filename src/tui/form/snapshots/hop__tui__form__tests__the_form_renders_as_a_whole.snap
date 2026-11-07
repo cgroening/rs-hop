@@ -1,6 +1,5 @@
 ---
-source: src/tui/form/mod.rs
-assertion_line: 887
+source: src/tui/form/tests.rs
 expression: drawn(&form)
 ---
 
@@ -8,16 +7,16 @@ expression: drawn(&form)
 
 
 
-       ╭─ Edit entry ──────────────────────────────────────────────────╮
-       │                                                               │
-       │   Path     /code/hop                                       ›  │
-       │   Name     hop                                                │
-       │   Slug     -                                                  │
-       │   Section  Ungrouped                                       ›  │
-       │  *Fav      [x]                                                │
-       │   Backup   [x]                                                │
-       │   Kind     ← git →                                            │
-       │                                                               │
-       │  space toggle                                                 │
-       │  tab next · s save · ctrl+o reset · esc leave (asks to save)  │
-       ╰───────────────────────────────────────────────────────────────╯
+   ╭─ Edit entry ───────────────────────────────────────────────────────────╮
+   │                                                                        │
+   │   Path     /code/hop                                                ›  │
+   │   Name     hop                                                         │
+   │   Slug     -                                                           │
+   │   Section  Ungrouped                                                ›  │
+   │  *Fav      [x]                                                         │
+   │   Backup   [x]                                                         │
+   │   Kind     ← git →                                                     │
+   │                                                                        │
+   │  space toggle                                                          │
+   │  tab next · s save · y copy · ctrl+o reset · esc leave (asks to save)  │
+   ╰────────────────────────────────────────────────────────────────── 5/7 ─╯

@@ -59,7 +59,7 @@ impl App {
     }
 
     /// Starts adding an entry: the form opens directly with a kind guessed from
-    /// the active tab. The path is a plain text field; `^O` opens the picker.
+    /// the active tab. `Enter` on the path opens the picker, `e` types it.
     pub(super) fn open_add(&mut self) {
         let form = RepoForm::for_add("", self.tab.repo_kind());
         self.overlay = Overlay::Form(Box::new(form), EditTarget::Add);
@@ -324,11 +324,10 @@ impl App {
         }
     }
 
-    /// Saves the add or edit form into a new or existing entry, registering a
-    /// newly typed section name.
-    /// Saves the single-entry form and keeps it open on the saved entry
-    /// (a field problem stays in the form under its field); closes it when
-    /// the save came from its "Save changes?" question.
+    /// Saves the single-entry form and keeps it open on the saved entry; a
+    /// field problem (an empty path, a rejected slug) shows under its field,
+    /// another failure in the status line. Closes the form when the save
+    /// came from its "Save changes?" question.
     pub(super) fn save_form(
         &mut self,
         mut form: Box<RepoForm>,
@@ -341,12 +340,20 @@ impl App {
             return;
         }
         match self.do_save_form(save_index(&target), draft) {
-            Some(_) if form.closes_after_save() => {}
-            Some(index) => {
+            Ok(_) if form.closes_after_save() => {}
+            Ok(index) => {
                 form.mark_saved();
                 self.overlay = Overlay::Form(form, EditTarget::One(index));
             }
-            None => self.overlay = Overlay::Form(form, target),
+            Err(error) => {
+                match error {
+                    crate::domain::error::Error::Slug(message) => {
+                        form.set_error(FormField::Slug, message);
+                    }
+                    other => self.set_status(format!("{other}")),
+                }
+                self.overlay = Overlay::Form(form, target);
+            }
         }
     }
 
@@ -369,13 +376,17 @@ impl App {
     }
 
     /// Writes the draft as an update of `index` or a new entry; returns the
-    /// saved entry's index, or `None` when the save failed (the status says
-    /// why).
+    /// saved entry's index, or the service's error (nothing is written then).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Slug`](crate::domain::error::Error::Slug) for a rejected
+    /// slug, `NotFound` for a vanished entry, or a write error.
     pub(super) fn do_save_form(
         &mut self,
         index: Option<usize>,
         draft: RepoDraft,
-    ) -> Option<usize> {
+    ) -> crate::domain::error::Result<usize> {
         let path = crate::util::paths::expand_tilde(draft.path.trim());
         let section = draft.section.clone();
         let kind = draft.kind;
@@ -394,7 +405,12 @@ impl App {
         let new_path = path.clone();
         let (result, ok_message) = match index {
             Some(index) => {
-                let mut repo = self.service.get(index).cloned()?;
+                let mut repo =
+                    self.service.get(index).cloned().ok_or_else(|| {
+                        crate::domain::error::Error::NotFound(format!(
+                            "entry {index}"
+                        ))
+                    })?;
                 apply_draft(&mut repo, draft, path);
                 (self.service.update(index, repo), "entry updated")
             }
@@ -404,25 +420,21 @@ impl App {
                 (self.service.add(repo), "entry added")
             }
         };
-        let saved = result.is_ok();
-        if saved && let Some(name) = section {
+        result?;
+        if let Some(name) = section {
             let _ = self.service.ensure_section(kind, &name);
         }
-        self.report(result, ok_message);
-        if saved && assumed_file {
+        self.set_status(ok_message);
+        if assumed_file {
             self.set_status(
                 "no trailing / - treated as a file (end with / for a folder)",
             );
         }
-        if saved
-            && kind == RepoKind::Git
-            && path_changed
-            && !self.config.example_mode
-        {
+        if kind == RepoKind::Git && path_changed && !self.config.example_mode {
             self.refresh_paths(vec![new_path], false, false);
         }
-        let added = self.service.repos().len().checked_sub(1);
-        saved.then(|| index.or(added)).flatten()
+        let added = self.service.repos().len().saturating_sub(1);
+        Ok(index.unwrap_or(added))
     }
 
     /// Applies a bulk edit: writes each touched field onto every target entry

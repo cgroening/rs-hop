@@ -177,7 +177,7 @@ pub const HELP_SECTIONS: &[(&str, &[(Action, &str)])] = &[
         &[
             (
                 Action::Add,
-                "add an entry (fill the form; ^O picks the path)",
+                "add an entry (fill the form; enter on Path picks it)",
             ),
             (
                 Action::Edit,

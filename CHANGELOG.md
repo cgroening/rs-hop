@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `Esc` in the live filter clears the query first and leaves the filter on the next press.
 - The footer uses the toolkit's footer style (descriptions dimmed).
 
+- **The add/edit form runs on the toolkit's form core** (`ratada::form::FormState`) instead of its own: the same keys, plus `y` to copy the focused value and the field position (`5/7`) in the bottom border. A rejected slug (taken, reserved, malformed) shows in red under the Slug field and keeps the form open, instead of in the status band. A paste into Path, Name or Slug starts editing it.
 - `ratada` 0.7 → 0.8: every toolkit dialog (confirm, message, the list pickers, the calendars, the help overlay, …) keeps a blank row below its title and two columns of space at each side, and the help overlay's key hints follow the other dialogs.
 
 ### Added
