@@ -6,21 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-### Changed
-
-- **The add/edit form opens in normal mode**, where letters are commands: `Enter`/`e` edit Name or Slug, `Enter` on Path opens the path picker (`e` types the path; `Ctrl+O` no longer opens the picker), `Enter` on Section the section picker. `s`/`Ctrl+S` save and keep the form open, a second press within a second closes it; `Enter` no longer saves. `Esc` closes an unchanged form and asks "Save changes?" (`y`/`n`/`b`) for a changed one. `Ctrl+O` puts the focused field back to its value when the form opened or was last saved. A changed field carries `*`, the labels stand in a column, the focused row is tinted from border to border, Path and Section carry the pointer glyph, the kind sits between `←` and `→`, and an empty path shows in red under the field instead of in the status band after the form closed.
-- The dialogs (confirm, slug prompt, select lists, the sections manager, the section picker, the path picker) use the toolkit's frame with its padding, are as big as their content (the path picker keeps a share of the screen), show their keys in the toolkit's hint block (`esc` included, lower case) and mark the cursor with the pointer glyph and their position in the bottom border. The sort and section-jump lists and the section picker keep a `✓` after the entry that applies.
-- The multi-selection marks rows with `●` (ASCII `*`) instead of `▸`, which means "folded"; folded/open sections read `+`/`-` with ASCII glyphs. The column-set bar separates the sets with a dim `│`, the detail panel's title with ` · `.
-- The list shows the cursor's position (`3/12`) in the bottom-right corner.
-- `Esc` in the live filter clears the query first and leaves the filter on the next press.
-- The footer uses the toolkit's footer style (descriptions dimmed).
-
-- **The add/edit form runs on the toolkit's form core** (`ratada::form::FormState`) instead of its own: the same keys, plus `y` to copy the focused value and the field position (`5/7`) in the bottom border. A rejected slug (taken, reserved, malformed) shows in red under the Slug field and keeps the form open, instead of in the status band. A paste into Path, Name or Slug starts editing it.
-- `ratada` 0.7 → 0.8: every toolkit dialog (confirm, message, the list pickers, the calendars, the help overlay, …) keeps a blank row below its title and two columns of space at each side, and the help overlay's key hints follow the other dialogs.
+## [0.7.0] - 2026-11-08
 
 ### Added
 
 - **`F5` reloads `config.toml`**: with any problem (a parse error, an unknown color, a `dim_amount` above 100) it lists them and changes nothing; a clean file restarts the TUI on the cached status.
+
+### Changed
+
+- **The add/edit form opens in normal mode**, where letters are commands: `Enter`/`e` edit Name or Slug, `Enter` on Path opens the path picker (`e` types the path; `Ctrl+O` no longer opens the picker), `Enter` on Section the section picker. `s`/`Ctrl+S` save and keep the form open, a second press within a second closes it; `Enter` no longer saves. `Esc` closes an unchanged form and asks "Save changes?" (`y`/`n`/`b`) for a changed one. `Ctrl+O` puts the focused field back to its value when the form opened or was last saved. A changed field carries `*`, the labels stand in a column, the focused row is tinted from border to border, Path and Section carry the pointer glyph, the kind sits between `←` and `→`, and an empty path shows in red under the field instead of in the status band after the form closed.
+- The dialogs (confirm, slug prompt, select lists, the sections manager, the section picker, the path picker) use the toolkit's frame with its padding, are as big as their content (the path picker keeps a share of the screen), show their keys in the toolkit's hint block (`Esc` included) and mark the cursor with the pointer glyph and their position in the bottom border. The sort and section-jump lists and the section picker keep a `✓` after the entry that applies.
+- The multi-selection marks rows with `●` (ASCII `*`) instead of `▸`, which means "folded"; folded/open sections read `+`/`-` with ASCII glyphs. The column-set bar separates the sets with a dim `│`, the detail panel's title with ` · `.
+- The list shows the cursor's position (`3/12`) in the bottom-right corner.
+- `Esc` in the live filter clears the query first and leaves the filter on the next press.
+- The footer uses the toolkit's footer style (descriptions dimmed).
+- Key names in the footer, the help overlay, the dialogs and the README read like the key caps: `Enter`, `Esc`, `Ctrl+U`, `Ctrl+H` instead of `enter`, `esc`, `ctrl+u`, `ctrl+h`. `[keys]` in `config.toml` accepts both spellings.
+- On a narrow screen a dialog's key hints wrap onto more rows (at most three) and the dialog grows to fit, instead of being cut off.
+- **The add/edit form runs on the toolkit's form core** (`ratada::form::FormState`) instead of its own: the same keys, plus `y` to copy the focused value and the field position (`5/7`) in the bottom border. A rejected slug (taken, reserved, malformed) shows in red under the Slug field and keeps the form open, instead of in the status band. A paste into Path, Name or Slug starts editing it.
+- `ratada` 0.7 → 0.8: every toolkit dialog (confirm, message, the list pickers, the help overlay, …) keeps a blank row below its title and two columns of space at each side, and the help overlay's key hints follow the other dialogs.
 
 ## [0.6.0] - 2026-11-06
 
@@ -186,7 +189,8 @@ First public release. A fuzzy-finder TUI to jump between git repositories and fo
 - **Cross-platform paths** (XDG on Unix, `%APPDATA%`/`%LOCALAPPDATA%` on Windows) and openers/clipboard.
 - Unicode and ASCII icon tiers (`config.icons.variant`).
 
-[Unreleased]: https://github.com/cgroening/rs-hop/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/cgroening/rs-hop/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/cgroening/rs-hop/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/cgroening/rs-hop/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/cgroening/rs-hop/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/cgroening/rs-hop/compare/v0.4.0...v0.4.1
