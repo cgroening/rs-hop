@@ -6,7 +6,7 @@
 //! [`RepoRepository`]. Every config-mutating method records the pre-change list
 //! as a single undo frame and rolls back if the write fails.
 //!
-//! The per-kind section names are managed in [`section_names`], a sibling
+//! The per-kind section names are managed in `section_names`, a sibling
 //! module with its own `impl RepoService` block.
 
 use std::collections::HashMap;

@@ -3,16 +3,16 @@
 //!
 //! The struct and the loop live here; the behaviours are split by
 //! responsibility into sibling modules, each with its own `impl App` block:
-//! [`keys`] (routing a key to a use case), [`view`] (what is currently visible
-//! and the per-kind view settings behind it), [`navigate`] (cursor, tab and
-//! selection movement), [`lenses`] (the view toggles and the sort picker),
-//! [`open`] (leaving the TUI for something else), [`edit`] (mutating entries),
-//! [`section_manager`] (the section overlays), [`refresh`] (the git-status
-//! workers and the path-error state they feed), [`stats`] (the statistics
-//! workers), [`sync`] (pulling and pushing), [`zip`] (the ZIP-backup worker),
-//! [`panel`] (the detail panel),
-//! [`render`] (state to frame), [`hints`] (footer/help metadata) and
-//! [`progress`] (the progress bar).
+//! `keys` (routing a key to a use case), `view` (what is currently visible
+//! and the per-kind view settings behind it), `navigate` (cursor, tab and
+//! selection movement), `lenses` (the view toggles and the sort picker),
+//! `open` (leaving the TUI for something else), `edit` (mutating entries),
+//! `section_manager` (the section overlays), `refresh` (the git-status
+//! workers and the path-error state they feed), `stats` (the statistics
+//! workers), `sync` (pulling and pushing), `zip` (the ZIP-backup worker),
+//! `panel` (the detail panel),
+//! `render` (state to frame), `hints` (footer/help metadata) and
+//! `progress` (the progress bar).
 //!
 //! Opening an entry returns a [`RunOutcome`] the composition root acts on after
 //! the terminal is restored.

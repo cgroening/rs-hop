@@ -4,7 +4,7 @@
 //! A bare invocation opens the interactive TUI; `hop <slug>` jumps straight to
 //! an entry. This module resolves the config path, wires the TOML repository
 //! into the [`RepoService`] and the subprocess git client, then dispatches. The
-//! handlers themselves live in [`list`], [`scan`], [`sync`] and [`jump`]; they
+//! handlers themselves live in `list`, `scan`, `sync` and `jump`; they
 //! return a
 //! [`CliResult`] and never exit the process, so the translation into a message
 //! and an exit code happens exactly once, in [`run`].
