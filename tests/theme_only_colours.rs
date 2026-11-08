@@ -61,7 +61,10 @@ fn scan(dir: &Path, found: &mut Vec<String>) {
         let name = path.to_string_lossy().replace('\\', "/");
         let is_allowed = ALLOWED.iter().any(|(file, _)| name.starts_with(file));
         let is_rust = path.extension().is_some_and(|ext| ext == "rs");
-        if !is_rust || is_allowed || name.ends_with("tests.rs") {
+        // A test module is a `tests.rs` file or a file below a `tests/`
+        // directory (a test module split into children).
+        let is_test = name.ends_with("tests.rs") || name.contains("/tests/");
+        if !is_rust || is_allowed || is_test {
             continue;
         }
         let text = fs::read_to_string(&path).expect("readable source file");
