@@ -88,7 +88,7 @@ pub(super) fn navigation_group(keymap: &Keymap) -> Section {
 pub(super) fn keys_of(keymap: &Keymap, actions: &[Action]) -> String {
     actions
         .iter()
-        .flat_map(|&action| keymap.keys_for(action))
+        .flat_map(|&action| keymap.labels_for(action))
         .collect::<Vec<String>>()
         .join("/")
 }
@@ -136,7 +136,7 @@ impl App {
             let hints: Vec<(String, String)> = rows
                 .iter()
                 .filter_map(|(action, description)| {
-                    let keys = keymap.keys_for(*action).join("/");
+                    let keys = keymap.labels_for(*action).join("/");
                     // An action nobody can reach gets no row.
                     (!keys.is_empty())
                         .then(|| (keys, (*description).to_string()))

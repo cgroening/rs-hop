@@ -17,6 +17,6 @@ expression: drawn(&form)
    │   Backup   [x]                                                         │
    │   Kind     ← git →                                                     │
    │                                                                        │
-   │  space toggle                                                          │
-   │  tab next · s save · y copy · ctrl+o reset · esc leave (asks to save)  │
+   │  Space toggle                                                          │
+   │  Tab next · s save · y copy · Ctrl+O reset · Esc leave (asks to save)  │
    ╰────────────────────────────────────────────────────────────────── 5/7 ─╯

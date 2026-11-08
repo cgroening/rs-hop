@@ -545,13 +545,16 @@ fn help_navigation_keys_follow_a_keys_override() {
     let default = navigation_group(&Keymap::default());
     assert_eq!(
         keys_for(&default, extend),
-        Some("shift+up/shift+down".to_string())
+        Some("Shift+\u{2191}/Shift+\u{2193}".to_string())
     );
 
     let overrides =
         BTreeMap::from([("extend_up".to_string(), vec!["K".to_string()])]);
     let custom = navigation_group(&Keymap::from_overrides(&overrides));
-    assert_eq!(keys_for(&custom, extend), Some("K/shift+down".to_string()));
+    assert_eq!(
+        keys_for(&custom, extend),
+        Some("K/Shift+\u{2193}".to_string())
+    );
 }
 
 /// The help overlay used to spell its keys out as literals, so a `[keys]`

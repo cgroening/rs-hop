@@ -27,8 +27,8 @@ const HINTS: [(&str, &str); 5] = [
     ("n", "new"),
     ("r", "rename"),
     ("d", "delete"),
-    ("alt+\u{2191}\u{2193}", "move"),
-    ("esc", "close"),
+    ("Alt+\u{2191}\u{2193}", "move"),
+    ("Esc", "close"),
 ];
 /// The most section rows shown before the list scrolls.
 const MAX_ROWS: u16 = 14;

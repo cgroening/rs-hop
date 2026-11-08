@@ -34,9 +34,9 @@ const FILTER_LABEL: &str = "filter: ";
 /// The picker's keys, in the modal hint block.
 const HINTS: [(&str, &str); 4] = [
     ("\u{2190}\u{2192}", "browse"),
-    ("enter", "pick"),
-    ("ctrl+h", "hidden"),
-    ("esc", "cancel"),
+    ("Enter", "pick"),
+    ("Ctrl+H", "hidden"),
+    ("Esc", "cancel"),
 ];
 /// The share of the screen the picker takes: seven tenths.
 const SHARE_NUMERATOR: u16 = 7;

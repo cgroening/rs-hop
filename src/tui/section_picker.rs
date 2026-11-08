@@ -35,8 +35,8 @@ const MIN_FILTER_WIDTH: usize = 20;
 const HINTS: [(&str, &str); 4] = [
     ("\u{2191}\u{2193}", "move"),
     ("type", "filter / new"),
-    ("enter", "choose"),
-    ("esc", "cancel"),
+    ("Enter", "choose"),
+    ("Esc", "cancel"),
 ];
 
 /// The most list rows shown before the list scrolls.

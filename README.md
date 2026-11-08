@@ -235,7 +235,7 @@ HOP_GIT_TIMEOUT_SECS  seconds a pull or push may stall before it fails
 | `Tab` / `Shift+Tab` | cycle the two active tabs |
 | `↑` / `↓` | move cursor (wraps) |
 | `Home` / `End` · `g` / `G` | top / bottom (both spellings work) |
-| `PgUp`/`PgDn` · `Ctrl+u`/`Ctrl+d` | page · half page |
+| `PgUp`/`PgDn` · `Ctrl+U`/`Ctrl+D` | page · half page |
 | `Space` | toggle selection · `Esc`: clear |
 | `Shift+↑/↓` · `Shift+PgUp/PgDn` | extend the selection by a row · by a page |
 | `Enter` | jump only: write path and exit (folder → cd, file → its parent) |

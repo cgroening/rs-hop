@@ -31,9 +31,9 @@ use crate::tui::skin::Colors;
 /// The keys of a confirmation.
 const CONFIRM_HINTS: [(&str, &str); 2] = [("y", "confirm"), ("n", "cancel")];
 /// The keys of a text prompt.
-const PROMPT_HINTS: [(&str, &str); 2] = [("enter", "save"), ("esc", "cancel")];
+const PROMPT_HINTS: [(&str, &str); 2] = [("Enter", "save"), ("Esc", "cancel")];
 /// The keys of a select list.
-const SELECT_HINTS: [(&str, &str); 2] = [("enter", "pick"), ("esc", "cancel")];
+const SELECT_HINTS: [(&str, &str); 2] = [("Enter", "pick"), ("Esc", "cancel")];
 /// The fewest columns a prompt's value gets, however short it is.
 const PROMPT_VALUE_WIDTH: usize = 32;
 /// The most rows a select list shows before it scrolls.
@@ -371,7 +371,7 @@ mod tests {
             .with_current(1);
         let text = rendered(&modal, 60, 20);
         assert!(text.contains("\u{203a} b \u{2713}"), "{text}");
-        assert!(text.contains("enter pick"), "{text}");
+        assert!(text.contains("Enter pick"), "{text}");
         assert!(text.contains("2/2"), "{text}");
     }
 
